@@ -1,0 +1,15 @@
+{
+  "$schema": "./node_modules/@tgcloud/cli/schema/tgcloud.json",
+  // MissFrozen Gaming Bot — TGCloud app8888370613 (@missfrozen_bot).
+  // Verify `npx tgcloud login`/token targets THIS app before push/migrate.
+  "static": {
+    "source": "web",
+    "spa": true,
+    "headers": [
+      { "path": "/*", "set": { "Referrer-Policy": "no-referrer" } }
+    ],
+    "redirects": [
+      { "from": "/profile", "to": "/profile.html", "status": 302 }
+    ]
+  }
+}
