@@ -1,0 +1,10 @@
+node_modules/
+.tgcloud/
+.env
+.env.*
+!.env.example
+*.db
+*.sqlite
+*.sqlite3
+coverage/
+.DS_Store

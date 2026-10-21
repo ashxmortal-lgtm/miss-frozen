@@ -1,0 +1,20 @@
+{
+  "$schema": "./node_modules/@tgcloud/cli/schema/tgcloud.json",
+  // For My Sheesh — Telegram Serverless (TGCloud 0.2.0) project config.
+  // `web/` is plain HTML/CSS/JS: there is no build step. `push` uploads it as-is.
+  // `spa: true` lets the direct gift deep link /gift resolve to index.html.
+  "static": {
+    "source": "web",
+    "spa": true,
+    "headers": [
+      {
+        "path": "/*",
+        "set": {
+          "Referrer-Policy": "no-referrer",
+          "X-Robots-Tag": "noindex, nofollow, noarchive",
+          "Cache-Control": "no-cache"
+        }
+      }
+    ]
+  }
+}

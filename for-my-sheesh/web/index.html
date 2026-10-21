@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=5"
+    />
+    <meta name="theme-color" content="#fff6fb" />
+    <meta name="robots" content="noindex, nofollow, noarchive" />
+    <meta name="color-scheme" content="light" />
+    <title>For My Sheesh 🎀</title>
+    <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/css/app.css" />
+  </head>
+  <body>
+    <div class="sky" aria-hidden="true">
+      <span class="glow glow-one"></span>
+      <span class="glow glow-two"></span>
+      <span class="glow glow-three"></span>
+      <span class="star star-one">✦</span>
+      <span class="star star-two">✧</span>
+      <span class="star star-three">✦</span>
+      <span class="star star-four">✧</span>
+      <div class="petals" id="petals"></div>
+    </div>
+
+    <main class="app" id="app">
+      <section class="view loading-view" id="view-loading" aria-live="polite">
+        <div class="tiny-heart" aria-hidden="true">🎀</div>
+        <p class="loading-copy">𝒐𝒑𝒆𝒏𝒊𝒏𝒈 𝒚𝒐𝒖𝒓 𝒍𝒊𝒕𝒕𝒍𝒆 𝒘𝒐𝒓𝒍𝒅...</p>
+        <span class="spinner" aria-hidden="true"></span>
+        <p class="sr-only">Loading your gift</p>
+      </section>
+
+      <section class="view error-view" id="view-error" hidden aria-live="assertive">
+        <div class="error-card">
+          <p class="error-emoji" aria-hidden="true">🎀</p>
+          <h2 class="error-title">𝒂 𝒍𝒊𝒍 𝒉𝒊𝒄𝒄𝒖𝒑</h2>
+          <p class="error-message" id="error-message"></p>
+          <button class="primary-btn" id="retry" type="button">Try again 🎀</button>
+          <button class="ghost-btn" id="error-back" type="button" hidden>
+            Back to the gift 🎁
+          </button>
+        </div>
+      </section>
+
+      <section class="view cover-view" id="view-cover" hidden>
+        <p class="eyebrow">🎀 𝒇𝒐𝒓 𝒎𝒚 𝒔𝒉𝒆𝒆𝒔𝒉 🎀</p>
+        <h1 class="display" id="cover-title">
+          𝑴𝒐𝒎𝒎𝒚'𝒔 𝑺𝒉𝒆𝒆𝒔𝒉 <br />𝒔𝒆𝒏𝒕 𝒚𝒐𝒖 𝒂 𝒈𝒊𝒇𝒕
+        </h1>
+        <p class="greeting">Hi Sheesh's Mommy! 👋</p>
+
+        <div class="envelope-stage">
+          <svg
+            class="envelope"
+            viewBox="0 0 280 210"
+            role="img"
+            aria-label="A blue envelope with a red heart"
+          >
+            <defs>
+              <linearGradient id="envelopeFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#ffffff" />
+                <stop offset="100%" stop-color="#eef5ff" />
+              </linearGradient>
+              <linearGradient id="heartFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#ff8f9f" />
+                <stop offset="100%" stop-color="#ef3f5f" />
+              </linearGradient>
+              <linearGradient id="letterFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#fffdf8" />
+                <stop offset="100%" stop-color="#fff3ec" />
+              </linearGradient>
+            </defs>
+
+            <ellipse class="envelope-shadow" cx="140" cy="194" rx="88" ry="9" />
+
+            <g class="envelope-bob">
+              <rect
+                x="26"
+                y="42"
+                width="228"
+                height="142"
+                rx="20"
+                fill="url(#envelopeFill)"
+                stroke="#6f9df2"
+                stroke-width="6"
+              />
+
+              <path
+                d="M54 63 H226 V161 H54 Z"
+                fill="url(#letterFill)"
+                stroke="#d8e5ff"
+                stroke-width="2"
+              />
+              <path d="M70 88 H190" stroke="#f4c9d8" stroke-width="5" stroke-linecap="round" />
+              <path d="M70 104 H206" stroke="#f8dbe5" stroke-width="5" stroke-linecap="round" />
+              <path d="M70 120 H166" stroke="#f8dbe5" stroke-width="5" stroke-linecap="round" />
+
+              <path
+                d="M32 58 L140 136 L248 58 L248 170 Q248 180 238 180 H42 Q32 180 32 170 Z"
+                fill="url(#envelopeFill)"
+                stroke="#6f9df2"
+                stroke-width="6"
+                stroke-linejoin="round"
+              />
+              <path
+                d="M34 60 L140 137 L246 60"
+                fill="none"
+                stroke="#8eb5f8"
+                stroke-width="4"
+                stroke-linecap="round"
+              />
+
+              <g class="heart">
+                <path
+                  d="M140 166 C140 166 108 146 108 126 C108 114 117 107 127 107 C134 107 139 111 140 116 C141 111 146 107 153 107 C163 107 172 114 172 126 C172 146 140 166 140 166 Z"
+                  fill="url(#heartFill)"
+                  stroke="#d92d4e"
+                  stroke-width="2.5"
+                />
+                <path
+                  d="M122 122 C122 116 126 113 131 113"
+                  fill="none"
+                  stroke="#ffd8de"
+                  stroke-width="3"
+                  stroke-linecap="round"
+                />
+              </g>
+
+              <g class="envelope-sparkle" fill="#f6b3c8">
+                <path d="M236 34 l3 8 8 3 -8 3 -3 8 -3 -8 -8 -3 8 -3 z" />
+                <path d="M42 30 l2 6 6 2 -6 2 -2 6 -2 -6 -6 -2 6 -2 z" />
+              </g>
+            </g>
+          </svg>
+        </div>
+
+        <p class="gift-line">You've received a virtual gift!</p>
+        <button class="primary-btn" id="open-gift" type="button">Open Your Gift 🎁</button>
+        <p class="tiny">made with a whole lot of love, only for you 🤍</p>
+      </section>
+
+      <section class="view letter-view" id="view-letter" hidden>
+        <article class="letter-card" aria-labelledby="letter-heading">
+          <header class="letter-head">
+            <p class="letter-kicker">🎀 𝒂 𝒍𝒊𝒍 𝒍𝒆𝒕𝒕𝒆𝒓 🎀</p>
+            <h2 class="letter-title" id="letter-heading">𝑭𝒐𝒓 𝑺𝒉𝒆𝒆𝒔𝒉'𝒔 𝑴𝒐𝒎𝒎𝒚</h2>
+            <p class="letter-occasion" id="letter-occasion">7 months of us</p>
+            <div class="letter-ornament" aria-hidden="true">✦ 🌸 ✦</div>
+          </header>
+
+          <div class="letter-body" id="letter-body"></div>
+
+          <footer class="letter-foot">
+            <p class="letter-signature" id="letter-signature"></p>
+            <p class="letter-seal" aria-hidden="true">💌</p>
+          </footer>
+        </article>
+
+        <button class="ghost-btn" id="back-to-cover" type="button">Back to the gift 🎀</button>
+      </section>
+    </main>
+
+    <noscript>
+      <p class="noscript">Open this little gift from Telegram with JavaScript enabled. 🎀</p>
+    </noscript>
+
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script type="module" src="/js/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,100 @@
+name: For My Sheesh (validate + optional deploy)
+
+# Database migrations are intentionally manual: review with `npx tgcloud
+# migrate --dry-run` locally first. The repo must stay private.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - name: Verify deployment files are present and tracked
+        run: |
+          for f in tgcloud.jsonc tgcloud/schema.js tgcloud/handlers/message.js \
+                   tgcloud/handlers/callback_query.js \
+                   tgcloud/endpoints/getAccessStatus.js tgcloud/endpoints/getGift.js \
+                   web/index.html web/js/app.js .env.example .gitignore; do
+            test -f "$f" || { echo "::error::$f is missing"; exit 1; }
+            git ls-files --error-unmatch "$f" >/dev/null 2>&1 \
+              || { echo "::error::$f is not tracked by Git"; exit 1; }
+          done
+          echo "TGCloud config, handlers, endpoints and Mini App files are tracked."
+      - name: Security, configuration and privacy validation + all tests
+        run: npm run validate
+
+  deploy:
+    # Never deploy from a pull request; only from main, and only when the
+    # dedicated CLI secret is configured.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: validate
+    runs-on: ubuntu-24.04
+    environment: for-my-sheesh
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+
+      - name: Check for the dedicated CLI token
+        id: token
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN_FOR_MY_SHEESH }}
+        run: |
+          if [ -z "$TGCLOUD_TOKEN" ]; then
+            echo "::warning::TGCLOUD_TOKEN_FOR_MY_SHEESH is not set; skipping deploy."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Refuse a token from another bot
+        if: steps.token.outputs.present == 'true'
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN_FOR_MY_SHEESH }}
+          EXPECTED_APP: ${{ vars.FOR_MY_SHEESH_APP_ID }}
+        run: |
+          case "$TGCLOUD_TOKEN" in
+            *app8888370613*) echo "::error::Token targets the MissFrozen gaming app, not For My Sheesh."; exit 1 ;;
+          esac
+          FOUND=$(printf '%s' "$TGCLOUD_TOKEN" | grep -oE 'app[0-9]{6,}' | head -n1 || true)
+          if [ -n "$EXPECTED_APP" ] && [ "$FOUND" != "$EXPECTED_APP" ]; then
+            echo "::error::Token targets ${FOUND:-an unknown app}, expected $EXPECTED_APP."
+            exit 1
+          fi
+          echo "Token app check passed (${FOUND:-no embedded app id})."
+
+      - name: Sync cloud revision metadata
+        if: steps.token.outputs.present == 'true'
+        run: npx tgcloud fetch
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN_FOR_MY_SHEESH }}
+
+      - name: Deploy code and static Mini App
+        if: steps.token.outputs.present == 'true'
+        run: npx tgcloud push
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN_FOR_MY_SHEESH }}
+
+      - name: Deployment reminder
+        if: steps.token.outputs.present == 'true'
+        run: |
+          echo "::notice::If tgcloud/schema.js changed, run 'npx tgcloud migrate' locally and review the diff."
+          echo "::notice::Confirm with 'npx tgcloud webhook'; then set the Mini App URL with /setapp."
