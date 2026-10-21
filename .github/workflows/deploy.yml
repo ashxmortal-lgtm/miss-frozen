@@ -1,0 +1,70 @@
+name: Deploy MissFrozen Gaming (app8888370613)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tgcloud-deploy-app8888370613
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Verify Mini App deployment files are tracked
+        run: |
+          test -f tgcloud.jsonc || { echo "::error::tgcloud.jsonc is missing from checkout"; exit 1; }
+          git ls-files --error-unmatch tgcloud.jsonc >/dev/null || { echo "::error::tgcloud.jsonc is not tracked by Git"; exit 1; }
+          test -f web/index.html || { echo "::error::web/index.html is missing"; exit 1; }
+          test -f web/js/app.js || { echo "::error::web/js/app.js is missing"; exit 1; }
+          test -f web/js/contract.js || { echo "::error::web/js/contract.js is missing"; exit 1; }
+          echo "TGCloud config and core Mini App files are present in the checkout."
+      - name: Validate syntax, imports and run test suite
+        run: npm run validate
+
+      # Guard: this workflow may ONLY deploy app8888370613. If the token embeds an
+      # app-id (app<digits> prefix/segment) it must match; a token for the
+      # other bot fails the job before anything is pushed.
+      - name: Verify token targets app8888370613
+        if: github.event_name != 'pull_request'
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN_MISSFROZEN }}
+          EXPECTED_APP: app8888370613
+        run: |
+          if [ -z "$TGCLOUD_TOKEN" ]; then echo "::error::Secret TGCLOUD_TOKEN_MISSFROZEN is not set"; exit 1; fi
+          FOUND=$(printf '%s' "$TGCLOUD_TOKEN" | grep -oE 'app[0-9]{6,}' | head -n1 || true)
+          if [ -n "$FOUND" ] && [ "$FOUND" != "$EXPECTED_APP" ]; then
+            echo "::error::Token targets $FOUND, expected $EXPECTED_APP. Refusing to deploy."
+            exit 1
+          fi
+          if [ -z "$FOUND" ]; then
+            echo "::warning::Token carries no embedded app-id; relying on secret scoping. Confirm TGCLOUD_TOKEN_MISSFROZEN was issued for $EXPECTED_APP in the TGCloud dashboard."
+          else
+            echo "Token app-id verified: $FOUND"
+          fi
+          grep -q "$EXPECTED_APP" tgcloud/lib/config.js || { echo "::error::config.js does not target $EXPECTED_APP"; exit 1; }
+
+      - name: Sync cloud revision metadata
+        if: github.event_name != 'pull_request'
+        run: npx tgcloud fetch
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN_MISSFROZEN }}
+
+      - name: Deploy to TGCloud (app8888370613 only)
+        if: github.event_name != 'pull_request'
+        run: npx tgcloud push
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN_MISSFROZEN }}

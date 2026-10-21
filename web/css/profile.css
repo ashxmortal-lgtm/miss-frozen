@@ -1,0 +1,12 @@
+/* Profile standalone page — inherits app.css dark frost */
+.profile-shell { width: min(520px, 100%); margin: 0 auto; padding: 16px 14px calc(30px + env(safe-area-inset-bottom)); }
+.profile-top { margin-bottom: 16px; }
+.profile-intro { margin-bottom: 14px; }
+.profile-intro h1 { margin: 5px 0 6px; }
+.profile-intro p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.4; }
+.profile-eyebrow { font-size: 11px; letter-spacing: 0.12em; font-weight: 700; color: var(--muted); text-transform: uppercase; }
+.profile-content { margin-top: 8px; }
+.profile-retry { margin-top: 10px; }
+
+.profile-identity { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+.profile-identity .profile-name { font-size: 22px; font-weight: 800; }

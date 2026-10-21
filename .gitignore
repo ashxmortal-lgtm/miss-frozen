@@ -1,0 +1,36 @@
+node_modules/
+.tgcloud/
+.env
+.env.*
+!.env.example
+*.db
+*.sqlite
+*.sqlite3
+
+# Local backups and archives
+/backup/
+/backup2/
+/backup3/
+/my_work_backup/
+/tgcloud_backup_*/
+/*.zip
+
+# Historical copies inside the active project
+/tgcloud/*.backup-*
+/tgcloud/handlers/*.bak*
+
+# Local backups and temporary files
+/backup/
+/backup2/
+/backup3/
+/my_work_backup/
+/tgcloud_backup_*/
+/*.zip
+/h
+/make_dump.cjs
+/tgcloud_jsonc
+/tgcloud/*.bak
+/tgcloud/**/*.bak
+/tgcloud_jsonc
+/h
+/make_dump.cjs
