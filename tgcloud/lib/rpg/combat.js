@@ -22,6 +22,8 @@ import {
   itachiRobPct, itachiKillReward, cloneWindowSec,
   ROB_LOCKOUT_SEC, BYAKUGAN_COOLDOWN_SEC,
 } from './levels.js';
+import { petRewardBonus } from '../pet/store.js';
+import { notifyDailyProgress } from '../daily.js';
 
 const now = () => Math.floor(Date.now() / 1000);
 
@@ -169,6 +171,27 @@ export async function killTarget(attackerId, targetId, targetShinobi) {
   return { code: 'ok', coins, kills: u ? u.kills : 0, reviveAt };
 }
 
+/**
+ * Axofly kill bonus + daily-mission progress. Kept outside killTarget so the
+ * verified base bounty logic (and its tests) remain untouched.
+ */
+async function applyKillPetBonus(attackerId, targetId, targetShinobi, r) {
+  if (r.code !== 'ok') return r;
+  try {
+    const fortune = await petRewardBonus(attackerId, r.coins);
+    if (fortune.bonus > 0) {
+      await db.run(sql`UPDATE users SET balance = balance + ${fortune.bonus} WHERE telegram_id = ${attackerId}`);
+      r.petBonus = fortune.bonus;
+      r.coins += fortune.bonus;
+    }
+  } catch (e) { console.error('[kill pet bonus]', e); }
+  try {
+    await notifyDailyProgress(attackerId, 'kill_success',
+      `kill:${attackerId}:${targetId}:${targetShinobi}:${r.reviveAt || 0}`);
+  } catch (e) { console.error('[kill daily]', e); }
+  return r;
+}
+
 function killResultText(attackerUser, targetUser, r) {
   if (r.code === 'already_dead') return alreadyDeadLine(targetUser);
   return killLine(attackerUser, targetUser);
@@ -277,7 +300,10 @@ async function resolveCloneTimeout(row) {
   const target = await db.get(sql`SELECT first_name, username FROM users WHERE telegram_id = ${row.target_id}`);
   const attackerUser = { id: row.attacker_id, first_name: attacker?.first_name || 'Shinobi', username: attacker?.username };
   const targetUser = { id: row.target_id, first_name: target?.first_name || 'Shinobi', username: target?.username };
-  const r = await killTarget(row.attacker_id, row.target_id, row.target_shinobi);
+  const r = await applyKillPetBonus(
+    row.attacker_id, row.target_id, row.target_shinobi,
+    await killTarget(row.attacker_id, row.target_id, row.target_shinobi),
+  );
   await editResult(
     row.chat_id, row.message_id,
     killResultText(attackerUser, targetUser, r),
@@ -431,7 +457,10 @@ export async function handleKill(message) {
     return true;
   }
 
-  const r = await killTarget(user.id, target.id, shinobi);
+  const r = await applyKillPetBonus(
+    user.id, target.id, shinobi,
+    await killTarget(user.id, target.id, shinobi),
+  );
   await replyHtml(message, killResultText(user, target, r));
   if (r.code === 'ok') await dmKilled(target, user, message.chat.title || 'the group');
   return true;
@@ -561,8 +590,20 @@ export async function handleRob(message) {
   await db.run(sql`
     UPDATE users SET balance = balance + ${steal} WHERE telegram_id = ${user.id}
   `);
+  let petBonus = 0;
+  try {
+    const fortune = await petRewardBonus(user.id, steal);
+    if (fortune.bonus > 0) {
+      petBonus = fortune.bonus;
+      await db.run(sql`UPDATE users SET balance = balance + ${petBonus} WHERE telegram_id = ${user.id}`);
+    }
+  } catch (e) { console.error('[rob pet bonus]', e); }
+  try {
+    await notifyDailyProgress(user.id, 'rob_success', `rob:${user.id}:${target.id}:${t}`);
+  } catch (e) { console.error('[rob daily]', e); }
   await replyHtml(message,
-    `${mention(user)} robbed ${mention(target)}.\n${fmt(steal)} is successful Robbed.\n\nROBBERY RATE: ${pct}%`);
+    `${mention(user)} robbed ${mention(target)}.\n${fmt(steal)} is successful Robbed.\n\nROBBERY RATE: ${pct}%`
+    + (petBonus ? `\n🦋 𝐀𝐗𝐎𝐅𝐋𝐘 𝐅𝐋𝐔𝐓𝐓𝐄𝐑 𝐅𝐎𝐑𝐓𝐔𝐍𝐄 +${fmt(petBonus)} 🍥` : ''));
   // DM target about robbery
   try {
     const skills = await getUserSkills(user.id);

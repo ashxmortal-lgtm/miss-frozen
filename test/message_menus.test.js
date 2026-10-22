@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { render, style } from '../tgcloud/lib/texts.js';
-import { listCommands } from '../tgcloud/lib/command_registry.js';
+import { listCommands, PET_COMMANDS, ALIASES } from '../tgcloud/lib/command_registry.js';
 const read = (p) => fs.readFileSync(new URL('../' + p, import.meta.url), 'utf8');
 const user = { id: 42, first_name: 'Shinobi' };
 
@@ -16,9 +16,8 @@ function welcome() {
     answerCallbackQuery: async () => {},
     editMessageText: async (payload) => calls.push(payload),
   };
-  return { ...new Function('api', 'OWNER_ID', 'BOT_USERNAME', 'listCommands',
-    `${source}; return { buildWelcomeBlocks, buildUserHelpBlocks, handleWelcomeCallback };`)(
-    api, 999, 'missfrozen_bot', listCommands), calls };
+  return { ...new Function('api', 'OWNER_ID', 'BOT_USERNAME', 'listCommands', 'PET_COMMANDS',
+    `${source}; return { buildWelcomeBlocks, buildUserHelpBlocks, handleWelcomeCallback };`)(    api, 999, 'missfrozen_bot', listCommands, PET_COMMANDS), calls };
 }
 
 test('welcome has requested tutorial link and unchanged primary actions', async () => {
@@ -42,6 +41,47 @@ test('game help includes profile and all primary user commands without code form
   }
   assert.doesNotMatch(text, /"type":"code"/);
   assert.match(style('/profile — Your profile'), /^\/profile/);
+});
+
+test('help shows the pet commands in their own section', async () => {
+  const blocks = await welcome().buildUserHelpBlocks(user);
+  assert.ok(blocks.some((b) => b.type === 'heading' && b.text === '🐾 Pets'));
+  for (const cmd of PET_COMMANDS) {
+    assert.ok(
+      blocks.some((b) => typeof b.text === 'string' && b.text.startsWith(`${cmd} `)),
+      `${cmd} missing from help`,
+    );
+  }
+});
+
+test('help lists every command once, aliases only inside descriptions', () => {
+  const source = read('tgcloud/lib/welcome_ui.js')
+    .replace(/^import .*;\n/gm, '').replaceAll('export ', '');
+  const built = new Function('api', 'OWNER_ID', 'BOT_USERNAME', 'listCommands', 'PET_COMMANDS',
+    `${source}; return { gameBlocks, extrasBlocks, moreGamesBlocks };`)(
+    {}, 999, 'missfrozen_bot', listCommands, PET_COMMANDS);
+  const screens = [built.gameBlocks(false), built.extrasBlocks(false), built.moreGamesBlocks(false)];
+
+  const seen = new Map();
+  for (const blocks of screens) {
+    for (const block of blocks) {
+      if (block.type !== 'paragraph' || typeof block.text !== 'string') continue;
+      const cmd = block.text.trim().split(/\s+/)[0];
+      if (!/^\/[a-z_]+$/i.test(cmd)) continue;
+      seen.set(cmd, (seen.get(cmd) || 0) + 1);
+    }
+  }
+  const duplicates = [...seen].filter(([, count]) => count > 1).map(([cmd]) => cmd);
+  assert.deepEqual(duplicates, [], `commands listed twice: ${duplicates.join(', ')}`);
+
+  // Aliases still work but never get their own line.
+  for (const alias of Object.keys(ALIASES)) {
+    assert.equal(seen.has(alias), false, `${alias} must not have its own help line`);
+  }
+  const text = JSON.stringify(screens);
+  for (const alias of Object.keys(ALIASES)) {
+    assert.match(text, new RegExp(alias.replace('/', '\\/')), `${alias} should be named as an alias`);
+  }
 });
 
 test('help callbacks enable automatic command detection for every screen', async () => {

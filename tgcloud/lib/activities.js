@@ -8,6 +8,12 @@ import {
 } from './rpg/state.js';
 import { addPendingReward, pendingRewardTotal } from './map/pending.js';
 import { jiraiyaFound, sakuraActivityBonus } from './rpg/levels.js';
+import {
+  petRewardBonus, petShinobiXpMultiplier, petTimeReduction, ensurePetSchema,
+  settlePetActivities,
+} from './pet/store.js';
+import { reducedActivitySeconds, reducedCooldownSeconds } from './pet/defs.js';
+import { notifyDailyProgress } from './daily.js';
 
 const H = 3600;
 export const KINDS = {
@@ -108,8 +114,9 @@ async function finish(a) {
   const c = KINDS[a.kind];
   const id = a.telegram_id;
   const t = now();
+  const cooldownSec = Number(a.cooldown_sec || 0) || c.cooldown;
   const won = a.kind === 'mission'
-    ? await db.run(sql`UPDATE activities SET status = 'idle', cooldown_until = ${a.ends_at + c.cooldown} WHERE telegram_id = ${id} AND shinobi = ${a.shinobi} AND status = 'active' AND ends_at <= ${t}`)
+    ? await db.run(sql`UPDATE activities SET status = 'idle', cooldown_until = ${a.ends_at + cooldownSec} WHERE telegram_id = ${id} AND shinobi = ${a.shinobi} AND status = 'active' AND ends_at <= ${t}`)
     : await db.run(sql`UPDATE activities SET status = 'idle' WHERE telegram_id = ${id} AND shinobi = ${a.shinobi} AND status = 'active' AND ends_at <= ${t}`);
   if (won.rowsAffected === 0) return null;
 
@@ -138,11 +145,28 @@ async function finish(a) {
     } catch (e) { console.error('[sakura level]', e); }
     sakuraBonus = sakuraActivityBonus(sakuraLevel);
   }
-  const coins = reward(c, a.shinobi, base, xpBefore, sakuraBonus);
-  // Random 50–150 XP per finished patrol/mission.
-  const xpGain = c.xpMin + Math.floor(Math.random() * (c.xpMax - c.xpMin + 1));
+  let coins = reward(c, a.shinobi, base, xpBefore, sakuraBonus);
+  // Axofly Flutter Fortune: additive reward bonus on the finished activity.
+  let petBonus = 0;
+  try {
+    const fortune = await petRewardBonus(id, coins);
+    if (fortune.bonus > 0) {
+      petBonus = fortune.bonus;
+      coins += petBonus;
+    }
+  } catch (e) { console.error('[pet activity bonus]', e); }
+  // Random 50–150 XP per finished patrol/mission; Axofly adds a flat %.
+  let xpGain = c.xpMin + Math.floor(Math.random() * (c.xpMax - c.xpMin + 1));
+  try {
+    const mult = await petShinobiXpMultiplier(id);
+    if (mult > 1) xpGain = Math.floor(xpGain * mult);
+  } catch (e) { console.error('[pet xp multiplier]', e); }
   // Coins go to pending (claim at Hokage Office) — only XP is applied immediately.
   await db.run(sql`UPDATE users SET xp = xp + ${xpGain} WHERE telegram_id = ${id}`);
+  try {
+    await notifyDailyProgress(id, `${a.kind}_complete`,
+      `activity:${id}:${a.shinobi}:${a.started_at || a.ends_at}`);
+  } catch (e) { console.error('[activity daily]', e); }
   try {
     await addPendingReward(id, a.shinobi, coins, a.kind);
   } catch (e) {
@@ -170,7 +194,7 @@ async function finish(a) {
   try { pendingTotal = await pendingRewardTotal(id); } catch (_) {}
   return {
     id, name: (u && u.first_name) || 'Shinobi', chatId: a.chat_id,
-    kind: a.kind, shinobi: a.shinobi, coins, xp: xpGain,
+    kind: a.kind, shinobi: a.shinobi, coins, petBonus, xp: xpGain,
     rankUp: after !== before ? after : null, found, had, exhaustedUntil,
     pendingTotal, username: null,
   };
@@ -222,7 +246,7 @@ function dmText(r) {
 // Also exported so opening the Gate/Inventory refreshes statuses first.
 export async function settleOwn(user) {
   const t = now();
-  const due = await db.all(sql`SELECT telegram_id, shinobi, kind, ends_at, base_roll, chat_id FROM activities WHERE telegram_id = ${user.id} AND status = 'active' AND ends_at <= ${t}`);
+  const due = await db.all(sql`SELECT telegram_id, shinobi, kind, started_at, ends_at, base_roll, cooldown_sec, chat_id FROM activities WHERE telegram_id = ${user.id} AND status = 'active' AND kind <> 'pet' AND ends_at <= ${t}`);
   const blocks = [];
   const dms = [];
   for (const a of due) {
@@ -238,14 +262,41 @@ export async function settleOwn(user) {
 // Finished activities of ALL users. Called on every incoming message
 // (no scheduler), so reminders arrive when the bot is next used.
 export async function sweepActivities() {
+  try { await ensurePetSchema(); } catch (_) {}
   const t = now();
-  const due = await db.all(sql`SELECT telegram_id, shinobi, kind, ends_at, base_roll, chat_id FROM activities WHERE status = 'active' AND ends_at <= ${t} LIMIT 10`);
+  const due = await db.all(sql`SELECT telegram_id, shinobi, kind, started_at, ends_at, base_roll, cooldown_sec, chat_id FROM activities WHERE status = 'active' AND kind <> 'pet' AND ends_at <= ${t} LIMIT 10`);
   const out = [];
   for (const a of due) {
     const r = await finish(a);
     if (!r) continue;
-    out.push({ id: r.id, name: r.name, chatId: r.chatId, reminder: remindText(r), dm: dmText(r) });
+    out.push({ id: r.id, name: r.name, chatId: r.chatId, kind: r.kind, reminder: remindText(r), dm: dmText(r) });
   }
+  // Pet activities are stored in pet_activity; settle them lazily here so a
+  // Shinobi is freed and XP is paid even if the owner never reopens /pet.
+  try {
+    const pending = await db.all(sql`
+      SELECT DISTINCT telegram_id, chat_id FROM pet_activity
+      WHERE status = 'active' AND ends_at > 0 AND ends_at <= ${t} LIMIT 10
+    `);
+    for (const row of pending) {
+      const done = await settlePetActivities(row.telegram_id);
+      for (const p of done) {
+        const label = p.activityType ? p.activityType.toUpperCase() : 'ACTIVITY';
+        const body = `🐾 <b>PET ${label} COMPLETE</b>\n\n`
+          + `🐾 ${escapeHtml(p.petName || 'Your pet')} finished ${p.activityType}.\n`
+          + `⭐ +${p.xp} pet XP${p.levelUp ? ` · Lv. ${p.level}!` : ''}`;
+        out.push({
+          id: row.telegram_id,
+          name: 'Shinobi',
+          // Pet completions are DM-only (the source sends no group notice).
+          chatId: 0,
+          kind: 'pet',
+          reminder: body,
+          dm: body,
+        });
+      }
+    }
+  } catch (e) { console.error('[pet sweep]', e); }
   return out;
 }
 
@@ -273,6 +324,7 @@ async function dispatch(user, kind, rawName, chatId) {
   const row = await db.get(sql`SELECT kind, status, ends_at, cooldown_until FROM activities WHERE telegram_id = ${id} AND shinobi = ${shinobi}`);
 
   if (row.status === 'active') {
+    if (row.kind === 'pet') return { status: 'busy_pet', shinobi, until: row.ends_at };
     return row.kind === kind
       ? { status: 'already_active', shinobi, left: row.ends_at - t, endsAt: row.ends_at }
       : { status: 'busy', shinobi, other: row.kind, left: row.ends_at - t, endsAt: row.ends_at };
@@ -286,10 +338,18 @@ async function dispatch(user, kind, rawName, chatId) {
   }
 
   const roll = rollBase(c);
+  // Capycorn Royal Pace: reductions are locked in when this activity starts.
+  let duration = c.duration;
+  let cooldownSec = c.cooldown;
+  try {
+    const pace = await petTimeReduction(id);
+    duration = reducedActivitySeconds(c.duration, pace.durationFrac);
+    cooldownSec = reducedCooldownSeconds(c.cooldown, pace.cooldownFrac);
+  } catch (e) { console.error('[pet time reduction]', e); }
   const claim = kind === 'mission'
-    ? await db.run(sql`UPDATE activities SET status = 'active', kind = ${kind}, started_at = ${t}, ends_at = ${t + c.duration}, base_roll = ${roll}, chat_id = ${chatId} WHERE telegram_id = ${id} AND shinobi = ${shinobi} AND status = 'idle' AND cooldown_until <= ${t}`)
-    : await db.run(sql`UPDATE activities SET status = 'active', kind = ${kind}, started_at = ${t}, ends_at = ${t + c.duration}, base_roll = ${roll}, chat_id = ${chatId} WHERE telegram_id = ${id} AND shinobi = ${shinobi} AND status = 'idle'`);
-  if (claim.rowsAffected === 0) return { status: 'already_active', shinobi, left: c.duration };
+    ? await db.run(sql`UPDATE activities SET status = 'active', kind = ${kind}, started_at = ${t}, ends_at = ${t + duration}, base_roll = ${roll}, cooldown_sec = ${cooldownSec}, chat_id = ${chatId} WHERE telegram_id = ${id} AND shinobi = ${shinobi} AND status = 'idle' AND cooldown_until <= ${t}`)
+    : await db.run(sql`UPDATE activities SET status = 'active', kind = ${kind}, started_at = ${t}, ends_at = ${t + duration}, base_roll = ${roll}, cooldown_sec = ${cooldownSec}, chat_id = ${chatId} WHERE telegram_id = ${id} AND shinobi = ${shinobi} AND status = 'idle'`);
+  if (claim.rowsAffected === 0) return { status: 'already_active', shinobi, left: duration };
 
   const release = () => db.run(sql`UPDATE activities SET status = 'idle' WHERE telegram_id = ${id} AND shinobi = ${shinobi} AND status = 'active' AND started_at = ${t}`);
   if (c.chakra) {
@@ -305,7 +365,7 @@ async function dispatch(user, kind, rawName, chatId) {
       return { status: 'failed' };
     }
   }
-  return { status: 'ok', shinobi, endsAt: t + c.duration };
+  return { status: 'ok', shinobi, endsAt: t + duration };
 }
 
 // own = true means the text already contains the user's mention.
@@ -322,6 +382,8 @@ function notice(kind, r, user) {
       return kind === 'mission'
         ? { own: true, text: `⚔️ ${m}, ${bold(`${sh} is already on a mission.`)}\n\n🎯 completes at: ${dueText(r.endsAt)}` }
         : { own: true, text: `${quote('🥷 𝐏𝐀𝐓𝐑𝐎𝐋 𝐈𝐍 𝐏𝐑𝐎𝐆𝐑𝐄𝐒𝐒')}\n\n🥷 ${m}\n${EMO[sh]} ${bold(sh)} is still patrolling konoha.\n🏃 returns at: ${dueText(r.endsAt)}` };
+    case 'busy_pet':
+      return { own: true, text: `🐾 ${m}, ${bold(`${sh} is busy with a pet activity.`)}\n\n⏳ free at ${dueText(r.until)}.\n\n» Open /pet to manage your companion.` };
     case 'busy':
       return kind === 'mission'
         ? { own: true, text: `🚪${m}, ${bold(`${sh} is on patrol.`)}\n\n🏃 returns at ${dueText(r.endsAt)}. can't mission until patrol ends.` }
@@ -357,7 +419,10 @@ async function usage(user, kind) {
   const list = mine.length
     ? mine.map((n) => {
         const r = rows.find((x) => x.shinobi === n);
-        if (r && r.status === 'active') return `🥷 ${n}: on ${KINDS[r.kind].word}, ${dur(r.ends_at - t)} left`;
+        if (r && r.status === 'active') {
+          const what = r.kind === 'pet' ? 'pet activity' : KINDS[r.kind].word;
+          return `🥷 ${n}: on ${what}, ${dur(r.ends_at - t)} left`;
+        }
         if (kind === 'mission' && r && r.cooldown_until > t) return `🥷 ${n}: cooldown ${dur(r.cooldown_until - t)}`;
         return `🥷 ${n}: ready`;
       }).join('\n')
@@ -368,6 +433,7 @@ async function usage(user, kind) {
 // Returns { body, dms, status, shinobi }. dms = short DM texts for completed activities.
 export async function runActivity(user, kind, rawName, chatId) {
   await ensureUser(user.id);
+  try { await ensurePetSchema(); } catch (_) {}
   const own = await settleOwn(user);
   const items = own.blocks.map((text) => ({ text }));
   let status = 'usage';

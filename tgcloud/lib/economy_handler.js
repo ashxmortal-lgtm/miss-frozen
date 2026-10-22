@@ -35,6 +35,7 @@ import {
 import { handleSearchTsuna } from '../lib/rpg/tsunade.js';
 import { send, sweepMessages, trackUser } from './chat.js';
 import { groupChatLink } from './telegram_links.js';
+import { handlePetCommand } from './pet/ui.js';
 
 import { MINI_APP_URL, BOT_USERNAME } from './config.js';
 
@@ -58,6 +59,9 @@ function claimBody(r) {
   if (r.bonus) {
     s += `\n\n🎉 𝐃𝐀𝐘 𝟕 𝐁𝐎𝐍𝐔𝐒\n+${fmt(BONUS_COINS)} ${COIN}\n+chakra x ${BONUS_CHAKRA} ⚡`;
   }
+  if (r.petBonus) {
+    s += `\n\n🦋 𝐀𝐗𝐎𝐅𝐋𝐘 𝐅𝐋𝐔𝐓𝐓𝐄𝐑 𝐅𝐎𝐑𝐓𝐔𝐍𝐄\n+${fmt(r.petBonus)} ${COIN}`;
+  }
   s += `\n\nStreak: ${r.streak}/7  ${bar}\nBalance: ${fmt(r.balance)} 🍥`;
   if (r.chakraFailed) s += `\n\n⚠️ Chakra couldn't be added. Contact the owner.`;
   return s;
@@ -70,8 +74,8 @@ async function announceDone() {
     const who = { id: r.id, first_name: r.name };
     const claimKb = {
       inline_keyboard: [[{
-        text: '🏯 Open Hokage Office',
-        callback_data: `map_loc_hokage:${r.id}`,
+        text: r.kind === 'pet' ? '🐾 Open Pets' : '🏯 Open Hokage Office',
+        callback_data: r.kind === 'pet' ? `map_pet_menu:${r.id}` : `map_loc_hokage:${r.id}`,
         style: 'success',
       }]],
     };
@@ -100,7 +104,8 @@ const ECONOMY_CMDS = new Set([
   'mission', 'patrol', 'map', 'ability', 'abilities', 'addcoins',
   'kill', 'rob', 'protect', 'byakugan', 'mt', 'gift', 'gift_store',
   'search_tsuna', 'transfer', 'leaderboard', 'lb',
-  'equip', 'unequip', 'redeem',
+  'equip', 'unequip', 'redeem', 'pet', 'pet_store', 'buy_pet',
+  'equip_pet', 'pet_rename',
   'hug', 'slap', 'punch', 'pat',
   'xoxo', 'rps', 'games', 'xoxo_stats', 'rps_stats',
 ]);
@@ -170,6 +175,11 @@ export async function handleEconomyCommand(message, ctx) {
         console.error('help rich failed:', e?.description || e);
         await reply(message, helpText(user));
       }
+    } else if (
+      cmd === 'pet' || cmd === 'pet_store' || cmd === 'buy_pet'
+      || cmd === 'equip_pet' || cmd === 'pet_rename'
+    ) {
+      await handlePetCommand(message);
     } else if (cmd === 'ability' || cmd === 'abilities') {
       // rich blocks + rich button; classic layout if Telegram refuses
       await richOr(message.chat.id, user, abilityContent(user.id), () =>

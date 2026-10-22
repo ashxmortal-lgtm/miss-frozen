@@ -55,6 +55,20 @@ import { showCatalog, catalogBlocks } from '../gift.js';
 import { storeContent, abilityContent, editRichOr, richOr } from '../rich.js';
 import { abilityText, abilityKeyboard } from '../ability.js';
 import { send } from '../chat.js';
+import { ensureDailyMission, dailyMissionBody } from '../daily.js';
+import { PET_ACTIVITIES } from '../pet/defs.js';
+import {
+  petStoreHtml, petStoreKeyboard, petMenuHtml, petMenuKeyboard,
+  shinobiPickerHtml, shinobiPickerKeyboard, performPetStart, startResultText,
+  petDetailHtml, petDetailKeyboard, petStatsHtml, petFoodHtml, petFoodKeyboard,
+} from '../pet/ui.js';
+import {
+  buyPet, equipPet, buyPetFood, cancelPetActivity, getPetActivity, getEquippedPet,
+} from '../pet/store.js';
+import {
+  propertyStoreBody, propertyStoreKeyboard, buyPropertySolo,
+  claimPropertyEarnings,
+} from '../property.js';
 
 const EMO = {
   Sasuke: '⚔️',
@@ -100,11 +114,14 @@ const LOC_COPY = {
   },
   ichiraku: {
     title: '🍜 ICHIRAKU RAMEN',
-    lines: ['Restore chakra with ramen or prepare a Field Meal.'],
+    lines: ['Restore chakra with ramen or prepare a Field Meal.', 'Buy instant pet food for pet EXP.'],
   },
   bbq: {
     title: '🍖 BBQ',
-    lines: ['Send shinobi here to recover chakra over time (+20 / 30 min).'],
+    lines: [
+      'Send shinobi here to recover chakra over time (+20 / 30 min).',
+      'Feed or play with your pet here. Group-owned BBQ earns the feed fee.',
+    ],
   },
   gate: {
     title: '🚪 VILLAGE GATE',
@@ -116,14 +133,11 @@ const LOC_COPY = {
   },
   hotsprings: {
     title: '♨️ HOT SPRINGS',
-    lines: [
-      'Pet rest is not available in this version (pets omitted).',
-      'This location is reserved for a future update.',
-    ],
+    lines: ['Let your pet rest: +15 energy per hour until you wake it up.'],
   },
   store: {
     title: '🏪 STORES',
-    lines: ['Shinobi Store · Gift Store.'],
+    lines: ['Shinobi Store · Gift Store · Pet Store · Property.'],
   },
 };
 
@@ -432,7 +446,7 @@ async function getEligibleStatus(telegramId, kind) {
       continue;
     }
     if (act && act.status === 'active' && act.ends_at > t) {
-      const actWord = act.kind === 'mission' ? 'mission' : 'patrol';
+      const actWord = act.kind === 'mission' ? 'mission' : act.kind === 'pet' ? 'pet activity' : 'patrol';
       busyNotes.push(`• ${EMO[name] || '🥷'} ${name}: on ${actWord} (returns at ${dueText(act.ends_at, t)})`);
       continue;
     }
@@ -579,7 +593,11 @@ export async function mapSweep(userId) {
 
 function parseCb(data) {
   const parts = String(data || '').split(':');
-  return { action: parts[0] || '', parts, ownerId: Number(parts[parts.length - 1]) || 0 };
+  const action = parts[0] || '';
+  // Pet callbacks mirror the source shape (owner first): map_pet_start:UID:TYPE:SID.
+  let ownerId = Number(parts[parts.length - 1]) || 0;
+  if (action.startsWith('map_pet_') && /^\d+$/.test(parts[1] || '')) ownerId = Number(parts[1]);
+  return { action, parts, ownerId };
 }
 
 export function isMapCallback(data) {
@@ -675,7 +693,6 @@ export async function handleMapCallback(cb) {
       return true;
     }
 
-    // --- Stores ---
     if (action === 'map_store' && parts.length >= 3) {
       const screen = parts[1];
       await answer(cb);
@@ -758,6 +775,175 @@ export async function handleMapCallback(cb) {
         );
         return true;
       }
+    }
+
+
+    // --- Pets: store, menu, activities, food ---
+    if (action === 'map_pet_store') {
+      await answer(cb);
+      await showScreen(chatId, messageId, user, p(await petStoreHtml(user.id)), await petStoreKeyboard(user.id), 'store');
+      return true;
+    }
+
+    if (action === 'map_pet_menu') {
+      await answer(cb);
+      await showScreen(chatId, messageId, user, p(await petMenuHtml(user.id)), petMenuKeyboard(user.id), 'hotsprings');
+      return true;
+    }
+
+    if (action === 'map_pet_buy' && parts.length >= 3) {
+      const r = await buyPet(user.id, parts[1], `map:${cb.id}`);
+      if (r.code === 'ok') await answer(cb, `${r.pet.def.emoji} ${r.pet.name} adopted! /equip_pet to activate.`, true);
+      else if (r.code === 'already_owned') await answer(cb, 'You already own this pet — no coins charged.', true);
+      else if (r.code === 'insufficient') await answer(cb, `Not enough coins: need ${fmt(r.price)} 🍥, have ${fmt(r.balance)} 🍥.`, true);
+      else if (r.code !== 'duplicate') await answer(cb, 'Purchase failed — no coins charged.', true);
+      await showScreen(chatId, messageId, user, p(await petStoreHtml(user.id)), await petStoreKeyboard(user.id), 'store');
+      return true;
+    }
+
+    if (action === 'map_pet_equip' && parts.length >= 3) {
+      const r = await equipPet(user.id, parts[1]);
+      if (r.code === 'ok' || r.code === 'already_equipped') await answer(cb, `${r.pet.name} is now your active companion.`);
+      else await answer(cb, "You don't own that pet.", true);
+      await showScreen(chatId, messageId, user, p(await petStoreHtml(user.id)), await petStoreKeyboard(user.id), 'store');
+      return true;
+    }
+
+    if (action === 'map_pet_view' && parts.length >= 3) {
+      await answer(cb);
+      const activity = await getPetActivity(user.id, parts[1]);
+      await showScreen(
+        chatId, messageId, user, p(await petDetailHtml(user.id, parts[1])),
+        petDetailKeyboard(user.id, parts[1], {
+          resting: activity?.activityType === 'rest' && activity?.status === 'active',
+        }),
+        'store',
+      );
+      return true;
+    }
+
+    if (action === 'map_pet_noop') {
+      await answer(cb, 'That Shinobi is busy with another activity.', true);
+      return true;
+    }
+
+    if (action === 'map_pet_feed' || action === 'map_pet_play' || action === 'map_pet_train') {
+      const type = action.replace('map_pet_', '');
+      const pet = await getEquippedPet(user.id);
+      if (!pet) {
+        await answer(cb, 'Equip a pet first — Store → Pet Store.', true);
+        return true;
+      }
+      await answer(cb);
+      const loc = type === 'train' ? 'training' : 'bbq';
+      await showScreen(
+        chatId, messageId, user,
+        p(await shinobiPickerHtml(user.id, type)),
+        await shinobiPickerKeyboard(user.id, type),
+        loc,
+      );
+      return true;
+    }
+
+    if (action === 'map_pet_rest') {
+      const equippedPet = await getEquippedPet(user.id);
+      const currentAct = equippedPet ? await getPetActivity(user.id, equippedPet.petId) : null;
+      if (currentAct?.status === 'active' && currentAct.activityType === 'rest') {
+        await cancelPetActivity(user.id, equippedPet.petId);
+        await answer(cb, 'Your pet woke up.');
+        await showScreen(chatId, messageId, user, p(await petMenuHtml(user.id)), petMenuKeyboard(user.id), 'hotsprings');
+        return true;
+      }
+      const r = await performPetStart(user.id, 'rest', null, chatId, 'hotsprings', true);
+      await answer(cb, r.code === 'ok' ? 'Your pet is resting. +15 energy / hour.' : startResultText(r, 'rest'), r.code !== 'ok');
+      await showScreen(chatId, messageId, user, p(await petMenuHtml(user.id)), petMenuKeyboard(user.id), 'hotsprings');
+      return true;
+    }
+
+    if (action === 'map_pet_start' && parts.length >= 4) {
+      const type = parts[2];
+      const shinobi = parts.slice(3).join(':');
+      const loc = type === 'train' ? 'training' : 'bbq';
+      const r = await performPetStart(user.id, type, shinobi, chatId, loc, true);
+      if (r.code === 'ok') {
+        await answer(cb, `${PET_ACTIVITIES[type]?.label || type} started.`);
+      } else {
+        await answer(cb, startResultText(r, type), true);
+        await showScreen(
+          chatId, messageId, user,
+          p(await shinobiPickerHtml(user.id, type)),
+          await shinobiPickerKeyboard(user.id, type),
+          loc,
+        );
+        return true;
+      }
+      const pet = await getEquippedPet(user.id);
+      const petId = pet?.petId || 'axofly';
+      const resultLine = escapeHtml(startResultText(r, type)).replace(/\n/g, '<br>');
+      const body = `<p><b>${type === 'rest' ? '♨️ PET REST' : '🐾 PET ACTIVITY'}</b></p><p>${resultLine}</p>`
+        + p(await petDetailHtml(user.id, petId));
+      await showScreen(chatId, messageId, user, body, petDetailKeyboard(user.id, petId), loc);
+      return true;
+    }
+
+    if (action === 'map_pet_cancel_rest' || action === 'map_pet_stop') {
+      const pet = await getEquippedPet(user.id);
+      const petId = parts.length >= 3 && !/^\d+$/.test(parts[1]) ? parts[1] : pet?.petId;
+      const r = petId ? await cancelPetActivity(user.id, petId) : { code: 'no_pet' };
+      await answer(cb, r.code === 'ok' ? 'Your pet woke up.' : 'This pet is not resting.', r.code !== 'ok');
+      await showScreen(chatId, messageId, user, p(await petMenuHtml(user.id)), petMenuKeyboard(user.id), 'hotsprings');
+      return true;
+    }
+
+    if (action === 'map_pet_stats') {
+      await answer(cb);
+      await showScreen(chatId, messageId, user, p(await petStatsHtml(user.id)), petMenuKeyboard(user.id), 'hotsprings');
+      return true;
+    }
+
+    if (action === 'map_pet_food') {
+      await answer(cb);
+      await showScreen(chatId, messageId, user, locBody('🍱 ICHIRAKU PET FOOD', await petFoodHtml(user)), petFoodKeyboard(user.id, 'map_pet_food_buy'), 'ichiraku');
+      return true;
+    }
+
+    if (action === 'map_pet_food_buy' && parts.length >= 3) {
+      const r = await buyPetFood(user.id, parts[1], `map:${cb.id}`, chatId);
+      if (r.code === 'ok') {
+        await answer(cb, `${r.emoji} ${r.name}: +${r.petXp} pet XP${r.levelUp ? ` · Lv. ${r.level}!` : ''}`, true);
+      } else if (r.code === 'no_pet') await answer(cb, 'Adopt a pet first.', true);
+      else if (r.code === 'insufficient') await answer(cb, `Not enough coins: need ${fmt(r.cost)} 🍥, have ${fmt(r.balance)} 🍥.`, true);
+      else if (r.code !== 'duplicate') await answer(cb, 'Purchase failed — no coins charged.', true);
+      await showScreen(chatId, messageId, user, locBody('🍱 ICHIRAKU PET FOOD', await petFoodHtml(user)), petFoodKeyboard(user.id, 'map_pet_food_buy'), 'ichiraku');
+      return true;
+    }
+
+    // --- Property (BBQ / Ichiraku ownership) ---
+    if (action === 'map_prop_store') {
+      await answer(cb);
+      await showScreen(chatId, messageId, user, await propertyStoreBody(chatId, user.id), await propertyStoreKeyboard(chatId, user.id), 'store');
+      return true;
+    }
+
+    if (action === 'map_prop_buy' && parts.length >= 3) {
+      const r = await buyPropertySolo(chatId, user.id, parts[1], cb.id);
+      if (r.code === 'ok') await answer(cb, `${r.property.name} bought!`, true);
+      else if (r.code === 'owned') await answer(cb, 'This property is already owned.', true);
+      else if (r.code === 'insufficient') await answer(cb, `Not enough coins: need ${fmt(r.price)} 🍥, have ${fmt(r.balance)} 🍥.`, true);
+      else if (r.code === 'group_only') await answer(cb, 'Properties can only be bought in a group.', true);
+      else await answer(cb, 'Purchase failed — no coins charged.', true);
+      await showScreen(chatId, messageId, user, await propertyStoreBody(chatId, user.id), await propertyStoreKeyboard(chatId, user.id), 'store');
+      return true;
+    }
+
+    if (action === 'map_prop_claim' && parts.length >= 3) {
+      const r = await claimPropertyEarnings(chatId, user.id, parts[1]);
+      if (r.code === 'ok') await answer(cb, `Claimed ${fmt(r.amount)} 🍥`, true);
+      else if (r.code === 'nothing') await answer(cb, 'Nothing to claim yet.', true);
+      else if (r.code === 'not_owner') await answer(cb, 'You are not an owner of this property.', true);
+      else await answer(cb, 'Property not found here.', true);
+      await showScreen(chatId, messageId, user, await propertyStoreBody(chatId, user.id), await propertyStoreKeyboard(chatId, user.id), 'store');
+      return true;
     }
 
     // --- Hokage: mission hub ---
@@ -909,7 +1095,15 @@ export async function handleMapCallback(cb) {
     }
 
     if (action === 'map_daily') {
-      await answer(cb, 'Daily Quest coming soon.', true);
+      await answer(cb);
+      const mission = await ensureDailyMission(user.id, chatId);
+      const kb = {
+        inline_keyboard: [
+          [{ text: '🔄 Refresh', callback_data: guard('map_daily', user.id) }],
+          [{ text: '← Back', callback_data: guard('map_loc_hokage', user.id), style: 'danger' }],
+        ],
+      };
+      await showScreen(chatId, messageId, user, dailyMissionBody(user, mission), kb, 'hokage');
       return true;
     }
 

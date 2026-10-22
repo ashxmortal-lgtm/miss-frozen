@@ -65,6 +65,8 @@ export const activities = table('activities', {
   cooldownUntil: integer('cooldown_until').notNull().default(0),
   baseRoll: integer('base_roll').notNull().default(0),
   chatId: integer('chat_id').notNull().default(0),
+  // Cooldown scheduled at dispatch (Capycorn can reduce it); 0 = kind default.
+  cooldownSec: integer('cooldown_sec').notNull().default(0),
 }, (t) => ({
   owner: uniqueIndex('uidx_activities_owner_shinobi').on(t.telegramId, t.shinobi),
 }));
@@ -468,4 +470,115 @@ export const mapMissionSelection = table('map_mission_selection', {
   shinobi: text('shinobi').notNull(),
 }, (t) => ({
   pk: uniqueIndex('uidx_map_mission_selection').on(t.telegramId, t.shinobi),
+}));
+
+// ---- Pet System V1 + BBQ property layer (additive) ----
+
+/** Owned pets: one row per user per pet, energy timestamped for offline regen. */
+export const userPets = table('user_pets', {
+  telegramId: integer('telegram_id').notNull(),
+  petId: text('pet_id').notNull(),
+  petName: text('pet_name'),
+  xp: integer('xp').notNull().default(0),
+  energy: integer('energy').notNull().default(100),
+  lastEnergyAt: integer('last_energy_at').notNull().default(0),
+  equipped: integer('equipped').notNull().default(0),
+  acquiredAt: integer('acquired_at').notNull().default(0),
+  // Per-activity cooldowns (source stores them on the pet, fixed at completion).
+  feedCooldownUntil: integer('feed_cooldown_until').notNull().default(0),
+  playCooldownUntil: integer('play_cooldown_until').notNull().default(0),
+  trainCooldownUntil: integer('train_cooldown_until').notNull().default(0),
+}, (t) => ({
+  pk: uniqueIndex('uidx_user_pets').on(t.telegramId, t.petId),
+}));
+
+export const equippedPet = table('equipped_pet', {
+  telegramId: integer('telegram_id').primaryKey(),
+  petId: text('pet_id').notNull(),
+  updatedAt: integer('updated_at').notNull().default(0),
+});
+
+/** Timed pet activity. Live cooldowns live on user_pets; cooldown_until is reserved. */
+export const petActivity = table('pet_activity', {
+  telegramId: integer('telegram_id').notNull(),
+  petId: text('pet_id').notNull(),
+  activityType: text('activity_type').notNull(),
+  status: text('status').notNull().default('active'),
+  startedAt: integer('started_at').notNull().default(0),
+  endsAt: integer('ends_at').notNull().default(0),
+  cooldownUntil: integer('cooldown_until').notNull().default(0),
+  chatId: integer('chat_id').notNull().default(0),
+  shinobiName: text('shinobi_name'),
+}, (t) => ({
+  pk: uniqueIndex('uidx_pet_activity').on(t.telegramId, t.petId),
+}));
+
+export const petStats = table('pet_stats', {
+  telegramId: integer('telegram_id').primaryKey(),
+  feedCount: integer('feed_count').notNull().default(0),
+  playCount: integer('play_count').notNull().default(0),
+  trainCount: integer('train_count').notNull().default(0),
+  restCount: integer('rest_count').notNull().default(0),
+  rewardTriggers: integer('reward_triggers').notNull().default(0),
+  xpEarned: integer('xp_earned').notNull().default(0),
+});
+
+export const specialInventory = table('special_inventory', {
+  telegramId: integer('telegram_id').notNull(),
+  itemKey: text('item_key').notNull(),
+  quantity: integer('quantity').notNull().default(0),
+}, (t) => ({
+  pk: uniqueIndex('uidx_special_inventory').on(t.telegramId, t.itemKey),
+}));
+
+/** Group-owned BBQ/Ichiraku earnings, split by owner shares. */
+export const propertyOwnership = table('property_ownership', {
+  groupId: integer('group_id').notNull(),
+  propertyId: text('property_id').notNull(),
+  ownershipType: text('ownership_type').notNull().default('solo'),
+  owner1: integer('owner_1').notNull(),
+  owner2: integer('owner_2'),
+  share1: integer('share_1').notNull().default(100),
+  share2: integer('share_2').notNull().default(0),
+  pending1: integer('pending_1').notNull().default(0),
+  pending2: integer('pending_2').notNull().default(0),
+  storedEarnings: integer('stored_earnings').notNull().default(0),
+  acquiredAt: integer('acquired_at').notNull().default(0),
+}, (t) => ({
+  pk: uniqueIndex('uidx_property_ownership').on(t.groupId, t.propertyId),
+}));
+
+export const propertyPartnershipRequests = table('property_partnership_requests', {
+  groupId: integer('group_id').notNull(),
+  propertyId: text('property_id').notNull(),
+  requesterId: integer('requester_id').notNull(),
+  targetId: integer('target_id').notNull(),
+  createdAt: integer('created_at').notNull().default(0),
+}, (t) => ({
+  pk: uniqueIndex('uidx_property_partnership').on(t.groupId, t.propertyId, t.requesterId, t.targetId),
+}));
+
+/** One daily mission assignment per user per IST cycle. */
+export const dailyMissions = table('daily_missions', {
+  userId: integer('user_id').notNull(),
+  cycleDate: text('cycle_date').notNull(),
+  missionId: text('mission_id').notNull(),
+  requirementType: text('requirement_type').notNull(),
+  targetCount: integer('target_count').notNull().default(1),
+  progress: integer('progress').notNull().default(0),
+  rewardCoins: integer('reward_coins').notNull().default(0),
+  status: text('status').notNull().default('assigned'),
+  assignedAt: integer('assigned_at').notNull().default(0),
+  completedAt: integer('completed_at'),
+  rewardSettled: integer('reward_settled').notNull().default(0),
+  rewardSettlementKey: text('reward_settlement_key'),
+  sourceChatId: integer('source_chat_id'),
+  lastEventKey: text('last_event_key'),
+  missionName: text('mission_name'),
+  missionEmoji: text('mission_emoji'),
+  missionDescription: text('mission_description'),
+  difficulty: text('difficulty'),
+}, (t) => ({
+  pk: uniqueIndex('uidx_daily_missions').on(t.userId, t.cycleDate),
+  statusIdx: index('idx_daily_missions_status').on(t.status),
 }));

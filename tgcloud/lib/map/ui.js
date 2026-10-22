@@ -85,6 +85,7 @@ export function ichirakuKeyboard(userId) {
         btn('🍜 Ramen', guard('map_ichi_cat_ramen', userId)),
         btn('⚡ Field Meals', guard('map_ichi_cat_field', userId)),
       ],
+      [btn('🍱 Pet Food', guard('map_pet_food', userId))],
       backToMapRow(userId),
     ],
   };
@@ -99,6 +100,10 @@ export function bbqKeyboard(userId) {
         btn('Recall', guard('map_bbq_recall', userId)),
       ],
       [btn('🔥 Heal Exhaustion (200 🍥 each)', guard('map_bbq_heal', userId))],
+      [
+        btn('🍖 Feed Pet', guard('map_pet_feed', userId)),
+        btn('🎾 Play with Pet', guard('map_pet_play', userId)),
+      ],
       backToMapRow(userId),
     ],
   };
@@ -110,6 +115,7 @@ export function trainingKeyboard(userId) {
     inline_keyboard: [
       [btn('🌸 Sakura Training (Tsunade)', guard('map_train_sakura', userId))],
       [btn('🍥 Naruto Training (Jiraiya)', guard('map_train_naruto', userId))],
+      [btn('🐾 Train Pet', guard('map_pet_train', userId))],
       backToMapRow(userId),
     ],
   };
@@ -117,7 +123,11 @@ export function trainingKeyboard(userId) {
 
 export function hotspringsKeyboard(userId) {
   return {
-    inline_keyboard: [backToMapRow(userId)],
+    inline_keyboard: [
+      [btn('♨️ Rest Pet', guard('map_pet_rest', userId))],
+      [btn('🐾 My Pets', guard('map_pet_menu', userId))],
+      backToMapRow(userId),
+    ],
   };
 }
 
@@ -128,6 +138,10 @@ export function storeKeyboard(userId) {
       [
         btn('Shinobi Store', guard('map_open_shinobi_store', userId)),
         btn('Gift Store', guard('map_open_gift_store', userId)),
+      ],
+      [
+        btn('🐾 Pet Store', guard('map_pet_store', userId)),
+        btn('🏠 Property', guard('map_prop_store', userId)),
       ],
       backToMapRow(userId),
     ],

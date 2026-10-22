@@ -3,6 +3,8 @@ import { db } from 'sdk';
 import { eq, sql } from 'sdk/db';
 import { users } from '../schema.js';
 import { sakuraClaimBonus } from './rpg/levels.js';
+import { petRewardBonus, petShinobiXpMultiplier } from './pet/store.js';
+import { notifyDailyProgress } from './daily.js';
 
 export const DAILY_COINS = 500;
 export const DAILY_CHAKRA = 100;
@@ -76,12 +78,29 @@ export async function claimDaily(id) {
   }
   const coins = DAILY_COINS + (bonus ? BONUS_COINS : 0) + sakuraCoins;
   const chakra = DAILY_CHAKRA + (bonus ? BONUS_CHAKRA : 0) + sakuraChakra;
+  // Axofly Flutter Fortune: flat % on Shinobi XP (floored like the source).
+  let xpGain = DAILY_XP;
+  try {
+    const mult = await petShinobiXpMultiplier(id);
+    if (mult > 1) xpGain = Math.floor(DAILY_XP * mult);
+  } catch (e) { console.error('[claim pet xp]', e); }
 
   // One guarded statement: only the first request of the day pays.
-  const res = await db.run(sql`UPDATE users SET balance = balance + ${coins}, xp = xp + ${DAILY_XP}, last_claim_date = ${today}, claim_streak = ${streak} WHERE telegram_id = ${id} AND (last_claim_date IS NULL OR last_claim_date != ${today})`);
+  const res = await db.run(sql`UPDATE users SET balance = balance + ${coins}, xp = xp + ${xpGain}, last_claim_date = ${today}, claim_streak = ${streak} WHERE telegram_id = ${id} AND (last_claim_date IS NULL OR last_claim_date != ${today})`);
   if (res.rowsAffected === 0) {
     return { claimed: false, streak, balance: await getBalance(id) };
   }
+
+  // Reward bonus is a separate additive credit after the guarded flip.
+  let petBonus = 0;
+  try {
+    const fortune = await petRewardBonus(id, coins);
+    if (fortune.bonus > 0) {
+      petBonus = fortune.bonus;
+      await db.run(sql`UPDATE users SET balance = balance + ${petBonus} WHERE telegram_id = ${id}`);
+    }
+  } catch (e) { console.error('[claim pet bonus]', e); }
+  try { await notifyDailyProgress(id, 'shinobi_xp', `claim:${id}:${today}`); } catch (e) { console.error('[claim daily]', e); }
 
   let chakraFailed = false;
   for (let i = 0; i < 2; i++) {
@@ -94,5 +113,5 @@ export async function claimDaily(id) {
       chakraFailed = true;
     }
   }
-  return { claimed: true, streak, bonus, sakura, sakuraCoins, sakuraChakra, coins, chakra, xp: DAILY_XP, chakraFailed, balance: await getBalance(id) };
+  return { claimed: true, streak, bonus, sakura, sakuraCoins, sakuraChakra, coins, petBonus, chakra, xp: xpGain, chakraFailed, balance: await getBalance(id) };
 }

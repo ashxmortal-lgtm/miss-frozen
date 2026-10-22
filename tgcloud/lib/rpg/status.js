@@ -15,7 +15,7 @@ export const SHINOBI_EMO = {
   Hinata: '👁️', Jiraiya: '🐸', Tsunade: '🐌', 'Starter Shinobi': '🥷',
 };
 
-const ACT_WORD = { patrol: 'Patrol', mission: 'Mission' };
+const ACT_WORD = { patrol: 'Patrol', mission: 'Mission', pet: 'Pet activity' };
 
 /** Catalog display names for roster UIs. */
 export const FULL_NAMES = {
@@ -76,7 +76,7 @@ export async function collectStatus(telegramId) {
     if (name === 'Starter Shinobi') {
       if (act && act.status === 'active' && act.ends_at > t) {
         const label = `${ACT_WORD[act.kind] || 'Activity'}`;
-        primary = { key: act.kind, icon: act.kind === 'mission' ? '⚔️' : '🏃', label, due: dueText(act.ends_at, t), dueAt: act.ends_at };
+        primary = { key: act.kind, icon: act.kind === 'mission' ? '⚔️' : act.kind === 'pet' ? '🐾' : '🏃', label, due: dueText(act.ends_at, t), dueAt: act.ends_at };
       } else if (isExhausted(state, t)) {
         primary = { key: 'exhausted', icon: '🔥', label: 'Exhausted', due: `Ready at ${dueText(state.exhaustedUntil, t)}`, dueAt: state.exhaustedUntil };
       } else {
@@ -86,7 +86,7 @@ export async function collectStatus(telegramId) {
       primary = { key: 'dead', icon: '☠️', label: 'Dead', due: dueText(state.deadUntil, t), dueAt: state.deadUntil };
     } else if (act && act.status === 'active' && act.ends_at > t) {
       const label = `${ACT_WORD[act.kind] || 'Activity'}`;
-      primary = { key: act.kind, icon: act.kind === 'mission' ? '⚔️' : '🏃', label, due: dueText(act.ends_at, t), dueAt: act.ends_at };
+      primary = { key: act.kind, icon: act.kind === 'mission' ? '⚔️' : act.kind === 'pet' ? '🐾' : '🏃', label, due: dueText(act.ends_at, t), dueAt: act.ends_at };
     } else if (searchActive && (name === 'Naruto' || name === 'Jiraiya')) {
       primary = {
         key: 'searching', icon: '🔎',

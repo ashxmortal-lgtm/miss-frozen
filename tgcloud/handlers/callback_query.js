@@ -14,12 +14,14 @@ import {
 import { handleGamesCallback, isGamesCallback } from '../lib/games/handler.js';
 import { handleMapCallback, isMapCallback } from '../lib/map/handler.js';
 import { handleSupportCallback } from '../lib/support_inbox.js';
+import { handlePetCallback } from '../lib/pet/ui.js';
 
 export default async function (cq) {
   if (await handleSupportCallback(cq)) return;
   // Combat callbacks first so no other handler can claim or delay them.
   if (isCloneCallback(cq.data)) return handleCloneCallback(cq);
   if (isByakuganCallback(cq.data)) return handleByakuganCallback(cq);
+  if (await handlePetCallback(cq)) return;
   if (isMapCallback(cq.data)) {
     const handled = await handleMapCallback(cq);
     if (handled) return;
