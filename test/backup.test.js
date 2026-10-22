@@ -1,6 +1,33 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { SOURCE_SNAPSHOT } from '../tgcloud/lib/source_snapshot.js';
+
+const libDir = fileURLToPath(new URL('../tgcloud/lib/', import.meta.url));
+
+// TGCloud rejects any single module above this size; a deploy of the owner
+// backup failed once the snapshot grew past it, so the generator splits the
+// snapshot into parts. Keep that guarantee under test.
+const TGCLOUD_MODULE_LIMIT_BYTES = 1_048_576;
+
+test('generated snapshot modules stay under the TGCloud module size limit', () => {
+  const modules = fs
+    .readdirSync(libDir)
+    .filter((name) => /^source_snapshot(_\d+)?\.js$/.test(name));
+
+  assert(modules.includes('source_snapshot.js'), 'aggregate snapshot module is missing');
+  assert(modules.length >= 2, 'snapshot should be split into parts at the current size');
+
+  for (const name of modules) {
+    const { size } = fs.statSync(path.join(libDir, name));
+    assert(
+      size <= TGCLOUD_MODULE_LIMIT_BYTES,
+      `${name} is ${size} bytes, over the ${TGCLOUD_MODULE_LIMIT_BYTES}-byte TGCloud module limit`
+    );
+  }
+});
 
 test('SOURCE_SNAPSHOT contains complete project files and no sensitive data', () => {
   assert(Array.isArray(SOURCE_SNAPSHOT), 'SOURCE_SNAPSHOT should be an array');

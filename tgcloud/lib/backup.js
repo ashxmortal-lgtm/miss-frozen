@@ -136,8 +136,11 @@ async function notice(chatId, text) {
 }
 
 // Sends a complete restorable snapshot of the project source code, config,
-// project files and documentation. Refresh source_snapshot.js after changing
-// project files, then redeploy. This does not read the runtime filesystem.
+// project files and documentation. Refresh the generated modules with
+// `npm run generate:snapshot` after changing project files, then redeploy.
+// The generator keeps every module under the TGCloud size limit, splitting the
+// data into source_snapshot_N.js parts behind the source_snapshot.js facade.
+// This does not read the runtime filesystem.
 export async function runFullBackup(requesterChatId) {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   try {

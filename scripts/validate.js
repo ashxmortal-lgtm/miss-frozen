@@ -23,9 +23,11 @@ function getAllJsFiles(dir) {
 }
 
 const jsFiles = getAllJsFiles(repoRoot);
+const isSnapshotModule = (file) => /source_snapshot(_\d+)?\.js$/.test(file);
 console.log(`Checking syntax of ${jsFiles.length} JavaScript files...`);
 for (const file of jsFiles) {
-  if (file.endsWith('source_snapshot.js')) continue;
+  // Generated snapshot modules embed source code as strings; skip them.
+  if (isSnapshotModule(file)) continue;
   try {
     execFileSync('node', ['--check', file], { stdio: 'pipe' });
   } catch (err) {
@@ -41,7 +43,7 @@ let importFailures = 0;
 const importRegex = /(?:import|export)\s+(?:(?:(?:\w+|\{[^}]*\}|\*\s+as\s+\w+)\s+from\s+)?['"](\.[^'"]+)['"])/g;
 
 for (const file of jsFiles) {
-  if (file.endsWith('source_snapshot.js')) continue;
+  if (isSnapshotModule(file)) continue;
   const content = fs.readFileSync(file, 'utf8');
   let match;
   while ((match = importRegex.exec(content)) !== null) {
