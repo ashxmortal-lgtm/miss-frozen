@@ -19,12 +19,11 @@ import {
   getUserSkills, setUserSkills, getEquipped, getEquippedList, isEquipped, ownedSet, activateProtection,
 } from './state.js';
 import {
-  itachiRobPct, cloneWindowSec,
-  KILL_COINS_MIN, KILL_COINS_MAX, ROB_LOCKOUT_SEC, BYAKUGAN_COOLDOWN_SEC,
+  itachiRobPct, itachiKillReward, cloneWindowSec,
+  ROB_LOCKOUT_SEC, BYAKUGAN_COOLDOWN_SEC,
 } from './levels.js';
 
 const now = () => Math.floor(Date.now() / 1000);
-const rand = (min, max) => min + Math.floor(Math.random() * (max - min + 1));
 
 /** Delay helper — setTimeout is missing in some cloud runtimes. */
 let _sleepFn = null;
@@ -160,7 +159,8 @@ export async function killTarget(attackerId, targetId, targetShinobi) {
   }
   const reviveAt = death.until;
 
-  const coins = rand(KILL_COINS_MIN, KILL_COINS_MAX);
+  const attacker = await db.get(sql`SELECT kills FROM users WHERE telegram_id = ${attackerId}`);
+  const coins = itachiKillReward(attacker?.kills || 0);
   await db.run(sql`
     UPDATE users SET balance = balance + ${coins}, kills = kills + 1
     WHERE telegram_id = ${attackerId}

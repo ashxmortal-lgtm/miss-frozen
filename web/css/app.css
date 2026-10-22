@@ -552,7 +552,24 @@ textarea.goal-input:focus {
   color: var(--muted);
   font-size: 12px;
 }
-.credit a { color: var(--accent-glow); font-weight: 600; }
+.credit a {
+  color: var(--accent-glow);
+  font-weight: 600;
+  font-size: 20px;
+  line-height: 1.6;
+  display: inline-block;
+  padding: 6px 2px;
+}
+.credit-snowflake {
+  display: inline-block;
+  animation: credit-snowflake-turn 16s linear infinite;
+}
+@keyframes credit-snowflake-turn {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .credit-snowflake { animation: none; }
+}
 
 /* Slight pop / raised look */
 .mode, .item, .card, .link-card, .hero-card, .stat-tile, .chapter {

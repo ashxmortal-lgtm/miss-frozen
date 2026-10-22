@@ -1,8 +1,9 @@
+import { mention } from './texts.js';
 import { db } from 'sdk';
 import { sql } from 'sdk/db';
 
-export const STARTER_NOTICE =
-  `🎁 𝐒𝐓𝐀𝐑𝐓𝐄𝐑 𝐒𝐇𝐈𝐍𝐎𝐁𝐈\n\nStarter Shinobi joined your roster for free.\nUse /patrol to send it out.`;
+export const STARTER_NOTICE = (user) =>
+  `🎁 𝐒𝐓𝐀𝐑𝐓𝐄𝐑 𝐒𝐇𝐈𝐍𝐎𝐁𝐈\n\n❄️ ${mention(user)} — ᴀ ɴᴇᴡ ꜱʜɪɴᴏʙɪ ʜᴀꜱ ᴊᴏɪɴᴇᴅ ᴜʀ ᴛᴇᴀᴍ — ᴄᴏᴍᴘʟᴇᴛᴇʟʏ ꜰʀᴇᴇ! 🎉\n\n🥷 ᴜꜱᴇ /inventory ᴛᴏ ᴄʜᴇᴄᴋ ᴜʀ ꜱʜɪɴᴏʙɪꜱ.`;
 
 // Free, permanent, never sold. The unique inventory index makes it
 // grant only once per user. Returns true only on the first grant.

@@ -124,7 +124,7 @@
   }
 
   function footer() {
-    return '<p class="credit">created by <a href="https://t.me/frozenblooded" data-url="https://t.me/frozenblooded">𝑭𝒓❄️𝒛𝒆𝒏 𝑩𝒍𝒐𝒐𝒅𝒆𝒅</a></p>';
+    return '<p class="credit">created by <a href="https://t.me/frozenblooded" data-url="https://t.me/frozenblooded">𝑭𝒓<span class="credit-snowflake">❄️</span>𝒛𝒆𝒏 𝑩𝒍𝒐𝒐𝒅𝒆𝒅</a></p>';
   }
 
   function shell(inner) {

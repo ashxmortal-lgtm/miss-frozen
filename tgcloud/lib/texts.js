@@ -35,7 +35,7 @@ export function mention(user) {
 }
 
 
-// Mention on the first line, blank line, then the content, in the bot font.
+// Shared replies no longer prepend an unrelated mention header.
 export function render(user, body) {
-  return style(`${mention(user)}\n\n${body}`);
+  return style(body);
 }

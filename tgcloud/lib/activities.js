@@ -381,7 +381,7 @@ export async function runActivity(user, kind, rawName, chatId) {
     items.push(await usage(user, kind));
   }
   const body = items
-    .map((it, i) => (i === 0 && !it.own ? `${mention(user)}\n\n${it.text}` : it.text))
+    .map((it) => it.text)
     .join('\n\n');
   return { body, dms: own.dms, status, shinobi };
 }

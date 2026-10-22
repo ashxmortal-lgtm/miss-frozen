@@ -29,10 +29,14 @@ export default async function (message, ctx) {
 
   // Fixed, whitelisted deep-link payloads from the Mini App.
   if (message.chat?.type === 'private') {
-    const start = String(message.text || '').trim().match(/^\/start(?:@\w+)?\s+(mini_map|mini_owner|owner)$/i);
+    const start = String(message.text || '').trim().match(/^\/start(?:@\w+)?\s+(mini_map|mini_claim|mini_owner|owner)$/i);
     const key = start && start[1].toLowerCase();
     if (key === 'mini_owner' || key === 'owner') {
       await handleSupportCommand({ ...message, text: '/owner' });
+      return;
+    }
+    if (key === 'mini_claim') {
+      await handleEconomyCommand({ ...message, text: '/claim' }, ctx);
       return;
     }
     if (key === 'mini_map') {

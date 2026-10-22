@@ -36,7 +36,7 @@ import { handleSearchTsuna } from '../lib/rpg/tsunade.js';
 import { send, sweepMessages, trackUser } from './chat.js';
 import { groupChatLink } from './telegram_links.js';
 
-import { BOT_USERNAME } from './config.js';
+import { MINI_APP_URL, BOT_USERNAME } from './config.js';
 
 function reply(message, body, extra = {}) {
   return send(message.chat.id, {
@@ -154,7 +154,7 @@ export async function handleEconomyCommand(message, ctx) {
     try { await trackGroup(message); } catch (e) { console.error(e); }
     let starterNew = false;
     try { starterNew = await grantStarter(user); } catch (e) { console.error(e); }
-    if (starterNew) await reply(message, STARTER_NOTICE);
+    if (starterNew) await reply(message, STARTER_NOTICE(user));
 
     if (cmd === 'start') {
       await sendWelcome(message.chat.id, user);
@@ -164,7 +164,7 @@ export async function handleEconomyCommand(message, ctx) {
         const blocks = await buildUserHelpBlocks(user);
         await api.sendRichMessage({
           chat_id: message.chat.id,
-          rich_message: { blocks },
+          rich_message: { blocks, skip_entity_detection: false },
         });
       } catch (e) {
         console.error('help rich failed:', e?.description || e);
@@ -188,7 +188,9 @@ export async function handleEconomyCommand(message, ctx) {
     } else if (cmd === 'mission' || cmd === 'patrol') {
       if (message.chat.type === 'private') {
         await richOr(message.chat.id, user, groupOnlyContent(cmd), () =>
-          reply(message, `「𝐆𝐑𝐎𝐔𝐏 𝐂𝐎𝐌𝐌𝐀𝐍𝐃」\n\n/${cmd} works in groups only.\n\n» Use it in a group where I am a member.`));
+          reply(message, cmd === 'mission'
+            ? '𝐆𝐑𝐎𝐔𝐏 𝐂𝐎𝐌𝐌𝐀𝐍𝐃 🏘️\n\n⚠️ /mission &lt;shinobi name&gt; ᴡᴏʀᴋꜱ ɪɴ ɢʀᴏᴜᴘꜱ ᴏɴʟʏ.\n\n» ᴜꜱᴇ ɪᴛ ɪɴ ᴀ ɢʀᴏᴜᴘ ᴡʜᴇʀᴇ ɪ ᴀᴍ ᴀ ᴍᴇᴍʙᴇʀ! ❄️'
+            : '𝐆𝐑𝐎𝐔𝐏 𝐂𝐎𝐌𝐌𝐀𝐍𝐃\n\n/patrol ᴡᴏʀᴋꜱ ɪɴ ɢʀᴏᴜᴘꜱ ᴏɴʟʏ.\n\n» ᴜꜱᴇ ɪᴛ ɪɴ ᴀ ɢʀᴏᴜᴘ ᴡʜᴇʀᴇ ɪ ᴀᴍ ᴀ ᴍᴇᴍʙᴇʀ..'));
       } else {
         const arg = text.trim().split(/\s+/).slice(1).join(' ');
         const r = await runActivity(user, cmd, arg || null, message.chat.id);
@@ -230,11 +232,12 @@ export async function handleEconomyCommand(message, ctx) {
         reply_parameters: { message_id: message.message_id },
       });
     } else if (cmd === 'claim' || cmd === 'daily') {
-      if (message.chat.type !== 'private') {
-        await reply(message, `Please use /Claim in the bot's DM: @${BOT_USERNAME}`);
-        return;
-      }
-      await reply(message, claimBody(await claimDaily(user.id)));
+      const claimButton = message.chat.type === 'private'
+        ? { text: 'Claim', web_app: { url: MINI_APP_URL } }
+        : { text: 'Claim', url: `https://t.me/${BOT_USERNAME}?start=mini_claim` };
+      await reply(message, '🎁 ᴏᴘᴇɴ ᴛʜᴇ ᴍɪɴɪ ᴀᴘᴘ ᴛᴏ ᴄʟᴀɪᴍ ᴜʀ ᴅᴀɪʟʏ ʀᴇᴡᴀʀᴅ! 😁❄️', {
+        reply_markup: { inline_keyboard: [[claimButton]] },
+      });
     } else if (cmd === 'balance') {
       await send(message.chat.id, {
         text: style(await balanceText(message)),
@@ -278,11 +281,11 @@ async function classicEdit(msg, text, markup) {
 }
 
 async function editStoreScreen(msg, user, screen) {
-  const balance = screen === 'main' ? await getBalance(user.id) : null;
-  const markup = screenKeyboard(screen, user.id, {
-    includeMiniApp: msg.chat.type === 'private' && screen === 'main',
+  const options = { includeMiniApp: msg.chat.type === 'private' };
+  return editRichOr(msg, user, await storeContent(screen, user.id, options), async () => {
+    const balance = screen === 'main' ? await getBalance(user.id) : null;
+    return classicEdit(msg, render(user, screenText(screen, balance)), screenKeyboard(screen, user.id, options));
   });
-  return classicEdit(msg, render(user, screenText(screen, balance)), markup);
 }
 
 export async function handleEconomyCallback(cb) {
@@ -480,7 +483,7 @@ async function handleLeaderboard(message) {
     try {
       await api.sendRichMessage({
         chat_id: message.chat.id,
-        rich_message: { blocks },
+        rich_message: { blocks, skip_entity_detection: false },
       });
     } catch (e) {
       // Fallback classic with mentions for all
@@ -528,7 +531,7 @@ async function sendGlobalLeaderboard(chatId) {
   try {
     await api.sendRichMessage({
       chat_id: chatId,
-      rich_message: { blocks },
+      rich_message: { blocks, skip_entity_detection: false },
     });
   } catch (e) {
     let body = `🌍 <b>Global Leaderboard</b>\n\n`;

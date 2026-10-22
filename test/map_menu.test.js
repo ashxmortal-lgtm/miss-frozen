@@ -13,25 +13,32 @@ const render = new Function('escapeHtml', `${helpers}; return richHtml;`)(
 
 test('Konoha location menu preserves all labels, actions and compact row ordering', () => {
   const rows = mapKeyboard(42).inline_keyboard;
-  assert.deepEqual(rows.map((r) => r.length), [2, 2, 2, 1, 1]);
+  assert.deepEqual(rows.map((r) => r.length), [3, 3, 2, 1]);
   assert.deepEqual(rows.flat().map(({ text, callback_data }) => [text, callback_data]), [
     ['🏯 Hokage', 'map_loc_hokage:42'],
-    ['🍜 Ichiraku', 'map_loc_ichiraku:42'],
+    ['🍜 Ramen', 'map_loc_ichiraku:42'],
     ['🍖 BBQ', 'map_loc_bbq:42'],
-    ['🚪 Gate', 'map_loc_gate:42'],
     ['🥷 Training', 'map_loc_training:42'],
-    ['♨️ Hot Springs', 'map_loc_hotsprings:42'],
+    ['🚪 Gate', 'map_loc_gate:42'],
     ['🏪 Store', 'map_loc_store:42'],
+    ['♨️ Hot Springs', 'map_loc_hotsprings:42'],
+    ['🗺️ Change Map', 'map_change:42'],
     ['❌ Close', 'map_close:42'],
   ]);
 });
 
 test('only location-menu buttons use the native neutral surface', () => {
   const html = render('<p>Map</p>', mapKeyboard(42));
-  assert.equal((html.match(/<tg-button type=/g) || []).length, 8);
-  assert.equal((html.match(/<tg-button-row align="center">/g) || []).length, 5);
+  assert.equal((html.match(/<tg-button type=/g) || []).length, 9);
+  assert.equal((html.match(/<tg-button-row align="center">/g) || []).length, 4);
   assert.doesNotMatch(html, /style=/);
   for (const keyboard of [villageKeyboard(42), storeKeyboard(42)]) {
     assert.match(render('', keyboard), /style="transparent"/);
   }
+});
+
+
+test('Change Map returns to the guarded rich village selector', () => {
+  const handler = fs.readFileSync(new URL('../tgcloud/lib/map/handler.js', import.meta.url), 'utf8');
+  assert.match(handler, /if \(action === 'map_change'\) \{[\s\S]*?await editMapRich\(chatId, messageId, mapBody\(user, villageBody\(\)\), villageKeyboard\(user.id\)\)/);
 });

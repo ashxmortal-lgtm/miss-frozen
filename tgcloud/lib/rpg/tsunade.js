@@ -63,7 +63,7 @@ export async function handleSearchTsuna(message) {
   const id = user.id;
   const own = await ownedSet(id);
   if (!own.has('Naruto') || !own.has('Jiraiya')) {
-    return `${mention(user)}\n\n🔎 𝐒𝐄𝐀𝐑𝐂𝐇 𝐋𝐎𝐂𝐊𝐄𝐃\n\nYou need both ${escapeHtml('Naruto Uzumaki')} and ${escapeHtml('Jiraiya')} on your roster to search for Lady Tsunade.`;
+    return `🔎 𝐒𝐄𝐀𝐑𝐂𝐇 𝐋𝐎𝐂𝐊𝐄𝐃\n\nYou need both ${escapeHtml('Naruto Uzumaki')} and ${escapeHtml('Jiraiya')} on your roster to search for Lady Tsunade.`;
   }
 
   let row = await searchRow(id);
@@ -71,7 +71,7 @@ export async function handleSearchTsuna(message) {
 
   // Already discovered — searches are permanently disabled.
   if (row && row.found) {
-    return `${mention(user)}\n\n🐌 𝐋𝐀𝐃𝐘 𝐓𝐒𝐔𝐍𝐀𝐃𝐄 𝐈𝐒 𝐇𝐄𝐑𝐄\n\nTsunade has already joined your roster.\nShe trains Sakura at /map → Training Ground.`;
+    return `🐌 𝐋𝐀𝐃𝐘 𝐓𝐒𝐔𝐍𝐀𝐃𝐄 𝐈𝐒 𝐇𝐄𝐑𝐄\n\nTsunade has already joined your roster.\nShe trains Sakura at /map → Training Ground.`;
   }
 
   // Finished session awaiting check → resolve it now (exactly once).
@@ -82,12 +82,12 @@ export async function handleSearchTsuna(message) {
 
   // Active session → status report (works in DM and groups).
   if (row && row.status === 'active') {
-    return `${mention(user)}\n\n🔎 𝐒𝐄𝐀𝐑𝐂𝐇 𝐈𝐍 𝐏𝐑𝐎𝐆𝐑𝐄𝐒𝐒\n\nNaruto and Jiraiya are searching for Lady Tsunade.\n\n⏳ completes at ${dueText(row.endsAt, t)}\n(search #${row.totalSearches})\n\n❄️ Check back at ${dueText(row.endsAt, t)} — invoke /search_tsuna again after it finishes.`;
+    return `🔎 𝐒𝐄𝐀𝐑𝐂𝐇 𝐈𝐍 𝐏𝐑𝐎𝐆𝐑𝐄𝐒𝐒\n\nNaruto and Jiraiya are searching for Lady Tsunade.\n\n⏳ completes at ${dueText(row.endsAt, t)}\n(search #${row.totalSearches})\n\n❄️ Check back at ${dueText(row.endsAt, t)} — invoke /search_tsuna again after it finishes.`;
   }
 
   // Starting a new search is group-only
   if (message.chat && message.chat.type === 'private') {
-    return `${mention(user)}\n\n🔎 𝐒𝐄𝐀𝐑𝐂𝐇 𝐆𝐑𝐎𝐔𝐏 𝐎𝐍𝐋𝐘\n\nStarting a Tsunade search works in groups only.\n\n» Use /search_tsuna in a group where I am a member.\nYou can still check an active search status from DM.`;
+    return `🔎 𝐒𝐄𝐀𝐑𝐂𝐇 𝐆𝐑𝐎𝐔𝐏 𝐎𝐍𝐋𝐘\n\nStarting a Tsunade search works in groups only.\n\n» Use /search_tsuna in a group where I am a member.\nYou can still check an active search status from DM.`;
   }
 
   // Start a new session — max 2 starts per IST day. Naruto & Jiraiya must
@@ -97,19 +97,19 @@ export async function handleSearchTsuna(message) {
       SELECT status FROM activities WHERE telegram_id = ${id} AND shinobi = ${n} AND status = 'active'
     `);
     if (a) {
-      return `${mention(user)}\n\n🔎 ${escapeHtml(n)} is still on an activity.\n\n» Wait for the return, then start the search.`;
+      return `🔎 ${escapeHtml(n)} is still on an activity.\n\n» Wait for the return, then start the search.`;
     }
   }
   const today = todayKey();
   const dayCount = row && row.dayKey === today ? (row.dayCount || 0) : 0;
   if (dayCount >= SEARCH_MAX_PER_DAY) {
-    return `${mention(user)}\n\n⏳ 𝐃𝐀𝐈𝐋𝐘 𝐋𝐈𝐌𝐈𝐓\n\nThe search may be started twice per day.\n\n» Come back tomorrow (next start available after 12:00 AM IST).`;
+    return `⏳ 𝐃𝐀𝐈𝐋𝐘 𝐋𝐈𝐌𝐈𝐓\n\nThe search may be started twice per day.\n\n» Come back tomorrow (next start available after 12:00 AM IST).`;
   }
 
   // Chakra cost — checked first so the player gets a clear message.
   const haveChakra = await chakraQty(id);
   if (haveChakra < SEARCH_CHAKRA_COST) {
-    return `${mention(user)}\n\n「𝐂𝐇𝐀𝐊𝐑𝐀 𝐃𝐄𝐏𝐋𝐄𝐓𝐄𝐃」\n\nRequired: chakra x ${SEARCH_CHAKRA_COST} ⚡\nAvailable: chakra x ${haveChakra} ⚡\n\n» Use /claim or /buy chakra 100.`;
+    return `「𝐂𝐇𝐀𝐊𝐑𝐀 𝐃𝐄𝐏𝐋𝐄𝐓𝐄𝐃」\n\nRequired: chakra x ${SEARCH_CHAKRA_COST} ⚡\nAvailable: chakra x ${haveChakra} ⚡\n\n» Use /claim or /buy chakra 100.`;
   }
 
   const startsAt = t;
@@ -125,7 +125,7 @@ export async function handleSearchTsuna(message) {
   `);
   if (won.rowsAffected === 0) {
     row = await searchRow(id);
-    return `${mention(user)}\n\n🔎 𝐒𝐄𝐀𝐑𝐂𝐇 𝐈𝐍 𝐏𝐑𝐎𝐆𝐑𝐄𝐒𝐒\n\n⏳ completes at ${dueText(row.endsAt, t)}`;
+    return `🔎 𝐒𝐄𝐀𝐑𝐂𝐇 𝐈𝐍 𝐏𝐑𝐎𝐆𝐑𝐄𝐒𝐒\n\n⏳ completes at ${dueText(row.endsAt, t)}`;
   }
 
   // Charge chakra after the session is claimed (so a duplicate request can
@@ -141,7 +141,7 @@ export async function handleSearchTsuna(message) {
           total_searches = MAX(0, COALESCE(total_searches, 0) - 1)
       WHERE telegram_id = ${id} AND status = 'active' AND started_at = ${startsAt}
     `);
-    return `${mention(user)}\n\n「𝐂𝐇𝐀𝐊𝐑𝐀 𝐃𝐄𝐏𝐋𝐄𝐓𝐄𝐃」\n\nRequired: chakra x ${SEARCH_CHAKRA_COST} ⚡\nAvailable: chakra x ${await chakraQty(id)} ⚡\n\n» Use /claim or /buy chakra 100.`;
+    return `「𝐂𝐇𝐀𝐊𝐑𝐀 𝐃𝐄𝐏𝐋𝐄𝐓𝐄𝐃」\n\nRequired: chakra x ${SEARCH_CHAKRA_COST} ⚡\nAvailable: chakra x ${await chakraQty(id)} ⚡\n\n» Use /claim or /buy chakra 100.`;
   }
 
   // Message format (styled by caller via style()):
@@ -152,7 +152,6 @@ export async function handleSearchTsuna(message) {
   // Check in again at {exact time}.
   const finishStamp = istDateTime(endsAt);
   return (
-    `${mention(user)}\n\n` +
     `🔎 𝐒𝐄𝐀𝐑𝐂𝐇 𝐁𝐄𝐆𝐔𝐍\n` +
     `Naruto and Jiraiya left konoha village to search for Lady Tsunade.\n\n` +
     `🎯 expected finish: ${finishStamp} (${inRemaining(endsAt, t)})\n` +
@@ -172,7 +171,7 @@ async function resolveSearch(id, row, user) {
     WHERE telegram_id = ${id} AND status = 'active' AND ends_at <= ${now()}
   `);
   if (won.rowsAffected === 0) {
-    return `${mention(user)}\n\n🔎 the search is still in progress.`;
+    return `🔎 the search is still in progress.`;
   }
 
   const attempts = row.totalSearches || 1;
@@ -182,7 +181,7 @@ async function resolveSearch(id, row, user) {
     // Post-search states: Jiraiya exhausted; Naruto available. No owned
     // Tsunade exists, so no Tsunade exhaustion is created.
     await exhaustJiraiya(id);
-    return `${mention(user)}\n\n🔎 𝐒𝐄𝐀𝐑𝐂𝐇 𝐑𝐄𝐒𝐔𝐋𝐓\n\nNaruto and Jiraiya returned empty-handed — no sign of Lady Tsunade.\n(search #${attempts} of 10)\n\n🐸 Jiraiya is exhausted — ready at ${dueText(now() + EXHAUSTION_RECOVERY_SEC)}.\n🍥 Naruto is available again.`;
+    return `🔎 𝐒𝐄𝐀𝐑𝐂𝐇 𝐑𝐄𝐒𝐔𝐋𝐓\n\nNaruto and Jiraiya returned empty-handed — no sign of Lady Tsunade.\n(search #${attempts} of 10)\n\n🐸 Jiraiya is exhausted — ready at ${dueText(now() + EXHAUSTION_RECOVERY_SEC)}.\n🍥 Naruto is available again.`;
   }
 
   // Discovery: grant Tsunade (hidden — never sold in the Shinobi Store).
@@ -197,7 +196,7 @@ async function resolveSearch(id, row, user) {
   await exhaustTsunade(id);
 
   await sendDiscoveryMessage(id, user || { id, first_name: 'Shinobi' });
-  return `${mention(user)}\n\n🐌 Lady Tsunade was found drinking sake and gambling 🤣\n\n🐸 Jiraiya is exhausted — ready at ${dueText(now() + EXHAUSTION_RECOVERY_SEC)}.\n🐌 Tsunade is exhausted — ready at ${dueText(now() + EXHAUSTION_RECOVERY_SEC)}.\n🍥 Naruto is available again.`;
+  return `🐌 Lady Tsunade was found drinking sake and gambling 🤣\n\n🐸 Jiraiya is exhausted — ready at ${dueText(now() + EXHAUSTION_RECOVERY_SEC)}.\n🐌 Tsunade is exhausted — ready at ${dueText(now() + EXHAUSTION_RECOVERY_SEC)}.\n🍥 Naruto is available again.`;
 }
 
 async function exhaustJiraiya(id) {
