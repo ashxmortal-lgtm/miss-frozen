@@ -32,18 +32,18 @@ export function mapKeyboard(userId) {
   return {
     inline_keyboard: [
       [
-        locationButton('🏯 Hokage Office', guard('map_loc_hokage', userId)),
-        locationButton('🍜 Ichiraku Ramen', guard('map_loc_ichiraku', userId)),
+        locationButton('🏯 Hokage', guard('map_loc_hokage', userId)),
+        locationButton('🍜 Ichiraku', guard('map_loc_ichiraku', userId)),
       ],
       [
         locationButton('🍖 BBQ', guard('map_loc_bbq', userId)),
         locationButton('🚪 Gate', guard('map_loc_gate', userId)),
       ],
       [
-        locationButton('🥷 Training Ground', guard('map_loc_training', userId)),
+        locationButton('🥷 Training', guard('map_loc_training', userId)),
         locationButton('♨️ Hot Springs', guard('map_loc_hotsprings', userId)),
       ],
-      [locationButton('🏪 Stores', guard('map_loc_store', userId))],
+      [locationButton('🏪 Store', guard('map_loc_store', userId))],
       [locationButton('❌ Close', guard('map_close', userId))],
     ],
   };
