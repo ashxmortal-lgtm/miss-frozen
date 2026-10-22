@@ -15,6 +15,11 @@ export const COMMANDS = [
   { cmd: '/patrol', desc: 'Start a patrol (group)', access: 'user' },
   { cmd: '/map', desc: 'Konoha village map (missions, BBQ, Ichiraku, …)', access: 'user' },
   { cmd: '/ability', desc: 'Your abilities (alias /abilities)', access: 'user' },
+  { cmd: '/pet', desc: 'Pets — profile, feed/play/train/rest, food, stats, nametag, store', access: 'user' },
+  { cmd: '/pet_store', desc: 'Pet store — Axofly & Capycorn (also /pet store)', access: 'user' },
+  { cmd: '/buy_pet', desc: 'Adopt a pet — /buy_pet Axofly', access: 'user' },
+  { cmd: '/equip_pet', desc: 'Equip your active pet', access: 'user' },
+  { cmd: '/pet_rename', desc: 'Rename a pet — /pet_rename PetName NewName (needs Pet Nametag)', access: 'user' },
   { cmd: '/mt', desc: 'Mind Transmission — reply in group (requires jutsu)', access: 'user' },
   { cmd: '/gift_store', desc: "Ino's Gift Store catalog", access: 'user' },
   { cmd: '/gift', desc: 'Send a gift — reply to user then /gift number', access: 'user' },
@@ -31,16 +36,11 @@ export const COMMANDS = [
   { cmd: '/xoxo', desc: 'Tic-tac-toe lobby (group)', access: 'user' },
   { cmd: '/xoxo_stats', desc: 'Your XOXO stats', access: 'user' },
   { cmd: '/rps', desc: 'Rock-paper-scissors lobby (group)', access: 'user' },
-  { cmd: '/daily', desc: 'Daily claim (alias /claim)', access: 'user' },
-  { cmd: '/abilities', desc: 'Abilities (alias /ability)', access: 'user' },
-  { cmd: '/xoxo_cancel', desc: 'Cancel XOXO lobby', access: 'user' },
-  { cmd: '/cancel_xoxo', desc: 'Cancel XOXO (alias)', access: 'user' },
-  { cmd: '/rps_cancel', desc: 'Cancel RPS lobby', access: 'user' },
-  { cmd: '/cancel_rps', desc: 'Cancel RPS (alias)', access: 'user' },
+  { cmd: '/xoxo_cancel', desc: 'Cancel XOXO lobby (alias /cancel_xoxo)', access: 'user' },
+  { cmd: '/rps_cancel', desc: 'Cancel RPS lobby (alias /cancel_rps)', access: 'user' },
   { cmd: '/rps_stats', desc: 'Your RPS stats', access: 'user' },
   { cmd: '/transfer', desc: 'Transfer coins to a user (reply in group)', access: 'user' },
   { cmd: '/leaderboard', desc: 'Top balances (alias /lb)', access: 'user' },
-  { cmd: '/lb', desc: 'Top balances (alias /leaderboard)', access: 'user' },
   { cmd: '/equip', desc: 'Equip a shinobi (max 3)', access: 'user' },
   { cmd: '/unequip', desc: 'Unequip a shinobi', access: 'user' },
   { cmd: '/redeem', desc: 'Redeem a coupon code', access: 'user' },
@@ -56,6 +56,17 @@ export const COMMANDS = [
   { cmd: '/list_cc', desc: 'List active coupon codes', access: 'owner' },
   { cmd: '/edit_cc', desc: 'Edit a coupon code', access: 'owner' },
 ];
+
+export const ALIASES = {
+  '/daily': '/claim',
+  '/abilities': '/ability',
+  '/lb': '/leaderboard',
+  '/cancel_xoxo': '/xoxo_cancel',
+  '/cancel_rps': '/rps_cancel',
+};
+
+/** Commands owned by the pet system, shown in their own /help section. */
+export const PET_COMMANDS = ['/pet', '/pet_store', '/buy_pet', '/equip_pet', '/pet_rename'];
 
 export function listCommands(accessFilter) {
   if (accessFilter === 'user') return COMMANDS.filter((c) => c.access === 'user');

@@ -1,7 +1,7 @@
 // MissFrozen welcome + gaming help (no mode chooser, no admin welcome).
 import { api } from './message_api.js';
 import { OWNER_ID, BOT_USERNAME } from './config.js';
-import { listCommands } from './command_registry.js';
+import { listCommands, PET_COMMANDS } from './command_registry.js';
 
 const bold = (text) => ({ type: 'bold', text });
 const para = (...t) => ({ type: 'paragraph', text: t.length === 1 ? t[0] : t });
@@ -108,7 +108,13 @@ function gameBlocks(w) {
   return [
     head('Game ❄️ mode', 6),
     ...listCommands('user')
-      .filter(({ cmd }) => !['/gift', '/hug', '/slap', '/punch', '/pat', '/games', '/xoxo', '/xoxo_stats', '/rps', '/rps_stats', '/xoxo_cancel', '/cancel_xoxo', '/rps_cancel', '/cancel_rps'].includes(cmd))
+      .filter(({ cmd }) => !PET_COMMANDS.includes(cmd))
+      .filter(({ cmd }) => !['/gift', '/hug', '/slap', '/punch', '/pat', '/games', '/xoxo', '/xoxo_stats', '/rps', '/rps_stats', '/xoxo_cancel', '/rps_cancel'].includes(cmd))
+      .map(({ cmd, desc }) => cmdLine(cmd, desc)),
+    divider,
+    head('🐾 Pets', 6),
+    ...listCommands('user')
+      .filter(({ cmd }) => PET_COMMANDS.includes(cmd))
       .map(({ cmd, desc }) => cmdLine(cmd, desc)),
     row(cb('Extras', `hp:extras${sfx(w)}`, 'primary'), cb('more ❄️ games', `hp:more${sfx(w)}`, 'primary')),
     ...(w ? [backBtn('wel:back')] : []),
@@ -132,13 +138,11 @@ function moreGamesBlocks(w) {
     head('more ❄️ games', 6),
     cmdLine('/games', 'Open games menu (non naruto themed)'),
     cmdLine('/xoxo', 'Play XOXO'),
-    cmdLine('/xoxo_cancel', 'Cancel XOXO'),
-    cmdLine('/cancel_xoxo', 'Alternate XOXO cancel command'),
+    cmdLine('/xoxo_cancel', 'Cancel XOXO lobby (alias /cancel_xoxo)'),
     cmdLine('/xoxo_stats', 'View XOXO stats'),
     cmdLine('/rps', 'Play Rock Paper Scissors'),
     cmdLine('/rps_stats', 'View RPS stats'),
-    cmdLine('/rps_cancel', 'Cancel RPS lobby'),
-    cmdLine('/cancel_rps', 'Alternate RPS cancel command'),
+    cmdLine('/rps_cancel', 'Cancel RPS lobby (alias /cancel_rps)'),
     backBtn(`hp:game${sfx(w)}`),
   ];
 }
