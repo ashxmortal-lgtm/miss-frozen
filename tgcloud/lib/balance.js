@@ -51,7 +51,6 @@ export async function balanceText(message) {
       : '';
 
   return (
-    `🥷🏻 ${mention(user)}\n` +
     `🍥 Coins: ${fmt(bal)}${rank}\n` +
     `🔪 Kills: ${fmt(kills)}\n` +
     `🥷🏻 Shinobi Rank: ${rankOf(xp)[1]}\n` +

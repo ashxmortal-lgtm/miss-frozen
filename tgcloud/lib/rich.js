@@ -24,16 +24,12 @@ export const table = (rows) => ({
   })),
 });
 const code = (t) => ({ type: 'code', text: t });
-const mentionNode = (u) => ({
-  type: 'text_mention', text: u.first_name || 'User',
-  user: { id: u.id, first_name: u.first_name || 'User' },
-});
 // A row of buttons. Each button: callback_data OR url.
 export const btn = (label, extra) => ({ text: S(label), ...extra });
 export const row = (...buttons) => ({ type: 'buttons', align: 'center', buttons });
 
-// Mention paragraph always comes first.
-const build = (user, content) => [P([mentionNode(user)]), ...content];
+// Screen content owns any context-specific mention.
+const build = (_user, content) => content;
 
 async function debug(user, e) {
   console.error(e);
@@ -137,6 +133,7 @@ export async function storeContent(screen, ownerId, options = {}) {
 
   const buttons = [
     row(btn('Jutsu', cb('jutsu')), btn('Chakra', cb('chakra'))),
+    row(btn('Check shinobi abilities', { callback_data: `lv:ab:${ownerId}` })),
   ];
   if (options.includeMiniApp) {
     buttons.push(row(btn('Buy in Mini App', { web_app: { url: MINI_APP_STORE_URL }, style: 'success' })));
@@ -169,9 +166,9 @@ export function abilityContent(_ownerId, opts = {}) {
 
 export function groupOnlyContent(cmd) {
   return [
-    P('「𝐆𝐑𝐎𝐔𝐏 𝐂𝐎𝐌𝐌𝐀𝐍𝐃」'),
-    P(`/${cmd} works in groups only.`),
-    P('» use it in a group where i am a member.'),
+    P(cmd === 'mission' ? '𝐆𝐑𝐎𝐔𝐏 𝐂𝐎𝐌𝐌𝐀𝐍𝐃 🏘️' : '𝐆𝐑𝐎𝐔𝐏 𝐂𝐎𝐌𝐌𝐀𝐍𝐃'),
+    P(cmd === 'mission' ? '⚠️ /mission <shinobi name> ᴡᴏʀᴋꜱ ɪɴ ɢʀᴏᴜᴘꜱ ᴏɴʟʏ.' : '/patrol ᴡᴏʀᴋꜱ ɪɴ ɢʀᴏᴜᴘꜱ ᴏɴʟʏ.'),
+    P(cmd === 'mission' ? '» ᴜꜱᴇ ɪᴛ ɪɴ ᴀ ɢʀᴏᴜᴘ ᴡʜᴇʀᴇ ɪ ᴀᴍ ᴀ ᴍᴇᴍʙᴇʀ! ❄️' : '» ᴜꜱᴇ ɪᴛ ɪɴ ᴀ ɢʀᴏᴜᴘ ᴡʜᴇʀᴇ ɪ ᴀᴍ ᴀ ᴍᴇᴍʙᴇʀ..'),
     row(btn('Add to grp', { url: 'tg://resolve?domain=missfrozen_bot&startgroup=true', style: 'danger' })),
   ];
 }

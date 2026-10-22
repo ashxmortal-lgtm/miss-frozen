@@ -1,10 +1,7 @@
 // MissFrozen welcome + gaming help (no mode chooser, no admin welcome).
-import { db } from 'sdk';
 import { api } from './message_api.js';
 import { OWNER_ID, BOT_USERNAME } from './config.js';
 import { listCommands } from './command_registry.js';
-import { sql } from 'sdk/db';
-import { getEquipped } from './rpg/state.js';
 
 const bold = (text) => ({ type: 'bold', text });
 const para = (...t) => ({ type: 'paragraph', text: t.length === 1 ? t[0] : t });
@@ -13,7 +10,7 @@ const divider = { type: 'divider' };
 const row = (...buttons) => ({ type: 'buttons', buttons, align: 'center' });
 const cb = (text, data, style) => (style ? { text, callback_data: data, style } : { text, callback_data: data });
 const urlBtn = (text, url, style) => (style ? { text, url, style } : { text, url });
-const rich = (blocks) => ({ blocks });
+const rich = (blocks) => ({ blocks, skip_entity_detection: false });
 /** Plain-text command (no code formatting) so Telegram makes it tappable. */
 const cmdLine = (cmd, desc) => para(`${cmd}  —  ${desc}`);
 const mention = (u) => ({
@@ -56,30 +53,6 @@ async function primaryButtons(userId) {
   ];
 }
 
-/** Mini profile shown in the normal-user welcome. */
-async function miniProfile(user) {
-  const uid = user.id;
-  const out = { equipped: 'Starter Shinobi', balance: 0, jutsu: 'None', kills: 0, rank: '—' };
-  try { out.equipped = await getEquipped(uid); } catch (_) {}
-  try {
-    const u = await db.get(sql`SELECT balance, kills FROM users WHERE telegram_id = ${uid}`);
-    if (u) {
-      out.balance = u.balance || 0;
-      out.kills = u.kills || 0;
-      const r = await db.get(sql`SELECT COUNT(*) + 1 AS pos FROM users WHERE balance > ${u.balance || 0}`);
-      out.rank = r ? `#${r.pos}` : '—';
-    }
-  } catch (_) {}
-  try {
-    const rows = await db.all(sql`
-      SELECT item_name FROM inventory WHERE telegram_id = ${uid} AND item_type = 'jutsu' ORDER BY item_name
-    `);
-    if (rows && rows.length) out.jutsu = rows.map((r) => r.item_name).join(', ');
-  } catch (_) {}
-  return out;
-}
-
-
 function ownerCmdLines() {
   return listCommands('owner')
     .filter((c) => c.access === 'owner')
@@ -107,25 +80,14 @@ export async function buildWelcomeBlocks(user) {
     ];
   }
 
-  // Normal user (MissFrozen has no /imfrozen admin welcome).
-  const mp = await miniProfile(user);
-  const botLink = `https://t.me/${uname}`;
+  // Normal welcome: retain the existing primary button rows.
   return [
-    para(mention(user), ' ᴡᴇʟᴄᴏᴍᴇ!'),
-    para(
-      urlText(BOT_NAME, botLink),
-      ' is a Naruto-inspired game bot for groups and anime fans. Check the Help menu to explore the games, store and Konoha map!',
-    ),
-    para('/daily — Claim your daily shinobi coins 🍥'),
-    para('ʏᴏᴜʀ ᴍɪɴɪ ᴘʀᴏꜰɪʟᴇ'),
-    blockquote(
-      `🥷 Shinobi: ${mp.equipped}`,
-      `🍥 Balance: ${Number(mp.balance).toLocaleString('en-US')}`,
-      `⚡ Owned Jutsu: ${mp.jutsu}`,
-      `⚔️ Kills: ${mp.kills}`,
-      `🏆 Global Rank: ${mp.rank}`,
-    ),
-    para('Add ', urlText(BOT_NAME, botLink), ' to your group as an admin to begin your shinobi journey!'),
+    para(mention(user), ' ᴡᴇʟᴄᴏᴍᴇ! ❄️'),
+    para(`${BOT_NAME} ɪꜱ ᴀ ɴᴀʀᴜᴛᴏ-ɪɴꜱᴘɪʀᴇᴅ ɢᴀᴍᴇ ʙᴏᴛ ꜰᴏʀ ɢʀᴏᴜᴘꜱ ᴀɴᴅ ᴀɴɪᴍᴇ ꜰᴀɴꜱ.`),
+    para('🎮 ᴇxᴘʟᴏʀᴇ /help ꜰᴏʀ ɢᴀᴍᴇꜱ, ᴛʜᴇ ꜱᴛᴏʀᴇ & ᴋᴏɴᴏʜᴀ /map!'),
+    para('❓ ᴡᴀɴɴᴀ ʟᴇᴀʀɴ ʜᴏᴡ ᴛᴏ ᴘʟᴀʏ?'),
+    para('➜ ', urlText('ᴄʜᴇᴄᴋ ᴛʜɪꜱ', 'https://t.me/frozenblooded/22'), ' ᴏᴜᴛ!'),
+    para(`➕ ᴀᴅᴅ ${BOT_NAME} ᴛᴏ ᴜʀ ɢʀᴏᴜᴘ ᴀꜱ ᴀɴ ᴀᴅᴍɪɴ ᴛᴏ ʙᴇɢɪɴ ᴜʀ ꜱʜɪɴᴏʙɪ ᴊᴏᴜʀɴᴇʏ! 🗡️`),
     ...buttons,
   ];
 }
@@ -145,21 +107,9 @@ export async function buildUserHelpBlocks(_user, fromWelcome = false) {
 function gameBlocks(w) {
   return [
     head('Game ❄️ mode', 6),
-    cmdLine('/daily', 'claim daily 500 shinobi coins 🍥'),
-    cmdLine('/map', 'Open konoha village map'),
-    cmdLine('/shinobi_store', 'buy shinobis and jutsu'),
-    cmdLine('/gift_store', 'naruto themed gifts'),
-    cmdLine('/mission', 'Start a mission'),
-    cmdLine('/patrol', 'Start a patrol'),
-    cmdLine('/kill', 'kill a target'),
-    cmdLine('/rob', 'Rob a target'),
-    cmdLine('/protect', 'Activate protection'),
-    cmdLine('/byakugan', 'Check protection status'),
-    cmdLine('/search_tsuna', 'Search for Tsunade'),
-    cmdLine('/mt', 'send Mind Transmission to target'),
-    cmdLine('/transfer', 'transfer coins (reply in group)'),
-    cmdLine('/equip · /unequip', 'equip shinobi (max 3)'),
-    cmdLine('/leaderboard (/lb)', 'top balances'),
+    ...listCommands('user')
+      .filter(({ cmd }) => !['/gift', '/hug', '/slap', '/punch', '/pat', '/games', '/xoxo', '/xoxo_stats', '/rps', '/rps_stats', '/xoxo_cancel', '/cancel_xoxo', '/rps_cancel', '/cancel_rps'].includes(cmd))
+      .map(({ cmd, desc }) => cmdLine(cmd, desc)),
     row(cb('Extras', `hp:extras${sfx(w)}`, 'primary'), cb('more ❄️ games', `hp:more${sfx(w)}`, 'primary')),
     ...(w ? [backBtn('wel:back')] : []),
   ];
@@ -188,6 +138,7 @@ function moreGamesBlocks(w) {
     cmdLine('/rps', 'Play Rock Paper Scissors'),
     cmdLine('/rps_stats', 'View RPS stats'),
     cmdLine('/rps_cancel', 'Cancel RPS lobby'),
+    cmdLine('/cancel_rps', 'Alternate RPS cancel command'),
     backBtn(`hp:game${sfx(w)}`),
   ];
 }
@@ -198,27 +149,15 @@ export async function sendWelcome(chatId, user) {
     return await api.sendRichMessage({ chat_id: chatId, rich_message: rich(blocks) });
   } catch (e) {
     console.error('sendWelcome failed:', e?.description || e);
-    // Second try without mention entity (some clients reject text_mention in certain contexts)
-    try {
-      const uname = await botUsername();
-      const simple = [
-        para(`Welcome to ${BOT_NAME} bot.`),
-        para('Naruto inspired game for groups and anime fans.'),
-        para('/daily : claim daily shinobi coins 🍥'),
-        ...(await primaryButtons(user.id)),
-      ];
-      return await api.sendRichMessage({ chat_id: chatId, rich_message: rich(simple) });
-    } catch (e2) {
-      console.error('sendWelcome simple failed:', e2?.description || e2);
-      const uname = await botUsername();
-      return api.sendMessage({
-        chat_id: chatId,
-        text:
-          `${user.first_name || 'User'} welcome to ${BOT_NAME} bot.\n\n` +
-          'Naruto inspired game for groups and anime fans.\n\n' +
-          '/daily : claim daily shinobi coins 🍥',
-      });
-    }
+    return api.sendMessage({
+      chat_id: chatId,
+      text: `${user.first_name || 'User'} ᴡᴇʟᴄᴏᴍᴇ! ❄️\n\n` +
+        `${BOT_NAME} ɪꜱ ᴀ ɴᴀʀᴜᴛᴏ-ɪɴꜱᴘɪʀᴇᴅ ɢᴀᴍᴇ ʙᴏᴛ ꜰᴏʀ ɢʀᴏᴜᴘꜱ ᴀɴᴅ ᴀɴɪᴍᴇ ꜰᴀɴꜱ.\n\n` +
+        '🎮 ᴇxᴘʟᴏʀᴇ /help ꜰᴏʀ ɢᴀᴍᴇꜱ, ᴛʜᴇ ꜱᴛᴏʀᴇ & ᴋᴏɴᴏʜᴀ /map!\n\n' +
+        '❓ ᴡᴀɴɴᴀ ʟᴇᴀʀɴ ʜᴏᴡ ᴛᴏ ᴘʟᴀʏ?\n➜ ᴄʜᴇᴄᴋ ᴛʜɪꜱ ᴏᴜᴛ! https://t.me/frozenblooded/22\n\n' +
+        `➕ ᴀᴅᴅ ${BOT_NAME} ᴛᴏ ᴜʀ ɢʀᴏᴜᴘ ᴀꜱ ᴀɴ ᴀᴅᴍɪɴ ᴛᴏ ʙᴇɢɪɴ ᴜʀ ꜱʜɪɴᴏʙɪ ᴊᴏᴜʀɴᴇʏ! 🗡️`,
+      reply_markup: await primaryKeyboard(user.id),
+    });
   }
 }
 
@@ -229,7 +168,7 @@ async function editTo(cq, blocks, detectEntities = false) {
       message_id: cq.message.message_id,
       rich_message: detectEntities
         ? { blocks: Array.isArray(blocks) ? blocks : blocks?.blocks || [] }
-        : { blocks: Array.isArray(blocks) ? blocks : blocks?.blocks || [], skip_entity_detection: true },
+        : { blocks: Array.isArray(blocks) ? blocks : blocks?.blocks || [], skip_entity_detection: false },
     });
   } catch (e) {
     if (Array.isArray(blocks)) {

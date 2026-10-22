@@ -170,5 +170,5 @@ export async function editMapRich(chatId, messageId, bodyHtml, keyboard, options
 
 /** Mention + blank line + body, in bot style font. */
 export function mapBody(user, innerHtml) {
-  return style(`<p>${mention(user)}</p>${innerHtml}`);
+  return style(innerHtml);
 }

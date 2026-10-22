@@ -128,35 +128,16 @@ export async function profileData(user) {
 
 export async function profileText(user, message = null) {
   const profile = await profileData(user);
-  // Fancy small-caps-ish labels as requested
-  const rank = String(profile.rank || 'Genin').toUpperCase();
-  const xpLine = profile.xpText || `${fmt(profile.xp)} XP`;
-  let grpRankLine = '';
-  if (message && (message.chat?.type === 'group' || message.chat?.type === 'supergroup')) {
-    try {
-      const gr = await db.get(sql`
-        SELECT COUNT(*) AS n FROM group_members g
-        JOIN users u ON u.telegram_id = g.telegram_id
-        WHERE g.chat_id = ${message.chat.id} AND u.xp > ${profile.xp}
-      `);
-      const grpRank = (gr ? Number(gr.n) : 0) + 1;
-      grpRankLine = `\n💭 ɢʀᴘ ʀᴀɴᴋ : ${grpRank}`;
-    } catch (_) {}
-  }
+  const next = RANKS.find(([need]) => profile.xp < need);
   const stats = [
-    `🥷 ʀᴀɴᴋ: ${rank}`,
-    `✨ xᴘ: ${xpLine}`,
+    `🥷 ʀᴀɴᴋ: ${profile.rank}`,
+    `✨ xᴘ: ${fmt(profile.xp)}${next ? ` / ${fmt(next[0])}` : ''} xᴘ`,
+    `⬆️ ɴᴇxᴛ ʀᴀɴᴋ: ${next ? next[1] : 'Max rank'}`,
     `🍥 ᴄᴏɪɴꜱ: ${fmt(profile.balance)}`,
     `⚡ ᴄʜᴀᴋʀᴀ: ${fmt(profile.chakra)}`,
     `🔪 ᴋɪʟʟꜱ: ${fmt(profile.kills)}`,
-    `🔥 ᴄʟᴀɪᴍ ꜱᴛʀᴇᴀᴋ: ${fmt(profile.streak)} (ʟᴀꜱᴛ: ${profile.lastClaim})`,
-    `📊 global rank: ${profile.globalRank}`,
-  ].join('\n') + grpRankLine;
-
-  return style(
-    `${mention(user)}'s profile:\n` +
-    `─────────────────\n` +
-    `<blockquote>${stats}</blockquote>\n` +
-    `─────────────────`,
-  );
+    `🔥 ᴄʟᴀɪᴍ ꜱᴛʀᴇᴀᴋ: ${fmt(profile.streak)} ${profile.streak === 1 ? 'day' : 'days'}`,
+    `🏆 ɢʟᴏʙᴀʟ ʀᴀɴᴋ: #${profile.globalRank}`,
+  ].join('\n');
+  return style(`${mention(user)}’ꜱ ᴘʀᴏꜰɪʟᴇ ❄️\n\n<blockquote>${stats}</blockquote>`);
 }

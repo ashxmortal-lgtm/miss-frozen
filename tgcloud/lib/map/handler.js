@@ -626,6 +626,12 @@ export async function handleMapCallback(cb) {
       return true;
     }
 
+    if (action === 'map_change') {
+      await answer(cb);
+      await editMapRich(chatId, messageId, mapBody(user, villageBody()), villageKeyboard(user.id));
+      return true;
+    }
+
     if (action === 'map_home') {
       await answer(cb);
       await showScreen(chatId, messageId, user, homeBody(), mapKeyboard(user.id), 'home');

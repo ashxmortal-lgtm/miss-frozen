@@ -8,8 +8,8 @@ import { escapeHtml } from './texts.js';
 
 function commandList(commands) {
   return commands.map(({ cmd, desc }) => {
-    const description = escapeHtml(desc).replace(/\/[A-Za-z][A-Za-z0-9_]*/g, (token) => `<code>${token}</code>`);
-    return `<code>${escapeHtml(cmd)}</code> — ${description}`;
+    const description = escapeHtml(desc);
+    return `${escapeHtml(cmd)} — ${description}`;
   }).join('\n');
 }
 

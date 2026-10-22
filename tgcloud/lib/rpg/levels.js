@@ -61,9 +61,19 @@ export function sakuraActivityBonus(sakuraLevel, random = Math.random()) {
   return min + Math.floor(random * (max - min + 1));
 }
 
-// Itachi kill bounty — existing ability copy: "/kill → 🍥 50–300".
-export const KILL_COINS_MIN = 50;
-export const KILL_COINS_MAX = 300;
+// Successful /kill bounty, independent of robbery percentages.
+export const ITACHI_KILL_REWARDS = [
+  { min: 100, max: 120 },
+  { min: 120, max: 180 },
+  { min: 150, max: 200 },
+  { min: 200, max: 250 },
+  { min: 250, max: 300 },
+];
+/** Use the attacker's successful-kill count BEFORE awarding this kill. */
+export function itachiKillReward(kills, random = Math.random()) {
+  const { min, max } = ITACHI_KILL_REWARDS[itachiLevelOf(kills) - 1];
+  return min + Math.floor(random * (max - min + 1));
+}
 
 // Death lasts 24 hours, then the target revives automatically.
 export const DEATH_DURATION_SEC = 24 * 3600;

@@ -81,6 +81,7 @@ export function screenKeyboard(screen, ownerId, options = {}) {
         { text: style('Chakra'), callback_data: cb('chakra'), style: 'primary' },
       ],
     ];
+    rows.push([{ text: style('Check shinobi abilities'), callback_data: `lv:ab:${ownerId}`, style: 'primary' }]);
     if (includeMiniApp) {
       rows.push([{
         text: style('Buy in Mini App'),

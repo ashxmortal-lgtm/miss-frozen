@@ -70,8 +70,7 @@ export async function buildInventoryBlocks(user) {
 
   // Live, persisted status for every owned shinobi (Inventory rule #2).
   const blocks = [
-    para(mention(user), "'s INVENTORY"),
-    head('⚔️ SHINOBI STATUS'),
+    para('INVENTORY'),
   ];
   if (shinobi.length) {
     const status = await collectStatus(uid);
@@ -109,7 +108,6 @@ export async function buildInventoryBlocks(user) {
   } catch (_) {
     blocks.push(para('👤 EQUIPPED: —'));
   }
-  blocks.push(para(style('❄️ Your shinobi are making progress! Return when their timers finish and continue your journey.')));
   blocks.push(row(
     cb("🌸 Sakura's Healing", 'inv:sakura', 'success'),
     cb("🐌 Katsuyu's Healing", 'inv:katsuyu', 'success'),
@@ -132,7 +130,7 @@ export async function buildOwnedGiftsBlocks(user) {
       })
     : ['❯ No gifts owned yet'];
   return [
-    para(mention(user), "'s GIFTS"),
+    para('GIFTS'),
     quoteLines(lines),
     row(cb('← Back', 'inv:home', 'transparent')),
   ];
@@ -150,7 +148,7 @@ export async function buildJutsuBlocks(user) {
     : ['❯ No jutsu unlocked yet'];
 
   return [
-    para(mention(user), "'s JUTSU"),
+    para('JUTSU'),
     quoteLines(lines),
     row(cb('← Back', 'inv:home', 'transparent')),
   ];
@@ -226,7 +224,7 @@ async function buildRestoreBlocks(user, result, timers) {
   const rows = [];
   for (let i = 0; i < buttons.length; i += 2) rows.push(row(...buttons.slice(i, i + 2)));
   return [
-    para(mention(user), "'s HEALING"),
+    para('HEALING'),
     head("🐌 KATSUYU'S HEALING", 6),
     quoteLines(lines),
     ...rows,

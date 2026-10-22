@@ -31,7 +31,6 @@ export function richHtml(bodyHtml, keyboard, align = 'left') {
 }
 
 export function gameBody(user, inner) {
-  if (user) return style(`<p>${mention(user)}</p>${inner}`);
   return style(inner);
 }
 
