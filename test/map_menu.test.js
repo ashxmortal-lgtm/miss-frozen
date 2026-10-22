@@ -16,12 +16,12 @@ test('Konoha location menu preserves all labels, actions and compact row orderin
   assert.deepEqual(rows.map((r) => r.length), [2, 2, 2, 1, 1]);
   assert.deepEqual(rows.flat().map(({ text, callback_data }) => [text, callback_data]), [
     ['🏯 Hokage Office', 'map_loc_hokage:42'],
-    ['🍖 BBQ', 'map_loc_bbq:42'],
     ['🍜 Ichiraku Ramen', 'map_loc_ichiraku:42'],
+    ['🍖 BBQ', 'map_loc_bbq:42'],
     ['🚪 Gate', 'map_loc_gate:42'],
     ['🥷 Training Ground', 'map_loc_training:42'],
-    ['🏪 Stores', 'map_loc_store:42'],
     ['♨️ Hot Springs', 'map_loc_hotsprings:42'],
+    ['🏪 Stores', 'map_loc_store:42'],
     ['❌ Close', 'map_close:42'],
   ]);
 });

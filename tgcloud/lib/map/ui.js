@@ -22,7 +22,7 @@ export function villageKeyboard(userId) {
 }
 
 /**
- * Location menu: three paired rows, then the remaining location and Close.
+ * Location menu: match the reference with three paired rows, then Stores and Close.
  * Omit the rich button style here to use Telegram's compact, rounded neutral
  * surface (dark grey in dark mode), rather than transparent text controls.
  * Other map screens keep their existing styling.
@@ -33,17 +33,17 @@ export function mapKeyboard(userId) {
     inline_keyboard: [
       [
         locationButton('🏯 Hokage Office', guard('map_loc_hokage', userId)),
-        locationButton('🍖 BBQ', guard('map_loc_bbq', userId)),
+        locationButton('🍜 Ichiraku Ramen', guard('map_loc_ichiraku', userId)),
       ],
       [
-        locationButton('🍜 Ichiraku Ramen', guard('map_loc_ichiraku', userId)),
+        locationButton('🍖 BBQ', guard('map_loc_bbq', userId)),
         locationButton('🚪 Gate', guard('map_loc_gate', userId)),
       ],
       [
         locationButton('🥷 Training Ground', guard('map_loc_training', userId)),
-        locationButton('🏪 Stores', guard('map_loc_store', userId)),
+        locationButton('♨️ Hot Springs', guard('map_loc_hotsprings', userId)),
       ],
-      [locationButton('♨️ Hot Springs', guard('map_loc_hotsprings', userId))],
+      [locationButton('🏪 Stores', guard('map_loc_store', userId))],
       [locationButton('❌ Close', guard('map_close', userId))],
     ],
   };
