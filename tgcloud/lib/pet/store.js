@@ -17,8 +17,8 @@ import { db } from 'sdk';
 import { sql } from 'sdk/db';
 import { once } from '../rpg/state.js';
 import {
-  PETS, PET_IDS, PET_XP_CAP, PET_NAMETAG_KEY, PET_NAMETAG_MAX_LEN, PET_NAMETAG_PRICE,
-  PET_ACTIVITIES, PET_FOOD_MENU, PET_MAX_ENERGY,
+  PETS, PET_IDS, PET_XP_CAP, PET_MAX_LEVEL, PET_NAMETAG_KEY, PET_NAMETAG_MAX_LEN, PET_NAMETAG_PRICE,
+  PET_ACTIVITIES, STARTABLE_ACTIVITIES, PET_FOOD_MENU, PET_MAX_ENERGY,
   petLevelForXp, petRegenEnergy, petRewardBonusFor, petShinobiXpBonusFor,
   petTimeReductionFor, sanitizePetName, petNameLength,
 } from './defs.js';
@@ -44,6 +44,7 @@ export function ensurePetSchema() {
         feed_cooldown_until INTEGER NOT NULL DEFAULT 0,
         play_cooldown_until INTEGER NOT NULL DEFAULT 0,
         train_cooldown_until INTEGER NOT NULL DEFAULT 0,
+        exhausted INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (telegram_id, pet_id)
       )`,
       `CREATE TABLE IF NOT EXISTS equipped_pet (
@@ -139,6 +140,8 @@ export function ensurePetSchema() {
       'ALTER TABLE user_pets ADD COLUMN train_cooldown_until INTEGER NOT NULL DEFAULT 0',
       'ALTER TABLE pet_activity ADD COLUMN shinobi_name TEXT',
       'ALTER TABLE activities ADD COLUMN cooldown_sec INTEGER NOT NULL DEFAULT 0',
+      'ALTER TABLE user_pets ADD COLUMN exhausted INTEGER NOT NULL DEFAULT 0',
+      'ALTER TABLE activities ADD COLUMN partner_pet TEXT',
     ]) {
       try { await db.run(sql.raw(statement)); } catch (_) { /* already exists */ }
     }
@@ -160,6 +163,7 @@ const rowToPet = (row, equippedId) => {
     lastEnergyAt: Number(row.last_energy_at || 0),
     equipped: row.pet_id === equippedId,
     acquiredAt: Number(row.acquired_at || 0),
+    exhausted: Number(row.exhausted || 0) === 1,
     cooldowns: {
       feed: Number(row.feed_cooldown_until || 0),
       play: Number(row.play_cooldown_until || 0),
@@ -176,7 +180,7 @@ async function equippedId(userId) {
 async function rawPets(userId) {
   const rows = await db.all(sql`
     SELECT telegram_id, pet_id, pet_name, xp, energy, last_energy_at, equipped, acquired_at,
-           feed_cooldown_until, play_cooldown_until, train_cooldown_until
+           feed_cooldown_until, play_cooldown_until, train_cooldown_until, exhausted
     FROM user_pets WHERE telegram_id = ${userId}
     ORDER BY acquired_at ASC, pet_id ASC
   `);
@@ -207,8 +211,35 @@ export async function getPetActivity(userId, petId) {
 async function isBusy(userId, petId) {
   const activity = await getPetActivity(userId, petId);
   if (!activity || activity.status !== 'active') return false;
-  if (activity.activityType === 'rest') return true;
-  return activity.endsAt === 0 || activity.endsAt > now();
+  return true;
+}
+
+/**
+ * Derived pet state — one source of truth for every screen and guard.
+ * Expired rows that have not been settled yet still read as busy so a stale
+ * timestamp can never unlock two sessions at once.
+ */
+export function petStateOf(pet, activity, t = now()) {
+  if (activity && activity.status === 'active') {
+    const cfg = PET_ACTIVITIES[activity.activityType];
+    if (activity.activityType === 'rest') {
+      return { status: 'RESTING', endsAt: activity.endsAt || 0, activity };
+    }
+    if (activity.endsAt > t) {
+      return {
+        status: activity.activityType === 'play' ? 'PLAYING' : 'TRAINING',
+        endsAt: activity.endsAt,
+        activity,
+      };
+    }
+    return {
+      status: cfg?.exhausts ? 'EXHAUSTED' : 'READY',
+      endsAt: 0,
+      activity,
+    };
+  }
+  if (pet?.exhausted) return { status: 'EXHAUSTED', endsAt: 0, activity: null };
+  return { status: 'READY', endsAt: 0, activity: null };
 }
 
 /** Lazy energy clocks: normal +10/2h, resting +15/1h. */
@@ -294,15 +325,21 @@ async function grantPetXp(userId, petId, amount) {
 export async function settlePetActivities(userId) {
   const t = now();
   const rows = await db.all(sql`
-    SELECT telegram_id, pet_id, activity_type, started_at, ends_at, shinobi_name
+    SELECT telegram_id, pet_id, activity_type, started_at, ends_at, shinobi_name, chat_id
     FROM pet_activity
-    WHERE telegram_id = ${userId} AND status = 'active' AND ends_at > 0 AND ends_at <= ${t}
+    WHERE telegram_id = ${userId} AND status = 'active'
+      AND (
+        (ends_at > 0 AND ends_at <= ${t})
+        -- Rows from the old open-ended Rest still complete after 30 minutes.
+        OR (activity_type = 'rest' AND ends_at = 0 AND started_at <= ${t - 30 * 60})
+      )
   `);
   const finished = [];
   for (const row of rows) {
     const cfg = PET_ACTIVITIES[row.activity_type];
     const def = PETS[row.pet_id];
     if (!cfg || !def) continue;
+    // The guarded DELETE is the single completion claim: one caller per session.
     const won = await db.run(sql`
       DELETE FROM pet_activity
       WHERE telegram_id = ${userId} AND pet_id = ${row.pet_id}
@@ -311,12 +348,29 @@ export async function settlePetActivities(userId) {
     if (won.rowsAffected === 0) continue;
 
     const beforeXp = await xpOf(userId, row.pet_id);
-    const xp = await grantPetXp(userId, row.pet_id, cfg.xp);
+    let xp = 0;
+    let energyRestored = false;
+    if (cfg.restoresEnergy) {
+      // Rest completes the pet: ready state and the configured full energy.
+      await db.run(sql`
+        UPDATE user_pets SET energy = ${PET_MAX_ENERGY}, last_energy_at = ${t}, exhausted = 0
+        WHERE telegram_id = ${userId} AND pet_id = ${row.pet_id}
+      `);
+      energyRestored = true;
+    } else {
+      xp = await grantPetXp(userId, row.pet_id, cfg.xp);
+    }
     const afterXp = beforeXp + xp;
-    const statKey = { feed: 'feed', play: 'play', train: 'train' }[row.activity_type];
+    if (cfg.exhausts) {
+      await db.run(sql`
+        UPDATE user_pets SET exhausted = 1
+        WHERE telegram_id = ${userId} AND pet_id = ${row.pet_id}
+      `);
+    }
+    const statKey = { feed: 'feed', play: 'play', train: 'train', rest: 'rest' }[row.activity_type];
     if (statKey) await bumpStats(userId, { [statKey]: 1 });
     if (statKey) {
-      // Daily pet missions progress on COMPLETION (spec §5), once per activity.
+      // Daily pet missions progress on COMPLETION, once per activity.
       try {
         const { notifyDailyProgress, getDailyMission } = await import('../daily.js');
         // A background completion never assigns the day's mission by itself;
@@ -332,44 +386,38 @@ export async function settlePetActivities(userId) {
 
     let cooldownUntil = 0;
     if (cfg.cooldownHours > 0) {
-      // Source fixes the cooldown at completion processing time (`now + hours`).
+      // Legacy feed sessions keep their completion-fixed cooldown.
       cooldownUntil = t + cfg.cooldownHours * 3600;
-      if (cfg.key === 'feed') {
-        await db.run(sql`
-          UPDATE user_pets SET feed_cooldown_until = ${cooldownUntil}
-          WHERE telegram_id = ${userId} AND pet_id = ${row.pet_id}
-        `);
-      } else if (cfg.key === 'play') {
-        await db.run(sql`
-          UPDATE user_pets SET play_cooldown_until = ${cooldownUntil}
-          WHERE telegram_id = ${userId} AND pet_id = ${row.pet_id}
-        `);
-      } else {
-        await db.run(sql`
-          UPDATE user_pets SET train_cooldown_until = ${cooldownUntil}
-          WHERE telegram_id = ${userId} AND pet_id = ${row.pet_id}
-        `);
-      }
+      await db.run(sql`
+        UPDATE user_pets SET feed_cooldown_until = ${cooldownUntil}
+        WHERE telegram_id = ${userId} AND pet_id = ${row.pet_id}
+      `);
     }
 
     if (row.shinobi_name) {
       try {
         await db.run(sql`
-          UPDATE activities SET status = 'idle'
+          UPDATE activities SET status = 'idle', partner_pet = NULL
           WHERE telegram_id = ${userId} AND shinobi = ${row.shinobi_name}
             AND kind = 'pet' AND status = 'active'
         `);
       } catch (e) { console.error('[pet free shinobi]', e); }
     }
+    const petRow = await db.get(sql`
+      SELECT pet_name FROM user_pets WHERE telegram_id = ${userId} AND pet_id = ${row.pet_id}
+    `);
     finished.push({
       petId: row.pet_id,
-      petName: def.name,
+      petName: petRow?.pet_name || def.name,
       activityType: row.activity_type,
       shinobiName: row.shinobi_name || null,
       xp,
+      energyRestored,
       cooldownUntil,
-      levelUp: petLevelForXp(afterXp) > petLevelForXp(beforeXp),
+      levelUp: !cfg.restoresEnergy && petLevelForXp(afterXp) > petLevelForXp(beforeXp),
       level: petLevelForXp(afterXp),
+      totalXp: afterXp,
+      maxLevel: petLevelForXp(afterXp) >= PET_MAX_LEVEL,
     });
   }
   return finished;
@@ -379,7 +427,12 @@ export async function listPets(userId) {
   await ensurePetSchema();
   await settlePetActivities(userId);
   const pets = await applyEnergyRegen(userId);
-  for (const pet of pets) pet.activity = await getPetActivity(userId, pet.petId);
+  for (const pet of pets) {
+    pet.activity = await getPetActivity(userId, pet.petId);
+    const state = petStateOf(pet, pet.activity);
+    pet.status = state.status;
+    pet.statusEndsAt = state.endsAt;
+  }
   return pets;
 }
 
@@ -425,7 +478,7 @@ export async function buyPet(userId, petId, idempotencyKey) {
       VALUES (${null}, ${userId}, ${`Pet: ${def.name}`}, 1, ${def.price})
     `);
   } catch (e) { console.error('[pet purchase log]', e); }
-  // The source never auto-equips; the owner must run /equip_pet.
+  // The source never auto-equips; the owner must run /equip.
   return { code: 'ok', pet: await getPet(userId, id), price: def.price };
 }
 
@@ -508,7 +561,7 @@ export async function shinobiAvailability(userId, shinobi) {
 export async function startPetActivity(userId, petId, type, options = {}) {
   await ensurePetSchema();
   const cfg = PET_ACTIVITIES[String(type || '').toLowerCase()];
-  if (!cfg) return { code: 'invalid_activity' };
+  if (!cfg || !STARTABLE_ACTIVITIES.includes(cfg.key)) return { code: 'invalid_activity' };
   const chatId = Number(options.chatId || 0);
   const t = now();
   await settlePetActivities(userId);
@@ -518,10 +571,26 @@ export async function startPetActivity(userId, petId, type, options = {}) {
   if (options.locationKey && options.locationKey !== cfg.location) {
     return { code: 'wrong_location', location: cfg.location };
   }
-  if (await isBusy(userId, pet.petId)) {
-    const current = await getPetActivity(userId, pet.petId);
-    return { code: 'busy', activity: current?.activityType || null };
+
+  // Re-read the live state right before claiming: a repeated tap or a second
+  // device must see the row the first request just created.
+  const liveActivity = await getPetActivity(userId, pet.petId);
+  const state = petStateOf(pet, liveActivity, t);
+  if (state.status !== 'READY' && state.status !== 'EXHAUSTED') {
+    return {
+      code: 'busy',
+      activity: liveActivity?.activityType || state.status.toLowerCase(),
+      until: state.endsAt,
+      pet,
+    };
   }
+  if (cfg.requiresExhausted) {
+    if (state.status !== 'EXHAUSTED') return { code: 'not_exhausted', pet };
+  } else if (state.status === 'EXHAUSTED') {
+    return { code: 'rest_required', pet };
+  }
+  if (await isBusy(userId, pet.petId)) return { code: 'busy', activity: liveActivity?.activityType || null, pet };
+
   const cdUntil = Number(pet.cooldowns?.[cfg.key] || 0);
   if (cdUntil > t) {
     return { code: 'cooldown', remaining: cdUntil - t, until: cdUntil };
@@ -530,12 +599,18 @@ export async function startPetActivity(userId, petId, type, options = {}) {
     return { code: 'no_energy', energy: pet.energy, needed: cfg.energyCost };
   }
 
-  const needsShinobi = cfg.key !== 'rest';
+  const needsShinobi = !!cfg.locksShinobi;
   const shinobi = needsShinobi ? String(options.shinobi || '').trim() : null;
   if (needsShinobi && !shinobi) return { code: 'no_shinobi' };
   if (needsShinobi) {
     const reason = await shinobiAvailability(userId, shinobi);
-    if (reason === 'pet_busy') return { code: 'shinobi_busy', reason };
+    if (reason === 'pet_busy') {
+      const other = await db.get(sql`
+        SELECT activity_type, ends_at FROM pet_activity
+        WHERE telegram_id = ${userId} AND shinobi_name = ${shinobi} AND status = 'active'
+      `);
+      return { code: 'shinobi_busy', reason, activity: other?.activity_type || 'pet', until: other?.ends_at || 0 };
+    }
     if (reason) return { code: 'shinobi_unavailable', reason };
   }
 
@@ -548,7 +623,7 @@ export async function startPetActivity(userId, petId, type, options = {}) {
     `);
     const claimed = await db.run(sql`
       UPDATE activities SET status = 'active', kind = 'pet', started_at = ${t},
-        ends_at = ${endsAt}, base_roll = 0, chat_id = ${chatId}
+        ends_at = ${endsAt}, base_roll = 0, chat_id = ${chatId}, partner_pet = ${pet.petId}
       WHERE telegram_id = ${userId} AND shinobi = ${shinobi} AND status = 'idle'
     `);
     if (claimed.rowsAffected === 0) return { code: 'shinobi_busy', reason: 'busy' };
@@ -557,7 +632,7 @@ export async function startPetActivity(userId, petId, type, options = {}) {
   const releaseShinobi = async () => {
     if (!needsShinobi) return;
     await db.run(sql`
-      UPDATE activities SET status = 'idle'
+      UPDATE activities SET status = 'idle', partner_pet = NULL
       WHERE telegram_id = ${userId} AND shinobi = ${shinobi}
         AND kind = 'pet' AND status = 'active' AND started_at = ${t}
     `);
@@ -572,7 +647,7 @@ export async function startPetActivity(userId, petId, type, options = {}) {
   `);
   if (claimedPet.rowsAffected === 0) {
     await releaseShinobi();
-    return { code: 'busy' };
+    return { code: 'duplicate_session' };
   }
 
   const newEnergy = pet.energy - cfg.energyCost;
@@ -595,14 +670,16 @@ export async function startPetActivity(userId, petId, type, options = {}) {
     `);
   }
 
-  if (cfg.key === 'rest') await bumpStats(userId, { rest: 1 });
   return {
     code: 'ok',
     type: cfg.key,
     until: endsAt,
+    durationMinutes: cfg.durationMinutes,
     energy: newEnergy,
     energyCost: cfg.energyCost,
     shinobi: shinobi || null,
+    pet,
+    petName: pet.name,
     eventKey: `pet_act:${userId}:${pet.petId}:${cfg.key}:${t}`,
   };
 }
@@ -613,7 +690,11 @@ async function currentEnergy(userId, petId) {
   return pet ? pet.energy : 0;
 }
 
-/** End Rest (the only activity without a timer). */
+/**
+ * Wake a resting pet. Play and Train are commitment sessions and cannot be
+ * cancelled — abandoning them early would dodge exhaustion. Cancelling never
+ * pays a completion reward.
+ */
 export async function cancelPetActivity(userId, petId) {
   await ensurePetSchema();
   await settlePetActivities(userId);
@@ -621,23 +702,37 @@ export async function cancelPetActivity(userId, petId) {
   if (!pet) return { code: 'no_pet' };
   const activity = await getPetActivity(userId, pet.petId);
   if (!activity || activity.status !== 'active') return { code: 'no_activity' };
-  await applyEnergyRegen(userId);
+  if (activity.activityType !== 'rest') return { code: 'not_cancellable', activityType: activity.activityType };
   const won = await db.run(sql`
     DELETE FROM pet_activity
     WHERE telegram_id = ${userId} AND pet_id = ${pet.petId} AND status = 'active'
+      AND activity_type = 'rest'
   `);
   if (won.rowsAffected === 0) return { code: 'no_activity' };
-  if (activity.shinobiName) {
-    await db.run(sql`
-      UPDATE activities SET status = 'idle'
-      WHERE telegram_id = ${userId} AND shinobi = ${activity.shinobiName}
-        AND kind = 'pet' AND status = 'active'
-    `);
-  }
-  return { code: 'ok', activityType: activity.activityType };
+  // The pet stays exhausted: the 30-minute recovery did not finish.
+  return { code: 'ok', activityType: 'rest' };
 }
 
 export const stopPetRest = cancelPetActivity;
+
+/** Live pet sessions for a user (used by /inventory and /gate). */
+export async function listPetActivities(userId) {
+  try {
+    const rows = await db.all(sql`
+      SELECT pet_id, activity_type, started_at, ends_at, shinobi_name
+      FROM pet_activity WHERE telegram_id = ${userId} AND status = 'active'
+    `);
+    return (rows || []).map((row) => ({
+      petId: row.pet_id,
+      activityType: row.activity_type,
+      startedAt: Number(row.started_at || 0),
+      endsAt: Number(row.ends_at || 0),
+      shinobiName: row.shinobi_name || null,
+    }));
+  } catch (_) {
+    return [];
+  }
+}
 
 export async function renamePet(userId, petId, newName) {
   await ensurePetSchema();
@@ -706,15 +801,28 @@ export async function specialItemQty(userId, itemKey) {
   return Number(row?.quantity || 0);
 }
 
-export async function buyPetFood(userId, foodKey, idempotencyKey, chatId = 0) {
+/**
+ * Buy one food item for a pet. Feeding is instant: XP + energy, no timer.
+ * `petId` defaults to the equipped pet (Ramen Shop flow). Every check runs
+ * before any coin moves, and the idempotency key makes a repeated tap free.
+ */
+export async function feedPet(userId, foodKey, idempotencyKey, chatId = 0, petId = null) {
   await ensurePetSchema();
   const def = PET_FOOD_MENU[foodKey];
   if (!def) return { code: 'invalid' };
-  const pet = await getEquippedPet(userId);
-  if (!pet) return { code: 'no_pet' };
-  if (idempotencyKey && !(await once(`pet_food:${userId}:${idempotencyKey}`))) {
+  const pet = petId ? await getPet(userId, petId) : await getEquippedPet(userId);
+  if (!pet) return { code: petId ? 'not_owned' : 'no_pet' };
+
+  const liveActivity = await getPetActivity(userId, pet.petId);
+  const state = petStateOf(pet, liveActivity);
+  if (state.status !== 'READY') {
+    return { code: 'busy', status: state.status, activity: liveActivity?.activityType || null, pet };
+  }
+  if (pet.energy >= PET_MAX_ENERGY) return { code: 'full_energy', pet };
+  if (idempotencyKey && !(await once(`pet_food:${userId}:${pet.petId}:${idempotencyKey}`))) {
     return { code: 'duplicate' };
   }
+
   await db.run(sql`INSERT OR IGNORE INTO users (telegram_id, balance) VALUES (${userId}, 0)`);
   const paid = await db.run(sql`
     UPDATE users SET balance = balance - ${def.cost}
@@ -730,9 +838,16 @@ export async function buyPetFood(userId, foodKey, idempotencyKey, chatId = 0) {
       VALUES (${null}, ${userId}, ${`Pet food: ${def.name}`}, 1, ${def.cost})
     `);
   } catch (e) { console.error('[pet food log]', e); }
+
   const beforeLevel = pet.level;
+  const energyBefore = pet.energy;
+  const energyAfter = Math.min(PET_MAX_ENERGY, energyBefore + def.energy);
   let gained;
   try {
+    await db.run(sql`
+      UPDATE user_pets SET energy = ${energyAfter}
+      WHERE telegram_id = ${userId} AND pet_id = ${pet.petId}
+    `);
     gained = await grantPetXp(userId, pet.petId, def.petXp);
   } catch (e) {
     console.error('[pet food xp]', e);
@@ -744,10 +859,33 @@ export async function buyPetFood(userId, foodKey, idempotencyKey, chatId = 0) {
     const { creditIchirakuOwners } = await import('../property.js');
     await creditIchirakuOwners(chatId, def.cost);
   } catch (e) { console.error('[ichiraku pet-food cut]', e); }
+  // Daily pet missions count a completed feed (consumption), once per purchase.
+  try {
+    const { notifyDailyProgress, getDailyMission } = await import('../daily.js');
+    if (await getDailyMission(userId)) {
+      await notifyDailyProgress(
+        userId, 'pet_feed', `pet_food:${userId}:${pet.petId}:${idempotencyKey || Date.now()}`,
+      );
+    }
+  } catch (e) { console.error('[pet daily feed]', e); }
   return {
-    code: 'ok', petXp: gained, name: def.name, emoji: def.emoji,
-    level: after.level, levelUp: after.level > beforeLevel,
+    code: 'ok',
+    petId: pet.petId,
+    petName: after.name,
+    name: def.name,
+    emoji: def.emoji,
+    petXp: gained,
+    energyBefore,
+    energyAfter,
+    level: after.level,
+    levelUp: after.level > beforeLevel,
+    maxLevel: after.level >= PET_MAX_LEVEL,
   };
+}
+
+/** Ramen Shop entry point: feed the equipped pet. */
+export async function buyPetFood(userId, foodKey, idempotencyKey, chatId = 0, petId = null) {
+  return feedPet(userId, foodKey, idempotencyKey, chatId, petId);
 }
 
 /** Axofly: additive coins from a positive base reward. */
@@ -787,8 +925,8 @@ export function petAbilityLines(pet) {
   }
   const cut = def.timeReduction[level] || [0, 0];
   return [
-    `Mission/Patrol duration: −${Math.round(cut[0] * 100)}%`,
-    `Mission/Patrol cooldown: −${Math.round(cut[1] * 100)}%`,
+    `Mission & Patrol duration: −${Math.round(cut[0] * 100)}%`,
+    `Mission & Patrol cooldown: −${Math.round(cut[1] * 100)}%`,
   ];
 }
 

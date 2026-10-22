@@ -67,6 +67,8 @@ export const activities = table('activities', {
   chatId: integer('chat_id').notNull().default(0),
   // Cooldown scheduled at dispatch (Capycorn can reduce it); 0 = kind default.
   cooldownSec: integer('cooldown_sec').notNull().default(0),
+  // Pet id when the shinobi is locked in a Play session (display only).
+  partnerPet: text('partner_pet'),
 }, (t) => ({
   owner: uniqueIndex('uidx_activities_owner_shinobi').on(t.telegramId, t.shinobi),
 }));
@@ -488,6 +490,8 @@ export const userPets = table('user_pets', {
   feedCooldownUntil: integer('feed_cooldown_until').notNull().default(0),
   playCooldownUntil: integer('play_cooldown_until').notNull().default(0),
   trainCooldownUntil: integer('train_cooldown_until').notNull().default(0),
+  // 1 after Play/Train completes, cleared by a completed Rest session.
+  exhausted: integer('exhausted').notNull().default(0),
 }, (t) => ({
   pk: uniqueIndex('uidx_user_pets').on(t.telegramId, t.petId),
 }));

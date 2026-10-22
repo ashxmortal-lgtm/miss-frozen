@@ -46,6 +46,14 @@ export async function trainSession(telegramId, shinobi, trainer) {
     const s = await db.get(sql`SELECT status, ends_at FROM tsunade_search WHERE telegram_id = ${telegramId}`);
     if (s && s.status === 'active') return { code: 'searching', shinobi, until: s.ends_at };
   }
+  // A shinobi locked in a pet Play session cannot train until it completes.
+  const busy = await db.get(sql`
+    SELECT kind, status, ends_at FROM activities
+    WHERE telegram_id = ${telegramId} AND shinobi = ${shinobi}
+  `);
+  if (busy && busy.status === 'active' && Number(busy.ends_at || 0) > t) {
+    return { code: 'busy', shinobi, kind: busy.kind, until: busy.ends_at };
+  }
   if ((st.nextTrainAt || 0) > t) {
     return { code: 'cooldown', shinobi, until: st.nextTrainAt };
   }

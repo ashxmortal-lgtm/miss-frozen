@@ -15,6 +15,8 @@ import { collectStatus, statusParts } from './rpg/status.js';
 import { sakuraHeal, katsuyuHeal, restorableTimers, katsuyuRestore } from './rpg/training.js';
 import { dueText } from './rpg/time.js';
 import { getEquippedList } from './rpg/state.js';
+import { listPets } from './pet/store.js';
+import { statusInline } from './pet/text.js';
 
 const para = (...t) => ({ type: 'paragraph', text: t.length === 1 ? t[0] : t });
 const head = (text, size = 2) => ({ type: 'heading', text, size });
@@ -93,6 +95,19 @@ export async function buildInventoryBlocks(user) {
     blocks.push(table(tableRows));
   } else {
     blocks.push(quoteLines(['❯ (no shinobi yet — recruit at /shinobi_store)']));
+  }
+
+  // Pet sessions (ready / playing / training / resting / exhausted).
+  try {
+    const pets = await listPets(uid);
+    if (pets.length) {
+      blocks.push(para('🐾 PETS'));
+      for (const pet of pets) {
+        blocks.push(para(`${pet.def.emoji} ${escapeHtml(pet.name)} — ${statusInline(pet.status, pet.statusEndsAt)}`));
+      }
+    }
+  } catch (e) {
+    console.error('[inventory pets]', e);
   }
 
   blocks.push(para(`⚡ CHAKRA: ${Number(chakra).toLocaleString('en-US')}`));

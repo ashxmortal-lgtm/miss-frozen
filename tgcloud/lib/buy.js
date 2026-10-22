@@ -1,5 +1,19 @@
 import { findItem, fmt, CHAKRA_RATE, CHAKRA_MIN } from './store.js';
 import { purchase } from './purchase.js';
+import { PETS } from './pet/defs.js';
+import { buyPet } from './pet/store.js';
+import {
+  buySuccessText, insufficientCoinsText, alreadyOwnedText, ITEM_NOT_FOUND_TEXT,
+} from './pet/text.js';
+
+/** Pet catalog lookup; accepts "Axofly", "capycorn" and "pet Axofly". */
+function findPet(words) {
+  const rest = words.slice();
+  if (String(rest[0] || '').toLowerCase() === 'pet') rest.shift();
+  const key = rest.join(' ').trim().toLowerCase();
+  if (!key) return null;
+  return Object.values(PETS).find((p) => p.id === key || p.name.toLowerCase() === key) || null;
+}
 
 
 // Returns the message body (no mention; reply() adds it) or null to stay silent.
@@ -21,9 +35,23 @@ export async function handleBuy(user, text, updateId) {
     }
     req = { type: 'chakra', name: 'Chakra', qty: amount, cost: amount * CHAKRA_RATE };
   } else {
+    // Unified economy: the same /buy command serves pets and shinobi items.
+    const pet = findPet(args);
+    if (pet) {
+      const r = await buyPet(user.id, pet.id, `buy:${updateId ?? ''}:${pet.id}`);
+      if (r.code === 'duplicate') return null;
+      if (r.code === 'ok') {
+        return `${buySuccessText(pet.name)}\n\nᴇǫᴜɪᴘ ᴡɪᴛʜ /equip ${pet.name}`;
+      }
+      if (r.code === 'already_owned') return alreadyOwnedText(pet.name);
+      if (r.code === 'insufficient') {
+        return insufficientCoinsText(fmt(r.price ?? pet.price), fmt(r.balance ?? 0));
+      }
+      return '❌ ᴘᴜʀᴄʜᴀꜱᴇ ꜰᴀɪʟᴇᴅ — ɴᴏ ᴄᴏɪɴꜱ ᴡᴇʀᴇ ᴄʜᴀʀɢᴇᴅ.';
+    }
     const item = findItem(args.join(' '));
     if (!item) {
-      return `❌ 𝐈𝐓𝐄𝐌 𝐍𝐎𝐓 𝐅𝐎𝐔𝐍𝐃\n\nᴛʜɪs ɪᴛᴇᴍ ɪsɴ'ᴛ ᴀᴠᴀɪʟᴀʙʟᴇ ɪɴ ᴛʜᴇ sᴛᴏʀᴇ.\n\nᴜsᴇ /shinobi_store ᴛᴏ ʙʀᴏᴡsᴇ ɪᴛᴇᴍs.`;
+      return ITEM_NOT_FOUND_TEXT;
     }
     req = { type: item.type, name: item.name, qty: 1, cost: item.price, emoji: item.emoji };
   }

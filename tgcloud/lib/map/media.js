@@ -63,7 +63,17 @@ function extractFileId(result) {
  * then immediately delete that temporary copy before the Rich Message is sent.
  */
 export async function getMapPhotoFileId(chatId, storageMessageId) {
-  const sid = storageMessageId || MAP_IMAGE_MESSAGE_ID;
+  return getStoragePhotoFileId(chatId, MAP_IMAGE_CHAT_ID, storageMessageId || MAP_IMAGE_MESSAGE_ID);
+}
+
+/**
+ * Resolve any storage-channel photo into a reusable file_id.
+ * t.me/c/<chat>/<message> links are private links, not HTTP photo URLs, so the
+ * only supported path is copying/forwarding from the storage channel.
+ */
+export async function getStoragePhotoFileId(chatId, storageChatId, storageMessageId) {
+  const sid = storageMessageId;
+  if (!sid) return null;
   const cached = await getCachedFileId(sid);
   if (cached) return cached;
 
@@ -72,7 +82,7 @@ export async function getMapPhotoFileId(chatId, storageMessageId) {
   try {
     const forwarded = await api.forwardMessage({
       chat_id: chatId,
-      from_chat_id: MAP_IMAGE_CHAT_ID,
+      from_chat_id: storageChatId,
       message_id: sid,
       disable_notification: true,
     });

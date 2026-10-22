@@ -2,9 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {
-  PETS, PET_XP_THRESHOLDS, PET_XP_CAP, PET_MAX_ENERGY,
-  PET_ACTIVITIES, PET_FOOD_MENU, PET_NAMETAG_PRICE, PET_NAMETAG_MAX_LEN,
-  PET_FEED_FEE, ICHIRAKU_OWNER_CUT_PCT,
+  PETS, PET_IMAGE_CHAT_ID, PET_XP_THRESHOLDS, PET_XP_CAP, PET_MAX_ENERGY,
+  PET_ACTIVITIES, STARTABLE_ACTIVITIES, PET_FOOD_MENU, PET_NAMETAG_PRICE,
+  PET_NAMETAG_MAX_LEN, PET_FEED_FEE, ICHIRAKU_OWNER_CUT_PCT,
   petLevelForXp, petXpForNextLevel, petRegenEnergy, petRewardBonusFor,
   petShinobiXpBonusFor, petTimeReductionFor, reducedActivitySeconds,
   reducedCooldownSeconds, sanitizePetName, petNameLength,
@@ -13,13 +13,16 @@ import { DAILY_TEMPLATES, dailyCycleDate } from '../tgcloud/lib/daily_defs.js';
 
 const read = (path) => fs.readFileSync(new URL('../' + path, import.meta.url), 'utf8');
 
-test('both pets keep the source prices, abilities and image ids', () => {
+test('both pets keep the source prices, abilities and storage photo ids', () => {
   assert.equal(PETS.axofly.price, 30000);
   assert.equal(PETS.capycorn.price, 40000);
   assert.equal(PETS.axofly.abilityName, 'Flutter Fortune');
   assert.equal(PETS.capycorn.abilityName, 'Royal Pace');
-  assert.equal(PETS.axofly.imageMessageId, 349);
-  assert.equal(PETS.capycorn.imageMessageId, 353);
+  // t.me/c/3889508991/540 and /541 — private message links resolved via the
+  // storage-channel file_id cache, never passed to sendPhoto as URLs.
+  assert.equal(PETS.axofly.imageMessageId, 540);
+  assert.equal(PETS.capycorn.imageMessageId, 541);
+  assert.equal(PET_IMAGE_CHAT_ID, -1003889508991);
   assert.deepEqual(Object.keys(PETS), ['axofly', 'capycorn']);
 });
 
@@ -85,23 +88,26 @@ test('Capycorn Royal Pace reductions match every level and only affect missions'
   assert.equal(reducedCooldownSeconds(6 * 3600, 0.07), Math.floor(21600 * 0.93));
 });
 
-test('activity, food, nametag and feed-fee constants are the source values', () => {
-  assert.equal(PET_ACTIVITIES.feed.durationMinutes, 30);
-  assert.equal(PET_ACTIVITIES.feed.cooldownHours, 6);
-  assert.equal(PET_ACTIVITIES.feed.xp, 50);
-  assert.equal(PET_ACTIVITIES.feed.energyCost, 10);
-  assert.equal(PET_ACTIVITIES.play.durationMinutes, 45);
-  assert.equal(PET_ACTIVITIES.play.cooldownHours, 4);
+test('activity durations match the session spec and food is instant', () => {
+  // Play 30 minutes, Train 2 hours, Rest 30 minutes. Feed is no longer timed.
+  assert.equal(PET_ACTIVITIES.play.durationMinutes, 30);
   assert.equal(PET_ACTIVITIES.play.xp, 75);
   assert.equal(PET_ACTIVITIES.play.energyCost, 15);
+  assert.equal(PET_ACTIVITIES.play.locksShinobi, true);
+  assert.equal(PET_ACTIVITIES.play.exhausts, true);
   assert.equal(PET_ACTIVITIES.train.durationMinutes, 120);
-  assert.equal(PET_ACTIVITIES.train.cooldownHours, 8);
   assert.equal(PET_ACTIVITIES.train.xp, 150);
   assert.equal(PET_ACTIVITIES.train.energyCost, 30);
-  assert.equal(PET_ACTIVITIES.rest.durationMinutes, null);
+  assert.equal(PET_ACTIVITIES.train.locksShinobi, false);
+  assert.equal(PET_ACTIVITIES.train.exhausts, true);
+  assert.equal(PET_ACTIVITIES.rest.durationMinutes, 30);
+  assert.equal(PET_ACTIVITIES.rest.xp, 0, 'rest never pays XP');
+  assert.equal(PET_ACTIVITIES.rest.requiresExhausted, true);
+  assert.equal(PET_ACTIVITIES.rest.restoresEnergy, true);
+  assert.deepEqual(STARTABLE_ACTIVITIES, ['play', 'train', 'rest']);
   assert.deepEqual(
-    Object.values(PET_FOOD_MENU).map((f) => [f.cost, f.petXp]),
-    [[500, 100], [1000, 250], [2000, 500]],
+    Object.values(PET_FOOD_MENU).map((f) => [f.cost, f.petXp, f.energy]),
+    [[500, 100, 10], [1000, 250, 25], [2000, 500, 50]],
   );
   assert.equal(PET_NAMETAG_PRICE, 3000);
   assert.equal(PET_NAMETAG_MAX_LEN, 24);
@@ -150,7 +156,7 @@ test('pet persistence is duplicate-safe and cooldown starts at completion', () =
   assert.match(store, /energy = energy - \$\{cfg\.energyCost\}, last_energy_at = \$\{t\}/);
 });
 
-test('BBQ feed fee only charges when the group owns the property and refunds on failure', () => {
+test('pet food purchases pay the Ichiraku owners; BBQ fee helpers stay intact', () => {
   const property = read('tgcloud/lib/property.js');
   assert.match(property, /petFeedFee: PET_FEED_FEE/);
   assert.match(property, /getPropertyOwnership\(groupId, 'bbq'\)/);
@@ -158,9 +164,61 @@ test('BBQ feed fee only charges when the group owns the property and refunds on 
   assert.match(property, /balance >= \$\{fee\}/);
   assert.match(property, /addPropertyEarnings\(groupId, 'bbq', fee\)/);
   assert.match(property, /reversePropertyEarnings\(groupId, 'bbq', value\)/);
-  const ui = read('tgcloud/lib/pet/ui.js');
-  assert.match(ui, /if \(chargeFee && cfg\.key === 'feed' && Number\(chatId\) < 0\)/);
-  assert.match(ui, /refundPetFeed\(chatId, userId, fee\)/);
+  const store = read('tgcloud/lib/pet/store.js');
+  assert.match(store, /creditIchirakuOwners\(chatId, def\.cost\)/);
+});
+
+test('/buy and /equip serve both catalogues with multi-word names', () => {
+  const buy = read('tgcloud/lib/buy.js');
+  // "pet" prefix is optional and the rest of the words form the name.
+  assert.match(buy, /if \(String\(rest\[0\] \|\| ''\)\.toLowerCase\(\) === 'pet'\) rest\.shift\(\);/);
+  assert.match(buy, /const key = rest\.join\(' '\)\.trim\(\)\.toLowerCase\(\);/);
+  // A pet match buys a pet; everything else falls through to the shinobi/jutsu
+  // catalogue with the full multi-word name.
+  assert.match(buy, /const pet = findPet\(args\);/);
+  assert.match(buy, /const item = findItem\(args\.join\(' '\)\);/);
+  assert.match(buy, /if \(!item\) \{\n      return ITEM_NOT_FOUND_TEXT;/);
+  // Duplicate taps stay silent, ownership and balance errors have dialogues.
+  assert.match(buy, /if \(r\.code === 'duplicate'\) return null;/);
+  assert.match(buy, /if \(r\.code === 'already_owned'\) return alreadyOwnedText\(pet\.name\);/);
+  assert.match(buy, /insufficientCoinsText\(fmt\(r\.price \?\? pet\.price\), fmt\(r\.balance \?\? 0\)\)/);
+
+  const eq = read('tgcloud/lib/economy_handler.js');
+  // Pets are checked before shinobi; the shinobi path is untouched.
+  assert.ok(eq.indexOf('const petDef = Object.values(PETS).find(') < eq.indexOf('const r = await equipShinobi(message.from.id, args);'));
+  assert.match(eq, /const r = await equipPet\(message\.from\.id, petDef\.id\);/);
+  assert.match(eq, /equipSuccessText\(petDef\.name\)/);
+  assert.match(eq, /notOwnedText\(petDef\.name\)/);
+  assert.match(eq, /Max 3 shinobi equipped/);
+});
+
+test('/inventory and /gate show live pet status and the playing-with-pet label', () => {
+  const inv = read('tgcloud/lib/inventory.js');
+  assert.match(inv, /await listPets\(uid\)/);
+  assert.match(inv, /statusInline\(pet\.status, pet\.statusEndsAt\)/);
+
+  const gate = read('tgcloud/lib/map/handler.js');
+  assert.match(gate, /const rows = await listPets\(telegramId\);/);
+  assert.match(gate, /petStatusText\(pet\)/);
+
+  const status = read('tgcloud/lib/rpg/status.js');
+  assert.match(status, /LEFT JOIN user_pets up ON up\.telegram_id = pa\.telegram_id AND up\.pet_id = pa\.pet_id/);
+  assert.match(status, /`Playing with \$\{petLabel\}`/);
+  assert.match(status, /due: dueText\(act\.ends_at, t\)/);
+
+  // Status vocabulary used by both screens.
+  const text = read('tgcloud/lib/pet/text.js');
+  for (const label of ['🟢 ʀᴇᴀᴅʏ', '🎾 ᴘʟᴀʏɪɴɢ', '🏋️ ᴛʀᴀɪɴɪɴɢ', '😴 ʀᴇꜱᴛɪɴɢ', '⚠️ ᴇxʜᴀᴜꜱᴛᴇᴅ']) {
+    assert.ok(text.includes(label), label);
+  }
+});
+
+test('patrols, missions and shinobi training reject a shinobi locked in Play', () => {
+  const activities = read('tgcloud/lib/activities.js');
+  assert.match(activities, /if \(row\.kind === 'pet'\) return \{ status: 'busy_pet', shinobi, until: row\.ends_at \};/);
+  const training = read('tgcloud/lib/rpg/training.js');
+  assert.match(training, /if \(busy && busy\.status === 'active' && Number\(busy\.ends_at \|\| 0\) > t\) \{/);
+  assert.match(training, /return \{ code: 'busy', shinobi, kind: busy\.kind, until: busy\.ends_at \};/);
 });
 
 test('map exposes every pet entry point and the daily quest screen', () => {
@@ -209,61 +267,70 @@ test('gameplay hooks apply Axofly and Capycorn bonuses', () => {
 
 test('/pet command is registered and routed', () => {
   const reg = read('tgcloud/lib/command_registry.js');
-  for (const cmd of ['/pet', '/pet_store', '/buy_pet', '/equip_pet', '/pet_rename']) {
+  for (const cmd of ['/pet', '/pet_store', '/pet_rename']) {
     assert.match(reg, new RegExp(`cmd: '${cmd}'`), cmd);
   }
+  // The standalone pet commands are gone: /buy and /equip serve both catalogs.
+  assert.doesNotMatch(reg, /'\/buy_pet'|'\/equip_pet'/);
   const handler = read('tgcloud/lib/economy_handler.js');
-  for (const cmd of ['pet', 'pet_store', 'buy_pet', 'equip_pet', 'pet_rename']) {
+  for (const cmd of ['pet', 'pet_store', 'pet_rename']) {
     assert.match(handler, new RegExp(`cmd === '${cmd}'`), cmd);
   }
+  assert.doesNotMatch(handler, /buy_pet|equip_pet/);
+  assert.match(handler, /petDef = Object\.values\(PETS\)/);
+  assert.match(read('tgcloud/lib/buy.js'), /buyPet\(user\.id, pet\.id/);
   assert.match(handler, /handlePetCommand/);
-  assert.match(read('tgcloud/lib/pet/ui.js'), /'\/pet', '\/pet_store', '\/buy_pet', '\/equip_pet', '\/pet_rename'/);
+  assert.match(read('tgcloud/lib/pet/ui.js'), /'\/pet', '\/pet_store', '\/pet_rename'/);
   const ui = read('tgcloud/lib/pet/ui.js');
   for (const sub of ['name', 'buy', 'feed', 'play', 'train', 'rest', 'stats', 'store']) {
     assert.match(ui, new RegExp(`sub === '${sub}'`), sub);
   }
 });
 
-test('every pet callback is routed and every map pet callback ends with the owner id', () => {
+test('every pet callback is routed with a server-side owner and pet guard', () => {
   const ui = read('tgcloud/lib/pet/ui.js');
   const handler = read('tgcloud/lib/map/handler.js');
+
+  // Every map_pet_* action the UI emits has a handler branch.
   const actions = new Set();
   for (const m of ui.matchAll(/`(map_pet_[a-z_]+):/g)) actions.add(m[1]);
+  assert.ok(actions.size >= 10, 'map pet actions are wired');
   for (const action of actions) {
-    assert.match(handler, new RegExp(`action === '${action}'|action === '${action.replace('map_', '')}'`), action);
+    assert.match(handler, new RegExp(`action === '${action}'`), action);
   }
-  // Owner guard in the map router uses the last callback segment.
-  for (const m of ui.matchAll(/`(map_pet_[a-z_]+):([^`]*)`/g)) {
-    const [, action, rest] = m;
-    if (action === 'map_pet_store' || action === 'map_pet_menu' || action === 'map_pet_food'
-      || action === 'map_pet_stats' || action === 'map_pet_feed' || action === 'map_pet_play'
-      || action === 'map_pet_train' || action === 'map_pet_rest') continue;
-    if (action === 'map_pet_start' || action === 'map_pet_noop') {
-      // Source shape: the owner id comes right after the action.
-      assert.match(rest, /^(userId|user\.id|\$\{userId\})(:|$)/, `${action} must start with the owner id`);
-      continue;
-    }
-    assert.match(rest, /(userId|user\.id)\}$/, `${action} must end with the owner id`);
-  }
+
+  // Every pet_* action the UI emits is routed in the pet callback router.
   const petActions = new Set();
   for (const m of ui.matchAll(/`(pet_[a-z_]+):/g)) petActions.add(m[1]);
   for (const action of petActions) {
     assert.match(ui, new RegExp(`action === '${action}'`), action);
   }
+
+  // Owner guard runs before any row lookup.
+  assert.match(ui, /const ownerId = Number\(parts\[1\]\) \|\| 0;/);
+  assert.match(ui, /if \(ownerId !== userId\) \{ await answer\(cb, WRONG_OWNER_TEXT, true\); return true; \}/);
+  // Every pet id taken from a callback is re-read from the caller's own rows.
+  assert.match(ui, /async function ownedPet\(userId, petId\)/);
+  assert.match(ui, /return getPet\(userId, String\(petId\)\.toLowerCase\(\)\)/);
+  // Map callbacks: owner is the second segment for uid-first shapes and the
+  // last segment for pet-first shapes; both are parsed by parseCb.
+  assert.match(handler, /if \(action\.startsWith\('map_pet_'\) && \/\^\\d\+\$\/\.test\(parts\[1\] \|\| ''\)\) ownerId = Number\(parts\[1\]\)/);
+  // Stale / malformed callbacks answer instead of throwing.
+  assert.match(ui, /await answer\(cb, STALE_MENU_TEXT, true\);/);
+  assert.match(ui, /await answer\(cb, UNEXPECTED_ERROR_TEXT, true\);/);
 });
 
-test('only the equipped pet can take activities and feed needs an owned BBQ', () => {
+test('only the equipped pet can take activities and every session is guarded', () => {
   const store = read('tgcloud/lib/pet/store.js');
   assert.match(store, /if \(!pet\.equipped\) return \{ code: 'not_equipped' \}/);
   assert.match(store, /const reason = await shinobiAvailability\(userId, shinobi\)/);
-  assert.match(store, /if \(reason === 'pet_busy'\) return \{ code: 'shinobi_busy'/);
+  assert.match(store, /if \(reason === 'pet_busy'\)/);
   assert.match(store, /INSERT OR IGNORE INTO pet_activity/);
+  assert.match(store, /if \(won\.rowsAffected === 0\) continue;/, 'guarded delete is the completion claim');
   assert.match(read('tgcloud/schema.js'), /feedCooldownUntil: integer\('feed_cooldown_until'\)/);
-  assert.match(store, /feed_cooldown_until = \$\{cooldownUntil\}/);
-  assert.match(store, /play_cooldown_until = \$\{cooldownUntil\}/);
-  assert.match(store, /train_cooldown_until = \$\{cooldownUntil\}/);
-  const ui = read('tgcloud/lib/pet/ui.js');
-  assert.match(ui, /if \(charge\.code === 'no_property'\) return \{ code: 'no_property', fee: charge\.fee \}/);
-  assert.match(ui, /await refundPetFeed\(chatId, userId, fee\)/);
-  assert.match(read('tgcloud/lib/map/handler.js'), /performPetStart\(user\.id, type, shinobi, chatId, loc, true\)/);
+  assert.match(read('tgcloud/schema.js'), /exhausted: integer\('exhausted'\)/);
+  assert.match(read('tgcloud/schema.js'), /partnerPet: text\('partner_pet'\)/);
+  assert.match(store, /exhausted = 1/);
+  assert.match(store, /exhausted = 0/);
+  assert.match(read('tgcloud/lib/map/handler.js'), /performPetStart\(user\.id, petId, 'train'/);
 });

@@ -10,15 +10,13 @@ export const COMMANDS = [
   { cmd: '/profile', desc: 'Your rank, XP, roster & stats', access: 'user' },
   { cmd: '/inventory', desc: 'Your items', access: 'user' },
   { cmd: '/shinobi_store', desc: 'Unlock jutsu & items', access: 'user' },
-  { cmd: '/buy', desc: 'Buy items / chakra (min 100 chakra, 2 🍥 each)', access: 'user' },
+  { cmd: '/buy', desc: 'Buy a pet, shinobi, jutsu or chakra (min 100 chakra, 2 🍥 each)', access: 'user' },
   { cmd: '/mission', desc: 'Start a mission (group)', access: 'user' },
   { cmd: '/patrol', desc: 'Start a patrol (group)', access: 'user' },
   { cmd: '/map', desc: 'Konoha village map (missions, BBQ, Ichiraku, …)', access: 'user' },
   { cmd: '/ability', desc: 'Your abilities (alias /abilities)', access: 'user' },
-  { cmd: '/pet', desc: 'Pets — profile, feed/play/train/rest, food, stats, nametag, store', access: 'user' },
-  { cmd: '/pet_store', desc: 'Pet store — Axofly & Capycorn (also /pet store)', access: 'user' },
-  { cmd: '/buy_pet', desc: 'Adopt a pet — /buy_pet Axofly', access: 'user' },
-  { cmd: '/equip_pet', desc: 'Equip your active pet', access: 'user' },
+  { cmd: '/pet', desc: 'Pets — /pet me for feed/play/train/rest, stats & abilities', access: 'user' },
+  { cmd: '/pet_store', desc: 'Pet store — Axofly & Capycorn (buy with /buy, equip with /equip)', access: 'user' },
   { cmd: '/pet_rename', desc: 'Rename a pet — /pet_rename PetName NewName (needs Pet Nametag)', access: 'user' },
   { cmd: '/mt', desc: 'Mind Transmission — reply in group (requires jutsu)', access: 'user' },
   { cmd: '/gift_store', desc: "Ino's Gift Store catalog", access: 'user' },
@@ -41,7 +39,7 @@ export const COMMANDS = [
   { cmd: '/rps_stats', desc: 'Your RPS stats', access: 'user' },
   { cmd: '/transfer', desc: 'Transfer coins to a user (reply in group)', access: 'user' },
   { cmd: '/leaderboard', desc: 'Top balances (alias /lb)', access: 'user' },
-  { cmd: '/equip', desc: 'Equip a shinobi (max 3)', access: 'user' },
+  { cmd: '/equip', desc: 'Equip a pet or shinobi (max 3 shinobi)', access: 'user' },
   { cmd: '/unequip', desc: 'Unequip a shinobi', access: 'user' },
   { cmd: '/redeem', desc: 'Redeem a coupon code', access: 'user' },
   { cmd: '/owner', desc: 'Contact the owner (alias /awwsheesh)', access: 'user' },
@@ -66,7 +64,7 @@ export const ALIASES = {
 };
 
 /** Commands owned by the pet system, shown in their own /help section. */
-export const PET_COMMANDS = ['/pet', '/pet_store', '/buy_pet', '/equip_pet', '/pet_rename'];
+export const PET_COMMANDS = ['/pet', '/pet_store', '/pet_rename'];
 
 export function listCommands(accessFilter) {
   if (accessFilter === 'user') return COMMANDS.filter((c) => c.access === 'user');

@@ -28,9 +28,39 @@ export function sql(strings, ...values) {
 }
 sql.raw = (text) => ({ __raw: String(text) });
 
-export const index = (name, ...cols) => ({ kind: 'index', name, cols });
-export const uniqueIndex = (name, ...cols) => ({ kind: 'uniqueIndex', name, cols });
+export const index = (name, ...cols) => ({ kind: 'index', name, cols, on: () => ({ kind: 'index', name, cols }) });
+export const uniqueIndex = (name, ...cols) => ({ kind: 'uniqueIndex', name, cols, on: () => ({ kind: 'uniqueIndex', name, cols }) });
 export const primaryKey = (...cols) => ({ kind: 'primaryKey', cols });
+
+// Schema-DSL shims: schema.js is imported for module-graph parity, but only the
+// hand-written DDL in each feature module touches the in-memory database.
+const mockColumn = () => {
+  const column = {};
+  for (const method of ['notNull', 'default', 'primaryKey', 'deprecated', 'references', 'autoIncrement']) {
+    column[method] = () => column;
+  }
+  return column;
+};
+export const eq = () => ({});
+export const ne = () => ({});
+export const gt = () => ({});
+export const gte = () => ({});
+export const lt = () => ({});
+export const lte = () => ({});
+export const and = () => ({});
+export const or = () => ({});
+export const like = () => ({});
+export const asc = () => ({});
+export const desc = () => ({});
+export const inArray = () => ({});
+export const integer = () => mockColumn();
+export const text = () => mockColumn();
+export const table = (name, _cols, extra) => {
+  if (typeof extra === 'function') {
+    try { extra(new Proxy({}, { get: () => mockColumn() })); } catch (_) { /* test-only shape */ }
+  }
+  return { kind: 'table', name };
+};
 
 function queryOf(query) {
   if (typeof query === 'string') return { text: query, params: [] };
