@@ -132,7 +132,8 @@ function villageBody() {
 }
 
 function homeBody() {
-  return locBody('🗺️ KONOHA MAP', ['Choose a location.']);
+  // The map figure already carries the Konoha Map title.
+  return p('Choose a location to explore.');
 }
 
 function locationBody(locKey) {
