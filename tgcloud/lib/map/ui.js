@@ -21,24 +21,30 @@ export function villageKeyboard(userId) {
   };
 }
 
-/** Home map — 4 rows as specified. */
+/**
+ * Location menu: match the reference with three paired rows, then Stores and Close.
+ * Omit the rich button style here to use Telegram's compact, rounded neutral
+ * surface (dark grey in dark mode), rather than transparent text controls.
+ * Other map screens keep their existing styling.
+ */
 export function mapKeyboard(userId) {
+  const locationButton = (text, data) => ({ ...btn(text, data), style: '' });
   return {
     inline_keyboard: [
       [
-        btn('🏯 Hokage Office', guard('map_loc_hokage', userId)),
-        btn('🍖 BBQ', guard('map_loc_bbq', userId)),
+        locationButton('🏯 Hokage Office', guard('map_loc_hokage', userId)),
+        locationButton('🍜 Ichiraku Ramen', guard('map_loc_ichiraku', userId)),
       ],
       [
-        btn('🍜 Ichiraku Ramen', guard('map_loc_ichiraku', userId)),
-        btn('🚪 Gate', guard('map_loc_gate', userId)),
+        locationButton('🍖 BBQ', guard('map_loc_bbq', userId)),
+        locationButton('🚪 Gate', guard('map_loc_gate', userId)),
       ],
       [
-        btn('🥷 Training Ground', guard('map_loc_training', userId)),
-        btn('🏪 Stores', guard('map_loc_store', userId)),
+        locationButton('🥷 Training Ground', guard('map_loc_training', userId)),
+        locationButton('♨️ Hot Springs', guard('map_loc_hotsprings', userId)),
       ],
-      [btn('♨️ Hot Springs', guard('map_loc_hotsprings', userId))],
-      [btn('❌ Close', guard('map_close', userId))],
+      [locationButton('🏪 Stores', guard('map_loc_store', userId))],
+      [locationButton('❌ Close', guard('map_close', userId))],
     ],
   };
 }
