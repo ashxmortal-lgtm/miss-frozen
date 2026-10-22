@@ -49,6 +49,20 @@ export async function collectStatus(telegramId) {
   `);
   const actMap = Object.fromEntries((acts || []).map((a) => [a.shinobi, a]));
 
+  // Pet sessions give the shinobi's row a meaningful label ("playing with …").
+  let petActByShinobi = {};
+  try {
+    const petActs = await db.all(sql`
+      SELECT pa.pet_id, pa.activity_type, pa.ends_at, pa.shinobi_name, up.pet_name
+      FROM pet_activity pa
+      LEFT JOIN user_pets up ON up.telegram_id = pa.telegram_id AND up.pet_id = pa.pet_id
+      WHERE pa.telegram_id = ${telegramId} AND pa.status = 'active'
+    `);
+    petActByShinobi = Object.fromEntries(
+      (petActs || []).filter((p) => p.shinobi_name).map((p) => [p.shinobi_name, p]),
+    );
+  } catch (_) { /* pet tables not migrated yet */ }
+
   let bbqMap = {};
   try {
     const bbq = await db.all(sql`
@@ -85,8 +99,18 @@ export async function collectStatus(telegramId) {
     } else if (isDead(state, t)) {
       primary = { key: 'dead', icon: '☠️', label: 'Dead', due: dueText(state.deadUntil, t), dueAt: state.deadUntil };
     } else if (act && act.status === 'active' && act.ends_at > t) {
-      const label = `${ACT_WORD[act.kind] || 'Activity'}`;
-      primary = { key: act.kind, icon: act.kind === 'mission' ? '⚔️' : act.kind === 'pet' ? '🐾' : '🏃', label, due: dueText(act.ends_at, t), dueAt: act.ends_at };
+      const petAct = act.kind === 'pet' ? petActByShinobi[name] : null;
+      const petLabel = petAct ? (petAct.pet_name || petAct.pet_id) : '';
+      const label = petAct?.activity_type === 'play'
+        ? `Playing with ${petLabel}`
+        : `${ACT_WORD[act.kind] || 'Activity'}`;
+      primary = {
+        key: act.kind,
+        icon: act.kind === 'mission' ? '⚔️' : act.kind === 'pet' ? '🎾' : '🏃',
+        label,
+        due: dueText(act.ends_at, t),
+        dueAt: act.ends_at,
+      };
     } else if (searchActive && (name === 'Naruto' || name === 'Jiraiya')) {
       primary = {
         key: 'searching', icon: '🔎',
@@ -123,6 +147,7 @@ export function statusParts(row) {
   const statusByKey = {
     patrol: 'patrol',
     mission: 'mission',
+    pet: String(p.label || 'pet activity').toLowerCase(),
     exhausted: 'exhausted',
     searching: 'searching',
     bbq: 'chilling in BBQ',
@@ -161,6 +186,7 @@ export function statusText(row) {
   const p = row.primary;
   switch (p.key) {
     case 'ready': return '🟢 Ready';
+    case 'pet': return `${p.icon} ${p.label} — Returns ${p.due}`;
     case 'patrol': return `🏃 On patrol — Returns ${p.due}`;
     case 'mission': return `⚔️ On mission — Returns ${p.due}`;
     case 'searching': return `🔎 Searching Tsunade — Completes ${p.due}`;

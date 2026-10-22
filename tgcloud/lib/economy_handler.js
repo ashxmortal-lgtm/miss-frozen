@@ -36,6 +36,9 @@ import { handleSearchTsuna } from '../lib/rpg/tsunade.js';
 import { send, sweepMessages, trackUser } from './chat.js';
 import { groupChatLink } from './telegram_links.js';
 import { handlePetCommand } from './pet/ui.js';
+import { PETS } from './pet/defs.js';
+import { equipPet } from './pet/store.js';
+import { equipSuccessText, notOwnedText } from './pet/text.js';
 
 import { MINI_APP_URL, BOT_USERNAME } from './config.js';
 
@@ -104,8 +107,7 @@ const ECONOMY_CMDS = new Set([
   'mission', 'patrol', 'map', 'ability', 'abilities', 'addcoins',
   'kill', 'rob', 'protect', 'byakugan', 'mt', 'gift', 'gift_store',
   'search_tsuna', 'transfer', 'leaderboard', 'lb',
-  'equip', 'unequip', 'redeem', 'pet', 'pet_store', 'buy_pet',
-  'equip_pet', 'pet_rename',
+  'equip', 'unequip', 'redeem', 'pet', 'pet_store', 'pet_rename',
   'hug', 'slap', 'punch', 'pat',
   'xoxo', 'rps', 'games', 'xoxo_stats', 'rps_stats',
 ]);
@@ -176,8 +178,7 @@ export async function handleEconomyCommand(message, ctx) {
         await reply(message, helpText(user));
       }
     } else if (
-      cmd === 'pet' || cmd === 'pet_store' || cmd === 'buy_pet'
-      || cmd === 'equip_pet' || cmd === 'pet_rename'
+      cmd === 'pet' || cmd === 'pet_store' || cmd === 'pet_rename'
     ) {
       await handlePetCommand(message);
     } else if (cmd === 'ability' || cmd === 'abilities') {
@@ -561,7 +562,20 @@ async function sendGlobalLeaderboard(chatId) {
 async function handleEquip(message, text) {
   const args = text.trim().split(/\s+/).slice(1).join(' ').trim();
   if (!args) {
-    await reply(message, 'Usage: /equip &lt;shinobi name&gt;\nExample: /equip Naruto\nMax 3 equipped. Check /inventory');
+    await reply(message, 'ᴜsᴀɢᴇ: /equip &lt;pet or shinobi name&gt;\nᴇxᴀᴍᴘʟᴇ: /equip Naruto · /equip Axofly\nꜱʜɪɴᴏʙɪ: ᴍᴀx 3 ᴇǫᴜɪᴘᴘᴇᴅ. ᴄʜᴇᴄᴋ /inventory');
+    return;
+  }
+  // Pets and shinobi share /equip; the pet catalogue is checked first.
+  const petDef = Object.values(PETS).find(
+    (p) => p.id === args.toLowerCase() || p.name.toLowerCase() === args.toLowerCase(),
+  );
+  if (petDef) {
+    const r = await equipPet(message.from.id, petDef.id);
+    if (r.code === 'ok' || r.code === 'already_equipped') {
+      await reply(message, equipSuccessText(petDef.name));
+    } else {
+      await reply(message, notOwnedText(petDef.name));
+    }
     return;
   }
   const r = await equipShinobi(message.from.id, args);

@@ -14,7 +14,8 @@ export const PETS = {
     abilityKey: 'flutter_fortune',
     abilityName: 'Flutter Fortune',
     abilityDesc: 'Chance to boost /kill /rob /claim /patrol /mission rewards + mild Shinobi XP.',
-    imageMessageId: 349,
+    // t.me/c/3889508991/540 — resolved through the storage-channel file_id cache.
+    imageMessageId: 540,
     // level -> [trigger chance, base-reward bonus fraction]
     rewardBoost: {
       1: [0.08, 0.10],
@@ -34,7 +35,8 @@ export const PETS = {
     abilityKey: 'royal_pace',
     abilityName: 'Royal Pace',
     abilityDesc: 'Reduces Mission & Patrol duration and cooldown.',
-    imageMessageId: 353,
+    // t.me/c/3889508991/541 — resolved through the storage-channel file_id cache.
+    imageMessageId: 541,
     // level -> [duration reduction, cooldown reduction]
     timeReduction: {
       1: [0.03, 0.02],
@@ -61,29 +63,39 @@ export const PET_ENERGY_REGEN_SECONDS = 2 * 3600;
 export const REST_ENERGY_REGEN_AMOUNT = 15;
 export const REST_ENERGY_REGEN_SECONDS = 3600;
 
+/**
+ * Timed activities. Feed is no longer timed (food is instant), but the entry is
+ * kept so any feed session started before this update still settles correctly.
+ */
 export const PET_ACTIVITIES = {
   feed: {
     key: 'feed', emoji: '🍖', label: 'Feed', location: 'bbq',
-    durationMinutes: 30, cooldownHours: 6, xp: 50, energyCost: 10,
+    durationMinutes: 30, cooldownHours: 6, xp: 50, energyCost: 10, legacy: true,
   },
   play: {
     key: 'play', emoji: '🎾', label: 'Play', location: 'bbq',
-    durationMinutes: 45, cooldownHours: 4, xp: 75, energyCost: 15,
+    durationMinutes: 30, cooldownHours: 0, xp: 75, energyCost: 15,
+    locksShinobi: true, exhausts: true,
   },
   train: {
     key: 'train', emoji: '🏋️', label: 'Train', location: 'training',
-    durationMinutes: 120, cooldownHours: 8, xp: 150, energyCost: 30,
+    durationMinutes: 120, cooldownHours: 0, xp: 150, energyCost: 30,
+    locksShinobi: false, exhausts: true,
   },
   rest: {
-    key: 'rest', emoji: '♨️', label: 'Rest', location: 'hotsprings',
-    durationMinutes: null, cooldownHours: 0, xp: 0, energyCost: 0,
+    key: 'rest', emoji: '😴', label: 'Rest', location: 'hotsprings',
+    durationMinutes: 30, cooldownHours: 0, xp: 0, energyCost: 0,
+    locksShinobi: false, requiresExhausted: true, restoresEnergy: true,
   },
 };
 
+/** Activities a player can start from the UI. */
+export const STARTABLE_ACTIVITIES = ['play', 'train', 'rest'];
+
 export const PET_FOOD_MENU = {
-  ninja_meal: { emoji: '🍱', name: 'Ninja Pet Meal', cost: 500, petXp: 100 },
-  chakra_treat: { emoji: '🍬', name: 'Chakra Treat', cost: 1000, petXp: 250 },
-  feast: { emoji: '🍥', name: 'Ichiraku Feast', cost: 2000, petXp: 500 },
+  ninja_meal: { emoji: '🍱', name: 'Ninja Pet Meal', cost: 500, petXp: 100, energy: 10 },
+  chakra_treat: { emoji: '🍬', name: 'Chakra Treat', cost: 1000, petXp: 250, energy: 25 },
+  feast: { emoji: '🍥', name: 'Ichiraku Feast', cost: 2000, petXp: 500, energy: 50 },
 };
 
 export const PET_NAMETAG_KEY = 'pet_nametag';

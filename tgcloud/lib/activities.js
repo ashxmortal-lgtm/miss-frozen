@@ -13,6 +13,7 @@ import {
   settlePetActivities,
 } from './pet/store.js';
 import { reducedActivitySeconds, reducedCooldownSeconds } from './pet/defs.js';
+import { activityCompleteText } from './pet/text.js';
 import { notifyDailyProgress } from './daily.js';
 
 const H = 3600;
@@ -276,15 +277,17 @@ export async function sweepActivities() {
   try {
     const pending = await db.all(sql`
       SELECT DISTINCT telegram_id, chat_id FROM pet_activity
-      WHERE status = 'active' AND ends_at > 0 AND ends_at <= ${t} LIMIT 10
+      WHERE status = 'active'
+        AND ((ends_at > 0 AND ends_at <= ${t})
+          OR (activity_type = 'rest' AND ends_at = 0 AND started_at <= ${t - 30 * 60}))
+      LIMIT 10
     `);
     for (const row of pending) {
       const done = await settlePetActivities(row.telegram_id);
       for (const p of done) {
-        const label = p.activityType ? p.activityType.toUpperCase() : 'ACTIVITY';
-        const body = `🐾 <b>PET ${label} COMPLETE</b>\n\n`
-          + `🐾 ${escapeHtml(p.petName || 'Your pet')} finished ${p.activityType}.\n`
-          + `⭐ +${p.xp} pet XP${p.levelUp ? ` · Lv. ${p.level}!` : ''}`;
+        // One message per settled session: XP and level-up stay combined.
+        const body = `🐾 <b>PET ${String(p.activityType || 'activity').toUpperCase()}</b>\n\n`
+          + activityCompleteText(p);
         out.push({
           id: row.telegram_id,
           name: 'Shinobi',

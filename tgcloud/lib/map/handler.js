@@ -60,11 +60,22 @@ import { PET_ACTIVITIES } from '../pet/defs.js';
 import {
   petStoreHtml, petStoreKeyboard, petMenuHtml, petMenuKeyboard,
   shinobiPickerHtml, shinobiPickerKeyboard, performPetStart, startResultText,
-  petDetailHtml, petDetailKeyboard, petStatsHtml, petFoodHtml, petFoodKeyboard,
+  petDetailHtml, petDetailKeyboard, petStatsHtml, petFoodHtml, petFoodHtmlFor,
+  petFoodKeyboard,
 } from '../pet/ui.js';
 import {
   buyPet, equipPet, buyPetFood, cancelPetActivity, getPetActivity, getEquippedPet,
+  getPet, listPets,
 } from '../pet/store.js';
+import { getPetPhotoFileId } from '../pet/media.js';
+import { PETS } from '../pet/defs.js';
+import { petStatusText } from '../pet/ui.js';
+import {
+  buySuccessText, insufficientCoinsText, alreadyOwnedText, equipSuccessText,
+  notOwnedText, NO_PETS_TEXT, PET_NOT_FOUND_TEXT, feedSuccessText,
+  feedInsufficientText, petFullEnergyText, petCannotEatText, NOT_RESTING_TEXT,
+  STALE_MENU_TEXT, EQUIP_PET_FIRST_TEXT, PET_WOKE_TEXT, SHINOBI_BUSY_TEXT,
+} from '../pet/text.js';
 import {
   propertyStoreBody, propertyStoreKeyboard, buyPropertySolo,
   claimPropertyEarnings,
@@ -179,11 +190,11 @@ function abilityKeyboardFromMap(userId) {
 }
 
 /** Render the map photo, screen content and rich controls as one editable message. */
-async function showScreen(chatId, panelMessageId, user, bodyInner, keyboard, locKey = 'home') {
+async function showScreen(chatId, panelMessageId, user, bodyInner, keyboard, locKey = 'home', media = null) {
   const body = mapBody(user, bodyInner);
   const storageId = storageIdForLocation(locKey);
   const caption = style('<b>🗺️ KONOHA MAP</b>');
-  let photoFileId = await getMapPhotoFileId(chatId, storageId);
+  let photoFileId = media?.fileId || await getMapPhotoFileId(chatId, storageId);
   if (!photoFileId && storageId !== MAP_IMAGE_FALLBACK_MESSAGE_ID) {
     photoFileId = await getMapPhotoFileId(chatId, MAP_IMAGE_FALLBACK_MESSAGE_ID);
   }
@@ -206,12 +217,25 @@ async function showScreen(chatId, panelMessageId, user, bodyInner, keyboard, loc
 
 const now = () => Math.floor(Date.now() / 1000);
 
+const UNEXPECTED_PET_TEXT = '❌ ꜱᴏᴍᴇᴛʜɪɴɢ ᴡᴇɴᴛ ᴡʀᴏɴɢ. ᴘʟᴇᴀꜱᴇ ᴛʀʏ ᴀɢᴀɪɴ.';
+function getPetIdFromCatalog(value) {
+  const key = String(value || '').toLowerCase();
+  return Object.values(PETS).find((p) => p.id === key) || null;
+}
+
 /** Minimal rich table: name, status, return time. */
 async function gateBody(telegramId) {
   try {
     try { await settleOwn({ id: telegramId }); } catch (e) { console.error('[gate settle]', e); }
     const status = await collectStatus(telegramId);
-    return `<p><b>🚪 VILLAGE GATE</b></p>${statusTableHtml(status.rows)}`;
+    let pets = '';
+    try {
+      const rows = await listPets(telegramId);
+      if (rows.length) {
+        pets = '<p><b>🐾 PETS</b></p>' + rows.map((pet) => `<p>${escapeHtml(pet.name)} — ${escapeHtml(petStatusText(pet))}</p>`).join('');
+      }
+    } catch (e) { console.error('[gate pets]', e); }
+    return `<p><b>🚪 VILLAGE GATE</b></p>${statusTableHtml(status.rows)}${pets}`;
   } catch (e) {
     console.error('[gateBody]', e);
     return locBody('🚪 VILLAGE GATE', [
@@ -224,6 +248,12 @@ async function gateBody(telegramId) {
 // --- Training Ground / healing panel helpers ---
 
 function trainResultBody(r) {
+  if (r.code === 'busy') {
+    return locBody('🥷 TRAINING GROUND', [
+      `⏳ ${escapeHtml(r.shinobi)} is busy (${escapeHtml(String(r.kind || 'activity'))}).`,
+      `Ready: ${dueText(r.until)}.`,
+    ]);
+  }
   if (r.code === 'not_owned') return locBody('🥷 TRAINING GROUND', [`You don't own ${escapeHtml(r.shinobi)} yet.`]);
   if (r.code === 'no_trainer') return locBody('🥷 TRAINING GROUND', [`Training requires ${escapeHtml(r.trainer)} on your roster.`]);
   if (r.code === 'dead') return locBody('🥷 TRAINING GROUND', [`☠️ ${escapeHtml(r.shinobi)} is dead — revives at ${dueText(r.until)}.`]);
@@ -787,134 +817,235 @@ export async function handleMapCallback(cb) {
 
     if (action === 'map_pet_menu') {
       await answer(cb);
-      await showScreen(chatId, messageId, user, p(await petMenuHtml(user.id)), petMenuKeyboard(user.id), 'hotsprings');
+      const pets = await listPets(user.id);
+      const equipped = pets.find((x) => x.equipped) || null;
+      const fileId = equipped ? await getPetPhotoFileId(chatId, equipped.petId) : null;
+      await showScreen(
+        chatId, messageId, user, p(await petMenuHtml(user.id)),
+        petMenuKeyboard(user.id, equipped), 'hotsprings', { fileId },
+      );
       return true;
     }
 
+    // Legacy store buttons from messages sent before the unified /buy flow.
     if (action === 'map_pet_buy' && parts.length >= 3) {
       const r = await buyPet(user.id, parts[1], `map:${cb.id}`);
-      if (r.code === 'ok') await answer(cb, `${r.pet.def.emoji} ${r.pet.name} adopted! /equip_pet to activate.`, true);
-      else if (r.code === 'already_owned') await answer(cb, 'You already own this pet — no coins charged.', true);
-      else if (r.code === 'insufficient') await answer(cb, `Not enough coins: need ${fmt(r.price)} 🍥, have ${fmt(r.balance)} 🍥.`, true);
-      else if (r.code !== 'duplicate') await answer(cb, 'Purchase failed — no coins charged.', true);
+      if (r.code === 'ok') await answer(cb, buySuccessText(r.pet?.def?.name || parts[1]), true);
+      else if (r.code === 'already_owned') await answer(cb, alreadyOwnedText(r.pet?.def?.name || parts[1]), true);
+      else if (r.code === 'insufficient') await answer(cb, insufficientCoinsText(fmt(r.price), fmt(r.balance)), true);
+      else if (r.code !== 'duplicate') await answer(cb, UNEXPECTED_PET_TEXT, true);
       await showScreen(chatId, messageId, user, p(await petStoreHtml(user.id)), await petStoreKeyboard(user.id), 'store');
       return true;
     }
 
     if (action === 'map_pet_equip' && parts.length >= 3) {
       const r = await equipPet(user.id, parts[1]);
-      if (r.code === 'ok' || r.code === 'already_equipped') await answer(cb, `${r.pet.name} is now your active companion.`);
-      else await answer(cb, "You don't own that pet.", true);
+      if (r.code === 'ok' || r.code === 'already_equipped') {
+        await answer(cb, equipSuccessText(r.pet?.def?.name || parts[1]));
+      } else {
+        await answer(cb, notOwnedText(r.pet?.def?.name || parts[1]), true);
+      }
       await showScreen(chatId, messageId, user, p(await petStoreHtml(user.id)), await petStoreKeyboard(user.id), 'store');
       return true;
     }
 
-    if (action === 'map_pet_view' && parts.length >= 3) {
+    if (action === 'map_pet_view' || action === 'map_pet_detail') {
+      const pet = await getPet(user.id, parts[1]);
+      if (!pet) {
+        await answer(cb, PET_NOT_FOUND_TEXT, true);
+        return true;
+      }
       await answer(cb);
-      const activity = await getPetActivity(user.id, parts[1]);
+      const fileId = await getPetPhotoFileId(chatId, pet.petId);
       await showScreen(
-        chatId, messageId, user, p(await petDetailHtml(user.id, parts[1])),
-        petDetailKeyboard(user.id, parts[1], {
-          resting: activity?.activityType === 'rest' && activity?.status === 'active',
-        }),
-        'store',
+        chatId, messageId, user, p(await petDetailHtml(user.id, pet.petId)),
+        petDetailKeyboard(user.id, pet.petId, { pet }), 'store', { fileId },
       );
       return true;
     }
 
     if (action === 'map_pet_noop') {
-      await answer(cb, 'That Shinobi is busy with another activity.', true);
+      await answer(cb, SHINOBI_BUSY_TEXT, true);
       return true;
     }
 
-    if (action === 'map_pet_feed' || action === 'map_pet_play' || action === 'map_pet_train') {
-      const type = action.replace('map_pet_', '');
-      const pet = await getEquippedPet(user.id);
+    // Food menu for one pet: map_pet_feed_menu:{uid}:{petId} · map_pet_feed:{uid}
+    if (action === 'map_pet_feed' || action === 'map_pet_feed_menu') {
+      const petId = parts[2] && !/^\d+$/.test(parts[2]) ? parts[2] : null;
+      const pet = petId ? await getPet(user.id, petId) : await getEquippedPet(user.id);
       if (!pet) {
-        await answer(cb, 'Equip a pet first — Store → Pet Store.', true);
+        await answer(cb, NO_PETS_TEXT, true);
+        return true;
+      }
+      if (!pet.equipped) {
+        await answer(cb, EQUIP_PET_FIRST_TEXT, true);
+        return true;
+      }
+      if (pet.status !== 'READY') {
+        await answer(cb, petCannotEatText(pet.name, pet.status), true);
         return true;
       }
       await answer(cb);
-      const loc = type === 'train' ? 'training' : 'bbq';
       await showScreen(
         chatId, messageId, user,
-        p(await shinobiPickerHtml(user.id, type)),
-        await shinobiPickerKeyboard(user.id, type),
-        loc,
+        locBody('🍱 ICHIRAKU PET FOOD', await petFoodHtmlFor(user.id, pet.petId)),
+        petFoodKeyboard(user.id, 'map_pet_food_buy', pet.petId), 'ichiraku',
       );
       return true;
     }
 
-    if (action === 'map_pet_rest') {
-      const equippedPet = await getEquippedPet(user.id);
-      const currentAct = equippedPet ? await getPetActivity(user.id, equippedPet.petId) : null;
-      if (currentAct?.status === 'active' && currentAct.activityType === 'rest') {
-        await cancelPetActivity(user.id, equippedPet.petId);
-        await answer(cb, 'Your pet woke up.');
-        await showScreen(chatId, messageId, user, p(await petMenuHtml(user.id)), petMenuKeyboard(user.id), 'hotsprings');
+    if (action === 'map_pet_play') {
+      const petId = parts[2] && !/^\d+$/.test(parts[2]) ? parts[2] : null;
+      const pet = petId ? await getPet(user.id, petId) : await getEquippedPet(user.id);
+      if (!pet) { await answer(cb, NO_PETS_TEXT, true); return true; }
+      if (!pet.equipped) { await answer(cb, EQUIP_PET_FIRST_TEXT, true); return true; }
+      if (pet.status === 'EXHAUSTED') {
+        await answer(cb, startResultText({ code: 'rest_required', pet }, 'play'), true);
         return true;
       }
-      const r = await performPetStart(user.id, 'rest', null, chatId, 'hotsprings', true);
-      await answer(cb, r.code === 'ok' ? 'Your pet is resting. +15 energy / hour.' : startResultText(r, 'rest'), r.code !== 'ok');
-      await showScreen(chatId, messageId, user, p(await petMenuHtml(user.id)), petMenuKeyboard(user.id), 'hotsprings');
+      if (pet.status !== 'READY') {
+        await answer(cb, startResultText({ code: 'busy', pet }, 'play'), true);
+        return true;
+      }
+      await answer(cb);
+      await showScreen(
+        chatId, messageId, user,
+        p(await shinobiPickerHtml(user.id, 'play', pet)),
+        await shinobiPickerKeyboard(user.id, 'play', pet),
+        'bbq',
+      );
       return true;
     }
 
-    if (action === 'map_pet_start' && parts.length >= 4) {
-      const type = parts[2];
-      const shinobi = parts.slice(3).join(':');
-      const loc = type === 'train' ? 'training' : 'bbq';
-      const r = await performPetStart(user.id, type, shinobi, chatId, loc, true);
-      if (r.code === 'ok') {
-        await answer(cb, `${PET_ACTIVITIES[type]?.label || type} started.`);
-      } else {
-        await answer(cb, startResultText(r, type), true);
+    if (action === 'map_pet_train') {
+      const petId = parts[2] && !/^\d+$/.test(parts[2]) ? parts[2] : null;
+      const r = await performPetStart(user.id, petId, 'train', { chatId });
+      if (r.code === 'ok') await answer(cb, startResultText(r, 'train'));
+      else await answer(cb, startResultText(r, 'train'), true);
+      if (r.pet) {
+        const pet = await getPet(user.id, r.pet.petId);
+        const fileId = await getPetPhotoFileId(chatId, r.pet.petId);
         await showScreen(
-          chatId, messageId, user,
-          p(await shinobiPickerHtml(user.id, type)),
-          await shinobiPickerKeyboard(user.id, type),
-          loc,
+          chatId, messageId, user, p(await petDetailHtml(user.id, r.pet.petId)),
+          petDetailKeyboard(user.id, r.pet.petId, { pet }), 'training', { fileId },
         );
-        return true;
       }
-      const pet = await getEquippedPet(user.id);
-      const petId = pet?.petId || 'axofly';
-      const resultLine = escapeHtml(startResultText(r, type)).replace(/\n/g, '<br>');
-      const body = `<p><b>${type === 'rest' ? '♨️ PET REST' : '🐾 PET ACTIVITY'}</b></p><p>${resultLine}</p>`
-        + p(await petDetailHtml(user.id, petId));
-      await showScreen(chatId, messageId, user, body, petDetailKeyboard(user.id, petId), loc);
+      return true;
+    }
+
+    if (action === 'map_pet_rest') {
+      const petId = parts[2] && !/^\d+$/.test(parts[2]) ? parts[2] : null;
+      const pet = petId ? await getPet(user.id, petId) : await getEquippedPet(user.id);
+      if (!pet) { await answer(cb, NO_PETS_TEXT, true); return true; }
+      // The Hot Springs button doubles as "wake" while a rest is running.
+      if (pet.status === 'RESTING') {
+        const woke = await cancelPetActivity(user.id, pet.petId);
+        await answer(cb, woke.code === 'ok' ? PET_WOKE_TEXT : NOT_RESTING_TEXT,
+          woke.code !== 'ok');
+      } else {
+        const r = await performPetStart(user.id, pet.petId, 'rest', { chatId });
+        await answer(cb, startResultText(r, 'rest'), r.code !== 'ok');
+      }
+      const after = await getPet(user.id, pet.petId);
+      const fileId = await getPetPhotoFileId(chatId, pet.petId);
+      await showScreen(
+        chatId, messageId, user, p(await petDetailHtml(user.id, pet.petId)),
+        petDetailKeyboard(user.id, pet.petId, { pet: after }), 'hotsprings', { fileId },
+      );
+      return true;
+    }
+
+    if (action === 'map_pet_wake') {
+      const petId = parts[1];
+      const pet = await getPet(user.id, petId);
+      if (!pet) { await answer(cb, PET_NOT_FOUND_TEXT, true); return true; }
+      const r = await cancelPetActivity(user.id, petId);
+      await answer(cb, r.code === 'ok' ? PET_WOKE_TEXT : NOT_RESTING_TEXT, r.code !== 'ok');
+      const after = await getPet(user.id, petId);
+      const fileId = await getPetPhotoFileId(chatId, petId);
+      await showScreen(
+        chatId, messageId, user, p(await petDetailHtml(user.id, petId)),
+        petDetailKeyboard(user.id, petId, { pet: after }), 'hotsprings', { fileId },
+      );
       return true;
     }
 
     if (action === 'map_pet_cancel_rest' || action === 'map_pet_stop') {
       const pet = await getEquippedPet(user.id);
-      const petId = parts.length >= 3 && !/^\d+$/.test(parts[1]) ? parts[1] : pet?.petId;
-      const r = petId ? await cancelPetActivity(user.id, petId) : { code: 'no_pet' };
-      await answer(cb, r.code === 'ok' ? 'Your pet woke up.' : 'This pet is not resting.', r.code !== 'ok');
-      await showScreen(chatId, messageId, user, p(await petMenuHtml(user.id)), petMenuKeyboard(user.id), 'hotsprings');
+      if (!pet) { await answer(cb, NO_PETS_TEXT, true); return true; }
+      const r = await cancelPetActivity(user.id, pet.petId);
+      await answer(cb, r.code === 'ok' ? PET_WOKE_TEXT : NOT_RESTING_TEXT, r.code !== 'ok');
+      await showScreen(
+        chatId, messageId, user, p(await petMenuHtml(user.id)),
+        petMenuKeyboard(user.id, await getEquippedPet(user.id)), 'hotsprings',
+      );
+      return true;
+    }
+
+    // map_pet_start:{uid}:{type}:{petId}:{shinobi}  (legacy: …:{type}:{shinobi})
+    if (action === 'map_pet_start' && parts.length >= 4) {
+      const type = parts[2];
+      const knownPet = parts[3] ? getPetIdFromCatalog(parts[3]) : null;
+      const petId = knownPet ? knownPet.id : null;
+      const shinobi = (knownPet ? parts.slice(4) : parts.slice(3)).join(':');
+      const r = await performPetStart(user.id, petId, type, { shinobi, chatId });
+      if (r.code === 'ok') {
+        await answer(cb, startResultText(r, type));
+      } else {
+        await answer(cb, startResultText(r, type), true);
+        return true;
+      }
+      const pet = await getPet(user.id, r.pet.petId);
+      const fileId = await getPetPhotoFileId(chatId, r.pet.petId);
+      await showScreen(
+        chatId, messageId, user, p(await petDetailHtml(user.id, r.pet.petId)),
+        petDetailKeyboard(user.id, r.pet.petId, { pet }),
+        type === 'train' ? 'training' : 'bbq', { fileId },
+      );
       return true;
     }
 
     if (action === 'map_pet_stats') {
+      const petId = parts[2] && !/^\d+$/.test(parts[2]) ? parts[2] : null;
+      const pet = petId ? await getPet(user.id, petId) : await getEquippedPet(user.id);
+      if (!pet) { await answer(cb, PET_NOT_FOUND_TEXT, true); return true; }
       await answer(cb);
-      await showScreen(chatId, messageId, user, p(await petStatsHtml(user.id)), petMenuKeyboard(user.id), 'hotsprings');
+      await showScreen(
+        chatId, messageId, user, p(await petStatsHtml(user.id, pet)),
+        petDetailKeyboard(user.id, pet.petId, { pet }), 'hotsprings',
+      );
       return true;
     }
 
     if (action === 'map_pet_food') {
       await answer(cb);
-      await showScreen(chatId, messageId, user, locBody('🍱 ICHIRAKU PET FOOD', await petFoodHtml(user)), petFoodKeyboard(user.id, 'map_pet_food_buy'), 'ichiraku');
+      const equipped = await getEquippedPet(user.id);
+      await showScreen(
+        chatId, messageId, user,
+        locBody('🍱 ICHIRAKU PET FOOD', await petFoodHtml(user.id, equipped?.petId || null)),
+        petFoodKeyboard(user.id, 'map_pet_food_buy', equipped?.petId || null), 'ichiraku',
+      );
       return true;
     }
 
+    // map_pet_food_buy:{foodKey}:{petId?}:{uid}
     if (action === 'map_pet_food_buy' && parts.length >= 3) {
-      const r = await buyPetFood(user.id, parts[1], `map:${cb.id}`, chatId);
+      const foodKey = parts[1];
+      const petId = parts.length >= 4 && !/^\d+$/.test(parts[2]) ? parts[2] : null;
+      const r = await buyPetFood(user.id, foodKey, `map:${cb.id}`, chatId, petId);
       if (r.code === 'ok') {
-        await answer(cb, `${r.emoji} ${r.name}: +${r.petXp} pet XP${r.levelUp ? ` · Lv. ${r.level}!` : ''}`, true);
-      } else if (r.code === 'no_pet') await answer(cb, 'Adopt a pet first.', true);
-      else if (r.code === 'insufficient') await answer(cb, `Not enough coins: need ${fmt(r.cost)} 🍥, have ${fmt(r.balance)} 🍥.`, true);
-      else if (r.code !== 'duplicate') await answer(cb, 'Purchase failed — no coins charged.', true);
-      await showScreen(chatId, messageId, user, locBody('🍱 ICHIRAKU PET FOOD', await petFoodHtml(user)), petFoodKeyboard(user.id, 'map_pet_food_buy'), 'ichiraku');
+        await answer(cb, feedSuccessText(r.petName, r.name, r.energyBefore, r.energyAfter, r.petXp), true);
+      } else if (r.code === 'no_pet' || r.code === 'not_owned') await answer(cb, NO_PETS_TEXT, true);
+      else if (r.code === 'insufficient') await answer(cb, feedInsufficientText(r.name || foodKey, fmt(r.cost), fmt(r.balance)), true);
+      else if (r.code === 'full_energy') await answer(cb, petFullEnergyText(r.petName || 'ᴛʜɪꜱ ᴘᴇᴛ'), true);
+      else if (r.code === 'busy') await answer(cb, petCannotEatText(r.petName || 'ᴛʜɪꜱ ᴘᴇᴛ', r.status), true);
+      else if (r.code !== 'duplicate') await answer(cb, UNEXPECTED_PET_TEXT, true);
+      const pet = petId ? await getPet(user.id, petId) : await getEquippedPet(user.id);
+      await showScreen(
+        chatId, messageId, user,
+        locBody('🍱 ICHIRAKU PET FOOD', await petFoodHtml(user.id, pet?.petId || null)),
+        petFoodKeyboard(user.id, 'map_pet_food_buy', pet?.petId || null), 'ichiraku',
+      );
       return true;
     }
 
@@ -1683,6 +1814,11 @@ export async function handleMapCallback(cb) {
       return true;
     }
 
+    // Unknown pet buttons come from an older message: explain instead of silence.
+    if (action.startsWith('map_pet_')) {
+      await answer(cb, STALE_MENU_TEXT, true);
+      return true;
+    }
     await answer(cb);
     return true;
   } catch (e) {
