@@ -97,6 +97,15 @@ export const PET_FOOD_PRICE_LABEL = {
   feast: '2,000 🍥',
 };
 
+// ---- legacy pet restoration (first interaction) ----
+// Sent once, right after the economy.db pets are restored for a user.
+export const PET_RESTORED_BODY = '🐾 ʏᴏᴜʀ ᴘᴇᴛꜱ ᴀʀᴇ ʙᴀᴄᴋ!\n\n\n✨ ᴄʜᴇᴄᴋ ᴏᴜᴛ: /pet';
+
+/** Restore notice: the user's own mention, then the fixed body. */
+export function petRestoredText(mentionHtml) {
+  return `${mentionHtml}\n\n${PET_RESTORED_BODY}`;
+}
+
 // ---- map location captions ----
 
 export const BBQ_CAPTION = [

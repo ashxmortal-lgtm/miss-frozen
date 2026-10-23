@@ -65,6 +65,46 @@ test('rest sessions and availability are shared by BBQ and Hot Springs', () => {
   assert.match(read('tgcloud/lib/rpg/status.js'), /label: springs \? 'At Hot Springs' : 'At BBQ'/);
 });
 
+test('the retired map pet menu is gone; every pet entry opens the /pet card', () => {
+  const ui = read('tgcloud/lib/pet/ui.js');
+  const handler = read('tgcloud/lib/map/handler.js');
+  // The old conditional menu (feed/play/train/rest + Pet Store + Back) is deleted.
+  assert.doesNotMatch(ui, /petMenuHtml/);
+  assert.doesNotMatch(ui, /petMenuKeyboard/);
+  assert.doesNotMatch(handler, /petMenuHtml|petMenuKeyboard/);
+  // `showPetCard` renders the latest card in an existing message.
+  assert.match(ui, /export async function showPetCard\(msg, user, pet = null\)/);
+  const menuBranch = handler.slice(
+    handler.indexOf("if (action === 'map_pet_menu')"),
+    handler.indexOf("if (action === 'map_pet_buy'"),
+  );
+  assert.match(menuBranch, /await showPetCard\(/);
+  assert.doesNotMatch(menuBranch, /petStore|Pet Store/);
+  // Every pet completion DM opens the latest card (`pet_me`), not the old menu.
+  const economy = read('tgcloud/lib/economy_handler.js');
+  assert.match(economy, /`pet_me:\$\{r\.id\}`/);
+  assert.doesNotMatch(economy, /map_pet_menu/);
+});
+
+test('map buttons all carry an emoji', () => {
+  const ui = read('tgcloud/lib/map/ui.js');
+  for (const label of [
+    '🏯 Shinobi Mission', '🎯 Daily Quest', '🎁 Claim All Rewards',
+    '🚀 Send Available on Patrol',
+    '🔥 Join BBQ', '🍱 Feed pet', '⚡ Instant shinobi recovery',
+    '🎾 Play with pet',
+    '♨️ Relax shinobis', '😴 Rest pet', '🔄 Recall shinobis',
+    '🥷 Shinobi Store', '🎁 Gift Store', '⬅️ Back',
+  ]) {
+    assert.ok(ui.includes(label), `map button missing: ${label}`);
+  }
+  // No plain-text buttons left in the map keyboards or map handlers.
+  assert.doesNotMatch(ui, /btn\('(?![^\x00-\x7F])/);
+  const handler = read('tgcloud/lib/map/handler.js');
+  assert.doesNotMatch(handler, /text: '← Back'/);
+  assert.match(handler, /text: '⬅️ Back'/);
+});
+
 test('daily quest caption uses the assigned mission data', () => {
   const daily = read('tgcloud/lib/daily.js');
   const body = daily.slice(daily.indexOf('export function dailyMissionBody'), daily.indexOf('export function', daily.indexOf('export function dailyMissionBody') + 10));

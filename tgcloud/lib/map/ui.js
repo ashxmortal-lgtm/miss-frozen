@@ -51,7 +51,7 @@ export function mapKeyboard(userId) {
 }
 
 export function backToMapRow(userId) {
-  return [btn('← Back', guard('map_home', userId))];
+  return [btn('⬅️ Back', guard('map_home', userId))];
 }
 
 /** Hokage Office */
@@ -59,10 +59,10 @@ export function hokageKeyboard(userId) {
   return {
     inline_keyboard: [
       [
-        btn('Shinobi Mission', guard('map_mission_hub', userId)),
-        btn('Daily Quest', guard('map_daily', userId)),
+        btn('🏯 Shinobi Mission', guard('map_mission_hub', userId)),
+        btn('🎯 Daily Quest', guard('map_daily', userId)),
       ],
-      [btn('Claim All Rewards', guard('map_claim_rewards', userId))],
+      [btn('🎁 Claim All Rewards', guard('map_claim_rewards', userId))],
       backToMapRow(userId),
     ],
   };
@@ -72,7 +72,7 @@ export function hokageKeyboard(userId) {
 export function gateKeyboard(userId) {
   return {
     inline_keyboard: [
-      [btn('Send Available on Patrol', guard('map_patrol_pick', userId))],
+      [btn('🚀 Send Available on Patrol', guard('map_patrol_pick', userId))],
       backToMapRow(userId),
     ],
   };
@@ -96,13 +96,13 @@ export function bbqKeyboard(userId) {
   return {
     inline_keyboard: [
       [
-        btn('Join BBQ', guard('map_bbq_select', userId)),
-        btn('Feed pet', guard('map_pet_feed', userId)),
+        btn('🔥 Join BBQ', guard('map_bbq_select', userId)),
+        btn('🍱 Feed pet', guard('map_pet_feed', userId)),
       ],
-      [btn('Instant shinobi recovery', guard('map_bbq_heal', userId))],
+      [btn('⚡ Instant shinobi recovery', guard('map_bbq_heal', userId))],
       [
-        btn('Play with pet', guard('map_pet_play', userId)),
-        btn('Back', guard('map_home', userId)),
+        btn('🎾 Play with pet', guard('map_pet_play', userId)),
+        btn('⬅️ Back', guard('map_home', userId)),
       ],
     ],
   };
@@ -125,12 +125,12 @@ export function hotspringsKeyboard(userId) {
   return {
     inline_keyboard: [
       [
-        btn('Relax shinobis', guard('map_hot_relax', userId)),
-        btn('Rest pet', guard('map_pet_rest', userId)),
+        btn('♨️ Relax shinobis', guard('map_hot_relax', userId)),
+        btn('😴 Rest pet', guard('map_pet_rest', userId)),
       ],
       [
-        btn('Recall shinobis', guard('map_hot_recall', userId)),
-        btn('Back', guard('map_home', userId)),
+        btn('🔄 Recall shinobis', guard('map_hot_recall', userId)),
+        btn('⬅️ Back', guard('map_home', userId)),
       ],
     ],
   };
@@ -141,8 +141,8 @@ export function storeKeyboard(userId) {
   return {
     inline_keyboard: [
       [
-        btn('Shinobi Store', guard('map_open_shinobi_store', userId)),
-        btn('Gift Store', guard('map_open_gift_store', userId)),
+        btn('🥷 Shinobi Store', guard('map_open_shinobi_store', userId)),
+        btn('🎁 Gift Store', guard('map_open_gift_store', userId)),
       ],
       [
         btn('🐾 Pet Store', guard('map_pet_store', userId)),

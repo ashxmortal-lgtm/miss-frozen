@@ -264,7 +264,7 @@ export async function propertyStoreKeyboard(groupId, userId) {
       }]);
     }
   }
-  rows.push([{ text: '← Back', callback_data: `map_loc_store:${userId}`, style: 'danger' }]);
+  rows.push([{ text: '⬅️ Back', callback_data: `map_loc_store:${userId}`, style: 'danger' }]);
   return { inline_keyboard: rows };
 }
 

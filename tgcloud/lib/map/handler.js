@@ -58,7 +58,7 @@ import { send } from '../chat.js';
 import { ensureDailyMission, dailyMissionBody } from '../daily.js';
 import { PET_ACTIVITIES } from '../pet/defs.js';
 import {
-  petStoreHtml, petStoreKeyboard, petMenuHtml, petMenuKeyboard,
+  petStoreHtml, petStoreKeyboard, showPetCard,
   shinobiPickerHtml, shinobiPickerKeyboard, performPetStart, startResultText,
   petDetailHtml, petDetailKeyboard, petStatsHtml,
   petFoodCaptionHtml, petFoodPriceKeyboard, petCardCaption,
@@ -592,7 +592,7 @@ function claimRewardsKeyboard(userId, hasPending) {
     rows.push([{ text: '✅ Claim All', callback_data: guard('map_claim_confirm', userId) }]);
   }
   // Single back only (to Hokage Office)
-  rows.push([{ text: '← Back', callback_data: guard('map_loc_hokage', userId) }]);
+  rows.push([{ text: '⬅️ Back', callback_data: guard('map_loc_hokage', userId) }]);
   return { inline_keyboard: rows };
 }
 
@@ -821,15 +821,14 @@ export async function handleMapCallback(cb) {
       return true;
     }
 
+    // Legacy "Open Pets" button from older completion DMs: the latest card,
+    // never the retired map pet menu.
     if (action === 'map_pet_menu') {
-      await answer(cb);
       const pets = await listPets(user.id);
-      const equipped = pets.find((x) => x.equipped) || null;
-      const fileId = equipped ? await getPetPhotoFileId(chatId, equipped.petId) : null;
-      await showScreen(
-        chatId, messageId, user, p(await petMenuHtml(user.id)),
-        petMenuKeyboard(user.id, equipped), 'hotsprings', { fileId },
-      );
+      const target = pets.find((x) => x.equipped) || (pets.length === 1 ? pets[0] : null);
+      if (!target) { await answer(cb, NO_PETS_TEXT, true); return true; }
+      await answer(cb);
+      await showPetCard({ chat: { id: chatId }, message_id: messageId }, user, target);
       return true;
     }
 
@@ -986,9 +985,10 @@ export async function handleMapCallback(cb) {
       if (!pet) { await answer(cb, NO_PETS_TEXT, true); return true; }
       const r = await cancelPetActivity(user.id, pet.petId);
       await answer(cb, r.code === 'ok' ? PET_WOKE_TEXT : NOT_RESTING_TEXT, r.code !== 'ok');
-      await showScreen(
-        chatId, messageId, user, p(await petMenuHtml(user.id)),
-        petMenuKeyboard(user.id, await getEquippedPet(user.id)), 'hotsprings',
+      await showPetCard(
+        { chat: { id: chatId }, message_id: messageId },
+        user,
+        await getEquippedPet(user.id),
       );
       return true;
     }
@@ -1240,7 +1240,7 @@ export async function handleMapCallback(cb) {
       const kb = {
         inline_keyboard: [
           [{ text: '🔄 Refresh', callback_data: guard('map_daily', user.id) }],
-          [{ text: '← Back', callback_data: guard('map_loc_hokage', user.id), style: 'danger' }],
+          [{ text: '⬅️ Back', callback_data: guard('map_loc_hokage', user.id), style: 'danger' }],
         ],
       };
       await showScreen(chatId, messageId, user, dailyMissionBody(user, mission), kb, 'hokage');
@@ -1534,7 +1534,7 @@ export async function handleMapCallback(cb) {
         );
         return true;
       }
-      rows.push([{ text: '← Back', callback_data: guard('map_loc_bbq', user.id) }]);
+      rows.push([{ text: '⬅️ Back', callback_data: guard('map_loc_bbq', user.id) }]);
       await showScreen(
         chatId,
         messageId,
@@ -1590,7 +1590,7 @@ export async function handleMapCallback(cb) {
         text: `${EMO[s.shinobi] || '🥷'} ${s.shinobi}`,
         callback_data: `map_bbq_stop:${s.shinobi}:${user.id}`,
       }]);
-      rows.push([{ text: '← Back', callback_data: guard('map_loc_bbq', user.id) }]);
+      rows.push([{ text: '⬅️ Back', callback_data: guard('map_loc_bbq', user.id) }]);
       await showScreen(
         chatId,
         messageId,
@@ -1636,7 +1636,7 @@ export async function handleMapCallback(cb) {
         );
         return true;
       }
-      rows.push([{ text: '← Back', callback_data: guard('map_loc_hotsprings', user.id) }]);
+      rows.push([{ text: '⬅️ Back', callback_data: guard('map_loc_hotsprings', user.id) }]);
       await showScreen(
         chatId, messageId, user,
         locBody('♨️ RELAX A SHINOBI', ['Select a shinobi to relax in the springs.']),
@@ -1683,7 +1683,7 @@ export async function handleMapCallback(cb) {
         text: `${EMO[r.shinobi] || '🥷'} ${r.shinobi}`,
         callback_data: `map_hot_stop:${r.shinobi}:${user.id}`,
       }]);
-      rows.push([{ text: '← Back', callback_data: guard('map_loc_hotsprings', user.id) }]);
+      rows.push([{ text: '⬅️ Back', callback_data: guard('map_loc_hotsprings', user.id) }]);
       await showScreen(
         chatId, messageId, user,
         locBody('♨️ RECALL FROM THE SPRINGS', ['Select a shinobi to recall.']),

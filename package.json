@@ -11,7 +11,8 @@
     "run": "tgcloud run",
     "test": "node --test test/**/*.test.js",
     "validate": "node scripts/validate.js && npm test",
-    "generate:snapshot": "node scripts/generate_snapshot.js"
+    "generate:snapshot": "node scripts/generate_snapshot.js",
+    "generate:pet-migration": "node scripts/generate_pet_migration_data.js"
   },
   "type": "module"
 }

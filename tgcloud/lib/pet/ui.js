@@ -94,10 +94,6 @@ async function findOwnedPet(userId, raw) {
   return pets.find((p) => String(p.name || '').toLowerCase() === want) || null;
 }
 
-function cardLine(pet) {
-  return `${pet.def.emoji} <b>${safe(pet.name)}</b> · ${pet.def.name} · ʟᴠ ${pet.level}`;
-}
-
 function xpStats(pet) {
   const level = pet.level;
   const max = PET_MAX_LEVEL;
@@ -356,6 +352,22 @@ async function renderPetCard(msg, user, pet) {
   }
 }
 
+/**
+ * Latest `/pet` card in an existing message — used by every legacy entry point
+ * (the old map pet menu, completion buttons) so they never render the retired
+ * menu again. Falls back to the first owned pet when nothing is equipped.
+ */
+export async function showPetCard(msg, user, pet = null) {
+  let target = pet;
+  if (!target) {
+    const pets = await listPets(user.id);
+    target = pets.find((p) => p.equipped) || (pets.length === 1 ? pets[0] : null);
+  }
+  if (!target) return null;
+  await renderPetCard(msg, user, target);
+  return target;
+}
+
 export async function petStatsContent(user, pet) {
   const target = pet || await getEquippedPet(user.id);
   if (!target) return petListContent(user);
@@ -386,8 +398,8 @@ export async function petStoreContent(user, options = {}) {
     // Verbatim: the store line keeps its command examples in plain lowercase.
     { type: 'paragraph', text: STORE_INSTRUCTION },
     row(
-      btn('Pet 🍖 food', { callback_data: `pet_food_menu:${user.id}`, style: 'success' }),
-      btn('Pet abilities', { url: PET_ABILITY_URL, style: 'primary' }),
+      btn('🍖 Pet food', { callback_data: `pet_food_menu:${user.id}`, style: 'success' }),
+      btn('🕸️ Pet abilities', { url: PET_ABILITY_URL, style: 'primary' }),
     ),
     row(btn('⬅️ Back', { callback_data: options.back || `pet_menu:${user.id}`, style: 'danger' })),
   ];
@@ -557,43 +569,6 @@ export function completionText(done) {
 
 // ---- HTML variants for the map screens ----
 
-export async function petMenuHtml(userId) {
-  const pets = await listPets(userId);
-  if (!pets.length) return `<b>🐾 PETS</b><br>${safe(NO_PETS_TEXT).replace(/\n/g, '<br>')}`;
-  const active = pets.find((p) => p.equipped);
-  if (!active) {
-    return `<b>🐾 PETS</b><br>${safe(EQUIP_ONE_TEXT)}`;
-  }
-  return `<b>🐾 PET</b><br>${cardLine(active)}<br>⚡ ${active.energy}/${PET_MAX_ENERGY} · ${safe(petStatusText(active))}`;
-}
-
-export function petMenuKeyboard(userId, pet = null) {
-  const rows = [];
-  if (pet) {
-    if (pet.equipped && pet.status === PET_STATUS.READY) {
-      rows.push([
-        { text: '🍖 Feed', callback_data: `map_pet_feed_menu:${userId}:${pet.petId}`, style: 'primary' },
-        { text: '🎾 Play', callback_data: `map_pet_play:${userId}:${pet.petId}`, style: 'primary' },
-      ]);
-      rows.push([
-        { text: '🏋️ Train', callback_data: `map_pet_train:${userId}:${pet.petId}`, style: 'primary' },
-      ]);
-    } else if (pet.equipped && pet.status === PET_STATUS.EXHAUSTED) {
-      rows.push([{ text: '😴 Rest', callback_data: `map_pet_rest:${userId}:${pet.petId}`, style: 'success' }]);
-    } else if (pet.equipped && pet.status === PET_STATUS.RESTING) {
-      rows.push([{ text: '☀️ Wake Pet', callback_data: `map_pet_wake:${pet.petId}:${userId}`, style: 'danger' }]);
-    }
-    rows.push([
-      { text: '📊 Pet stats', callback_data: `map_pet_stats:${userId}:${pet.petId}`, style: 'primary' },
-      { text: '🕸️ Pet abilities', url: PET_ABILITY_URL, style: 'primary' },
-    ]);
-  }
-  rows.push([{ text: '🛒 Pet Store', callback_data: `map_pet_store:${userId}`, style: 'success' }]);
-  // My Pets lives at the Hot Springs, so Back returns there (not to the store).
-  rows.push([{ text: '⬅️ Back', callback_data: `map_loc_hotsprings:${userId}`, style: 'danger' }]);
-  return { inline_keyboard: rows };
-}
-
 export async function petStoreHtml(userId) {
   const pets = await listPets(userId);
   const owned = new Set(pets.map((p) => p.petId));
@@ -611,8 +586,8 @@ export async function petStoreKeyboard(userId) {
   return {
     inline_keyboard: [
       [
-        { text: 'Pet 🍖 food', callback_data: `map_pet_food:${userId}`, style: 'success' },
-        { text: 'Pet abilities', url: PET_ABILITY_URL, style: 'primary' },
+        { text: '🍖 Pet food', callback_data: `map_pet_food:${userId}`, style: 'success' },
+        { text: '🕸️ Pet abilities', url: PET_ABILITY_URL, style: 'primary' },
       ],
       [{ text: '⬅️ Back', callback_data: `map_loc_store:${userId}`, style: 'danger' }],
     ],
@@ -621,7 +596,7 @@ export async function petStoreKeyboard(userId) {
 
 export async function petStatsHtml(userId, pet = null) {
   const target = pet || await getEquippedPet(userId);
-  if (!target) return petMenuHtml(userId);
+  if (!target) return `<b>🐾 PETS</b><br>${safe(EQUIP_ONE_TEXT)}`;
   const stats = await getPetStats(userId);
   const head = petStatsLines(target, stats.xpEarned).map((line) => `<p>${line}</p>`).join('');
   const ability = [abilityTitle(target), ...abilityStatLines(target)]

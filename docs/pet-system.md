@@ -12,7 +12,7 @@ settled lazily by the next interaction or by the message sweep.
 |---|---|
 | `/pet` | Opens the **equipped pet's card** directly: pet photo + status caption + the fixed menu. A single owned pet is opened even when none is equipped; otherwise the pet list appears |
 | `/pet me [name]` | Same card; a name/custom name opens that owned pet |
-| `/pet_store` | Store: catalogue + prices + balance + `Pet 🍖 food` · `Pet abilities` · `Back` |
+| `/pet_store` | Store: catalogue + prices + balance + `🍖 Pet food` · `🕸️ Pet abilities` · `Back` |
 | `/buy <pet name>` · `/buy <shinobi name>` | One command for pets and shinobi; the catalogue decides the type; multi-word names work (`/buy pet name`, `/buy Starter Shinobi`) |
 | `/equip <pet name>` · `/equip <shinobi name>` | Equips the pet (single active companion) or the shinobi (max 3) |
 | `/pet_rename [PetName] NewName` | Renames using one Pet Nametag |
@@ -82,6 +82,11 @@ shows total XP / 15,000. The divider is the rich block `{ type: 'divider' }` and
 renders as a line of `─` on the classic path.
 
 ### Map entry points and locations
+
+Every pet entry point (completion DM button, legacy `map_pet_menu` button,
+Training Ground / BBQ / Hot Springs pet buttons) renders the **same `/pet` card**;
+the retired map pet menu no longer exists. All map buttons carry an emoji
+(Hokage Office, Gate, BBQ, Stores, Hot Springs, Back).
 
 Store → 🐾 Pet Store · Training Ground → 🐾 Train Pet · Ichiraku → 🍱 Pet Food.
 Map screens keep the existing artwork, Close button and Frozen Blooded theme.
@@ -243,6 +248,9 @@ Play session locks that shinobi (that is shinobi availability, not a pet panel).
 | `tgcloud/lib/pet/store.js` | Persistence: lazy schema, buy/equip/rename, instant feed, sessions, settle, stats, abilities |
 | `tgcloud/lib/pet/ui.js` | Screens, keyboards, `pet_*` router, `/pet*` commands, HTML variants |
 | `tgcloud/lib/pet/media.js` | Storage-channel photo `file_id` resolver (540 / 541) |
+| `tgcloud/lib/pet/migration.js` | One-time legacy (`economy.db`) pet restoration on first interaction |
+| `tgcloud/lib/pet/migration_data.js` | Generated JS mirror of the migration JSON (runtime source of truth) |
+| `tgcloud/lib/pet/data/missfrozen_pet_migration.json` | Canonical legacy pet snapshot exported from `economy.db` |
 | `tgcloud/lib/buy.js` | `/buy` for pets **and** shinobi items (catalogue decides, multi-word names) |
 | `tgcloud/lib/economy_handler.js` | `/equip` for pets **and** shinobi, `/pet*` dispatch |
 | `tgcloud/lib/map/handler.js`, `map/ui.js` | Map pet entry points, `map_pet_*` / `map_hot_*` routing, BBQ and Hot Springs captions |
@@ -255,8 +263,8 @@ Play session locks that shinobi (that is shinobi availability, not a pet panel).
 ## Schema (additive only)
 
 Tables: `user_pets`, `equipped_pet`, `pet_activity`, `pet_stats`,
-`special_inventory`, `property_ownership`, `property_partnership_requests`,
-`daily_missions`, `map_media_cache`.
+`pet_migration_status`, `special_inventory`, `property_ownership`,
+`property_partnership_requests`, `daily_missions`, `map_media_cache`.
 
 Additive columns added by this task:
 
@@ -279,7 +287,11 @@ npx tgcloud push        # deploys modules
 npx tgcloud webhook     # confirm handler routing
 ```
 
-No data reset, backfill or pet-owner migration is required.
+No data reset is required. Pet owners carried over from the legacy `economy.db`
+bot are restored lazily on their first interaction — see
+[`docs/pet-migration.md`](./pet-migration.md). That path only needs the additive
+`pet_migration_status` table; it never charges coins, never logs a purchase and
+never touches an existing pet row.
 
 ## Tests
 
@@ -294,6 +306,10 @@ No data reset, backfill or pet-owner migration is required.
   buttons, food navigation, abilities URL, stats/level/dots/ability screens,
   dialogue catalogue, owner/unknown-pet/stale callback guards and the 64-byte
   callback limit.
+- `test/pet_migration.test.js` + `test/helpers/run_pet_migration.mjs` — legacy
+  restoration: single/multi-pet owners, users without pets, repeated updates,
+  live-data preservation, failed runs, in-flight/stale claims, unknown pet ids,
+  level flooring and the JSON ↔ generated-mirror drift guard.
 - Commands: `npm test`, `npm run validate`, and
   `node --experimental-loader ./test/helpers/sdk-loader.mjs test/helpers/run_pet_engine.mjs`.
 

@@ -66,7 +66,7 @@ assert.ok(storeText.includes(style('Axofly')) && storeText.includes(style('Capyc
 assert.ok(storeText.includes('30,000') && storeText.includes('40,000'));
 const storeButtons = buttonsOf(store);
 assert.deepEqual(storeButtons.map((b) => b.text),
-  ['Pet 🍖 food', 'Pet abilities', '⬅️ Back'].map((t) => style(t)));
+  ['🍖 Pet food', '🕸️ Pet abilities', '⬅️ Back'].map((t) => style(t)));
 assert.equal(storeButtons[0].callback_data, `pet_food_menu:${U}`);
 assert.equal(storeButtons[1].url, PET_ABILITY_URL);
 assert.equal(storeButtons[2].callback_data, `pet_menu:${U}`);
@@ -76,7 +76,7 @@ assert.equal(storeButtons[1].url, 'https://t.me/frozenblooded/23', 'clean Telegr
 // ---- store keyboard used by the map: same two rows ----
 const mapStoreRows = (await petStoreKeyboard(U)).inline_keyboard;
 assert.equal(mapStoreRows.length, 2);
-assert.deepEqual(mapStoreRows[0].map((b) => b.text), ['Pet 🍖 food', 'Pet abilities']);
+assert.deepEqual(mapStoreRows[0].map((b) => b.text), ['🍖 Pet food', '🕸️ Pet abilities']);
 assert.deepEqual(mapStoreRows[1].map((b) => b.text), ['⬅️ Back']);
 assert.equal(mapStoreRows[1][0].callback_data, `map_loc_store:${U}`);
 
@@ -329,7 +329,7 @@ assert.ok(storeReplyText.includes(STORE_INSTRUCTION),
 const storeReplyButtons = (storeReply.rich_message?.blocks || [])
   .filter((b) => b.type === 'buttons').flatMap((b) => b.buttons);
 assert.deepEqual(storeReplyButtons.map((b) => b.text),
-  ['Pet 🍖 food', 'Pet abilities', '⬅️ Back'].map((t) => style(t)));
+  ['🍖 Pet food', '🕸️ Pet abilities', '⬅️ Back'].map((t) => style(t)));
 assert.equal(storeReplyButtons.find((b) => b.url).url, PET_ABILITY_URL);
 
 const meReply = await command('/pet me');
