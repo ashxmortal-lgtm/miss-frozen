@@ -409,8 +409,8 @@ export function petFoodBlocks(userId, petId) {
 
 export async function petFoodContent(user, petId = null) {
   const pet = petId ? await getPet(user.id, petId) : await getEquippedPet(user.id);
-  const blocks = [];
-  for (const line of PET_FOOD_CAPTION) blocks.push(...(line ? [P(line)] : []));
+  // Keep the authored blank separators between meals (rich + classic).
+  const blocks = PET_FOOD_CAPTION.map((line) => P(line));
   blocks.push({ type: 'divider' });
   blocks.push(row(...petFoodBlocks(user.id, pet ? pet.petId : null)
     .map((b) => btn(b.text, { callback_data: b.callback_data, style: b.style }))));
@@ -693,7 +693,7 @@ function blocksToClassic(blocks) {
       for (const cells of block.cells) {
         lines.push(cells.map((c) => (typeof c?.text === 'string' ? c.text : String(c?.text ?? c ?? ''))).join(' · '));
       }
-    } else if (block?.type === 'paragraph' && block.text) {
+    } else if (block?.type === 'paragraph' && block.text != null) {
       lines.push(typeof block.text === 'string' ? block.text : JSON.stringify(block.text));
     } else if (block?.type === 'divider') {
       // Classic fallback for `{ type: 'divider' }` — never the raw marker.

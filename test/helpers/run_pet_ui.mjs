@@ -184,6 +184,10 @@ for (const needle of PET_FOOD_CAPTION.filter(Boolean)) {
   assert.ok(foodText.includes(needle), `food caption missing ${needle}`);
 }
 assert.deepEqual(labels(food), ['500 🍥', '1,000 🍥', '2,000 🍥', style('⬅️ Back')]);
+const foodRows = food.filter((b) => b?.type === 'buttons').map((b) => b.buttons);
+assert.deepEqual(foodRows.map((r) => r.length), [3, 1], 'the three prices share one row, Back on its own');
+assert.equal(food.filter((b) => b?.type === 'paragraph' && b.text === '').length, 2,
+  'one blank line between the three meal blocks');
 for (const foodKey of ['ninja_meal', 'chakra_treat', 'feast']) {
   assert.ok(buttonsOf(food).some((b) => b.callback_data === `pet_food:${U}:axofly:${foodKey}`), foodKey);
 }

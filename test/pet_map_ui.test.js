@@ -69,7 +69,8 @@ test('daily quest caption uses the assigned mission data', () => {
   const daily = read('tgcloud/lib/daily.js');
   const body = daily.slice(daily.indexOf('export function dailyMissionBody'), daily.indexOf('export function', daily.indexOf('export function dailyMissionBody') + 10));
   for (const line of [
-    '🎯 DAILY QUEST', '📜 ǫᴜᴇꜱᴛ:', '🥷 ᴏʙᴊᴇᴄᴛɪᴠᴇ:',
+    '𝐃𝐀𝐈𝐋𝐘 𝐐𝐔𝐄𝐒𝐓',
+    '📜 ǫᴜᴇꜱᴛ:', '🥷 ᴏʙᴊᴇᴄᴛɪᴠᴇ:',
     '🍥 ʀᴇᴡᴀʀᴅ:', '📊 ꜱᴛᴀᴛᴜꜱ:', '⌛ ᴇxᴘɪʀᴇꜱ:',
   ]) {
     assert.ok(body.includes(line), `daily caption missing ${line}`);

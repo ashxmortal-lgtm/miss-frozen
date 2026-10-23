@@ -85,7 +85,8 @@ const body = dailyMissionBody({}, {
   status: 'pending', progress: 0, targetCount: 1,
 });
 for (const needle of [
-  '🗺️ KONOHA MAP', '🎯 DAILY QUEST',
+  '🗺️ 𝐊𝐎𝐍𝐎𝐇𝐀 𝐌𝐀𝐏',
+  '𝐃𝐀𝐈𝐋𝐘 𝐐𝐔𝐄𝐒𝐓',
   '📜 ǫᴜᴇꜱᴛ: Pet Training',
   '🥷 ᴏʙᴊᴇᴄᴛɪᴠᴇ: ᴛʀᴀɪɴ ᴀɴ ᴇʟɪɢɪʙʟᴇ ᴘᴇᴛ ꜱᴜᴄᴄᴇꜱꜱꜰᴜʟʟʏ',
   '🍥 ʀᴇᴡᴀʀᴅ: 1,500 Konoha coins',

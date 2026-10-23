@@ -213,8 +213,8 @@ export async function notifyDailyProgress(userId, requirementType, eventKey, amo
 
 export function dailyMissionBody(user, mission) {
   if (!mission) {
-    return `<p><b>🗺️ KONOHA MAP</b></p>`
-      + '<p><b>🎯 DAILY QUEST</b></p>'
+    return '<p><b>🗺️ 𝐊𝐎𝐍𝐎𝐇𝐀 𝐌𝐀𝐏</b></p>'
+      + '<p><b>𝐃𝐀𝐈𝐋𝐘 𝐐𝐔𝐄𝐒𝐓</b></p>'
       + '<p>No daily quest could be assigned right now. Check back later.</p>';
   }
   const name = escapeHtml(mission.name || 'Daily Quest');
@@ -223,8 +223,8 @@ export function dailyMissionBody(user, mission) {
   const coins = `${Number(mission.rewardCoins || 0).toLocaleString('en-US')} Konoha coins`;
   const status = mission.status === 'completed' ? 'ᴄᴏᴍᴘʟᴇᴛᴇᴅ' : 'ᴘᴇɴᴅɪɴɢ';
   const expires = mission.status === 'expired' ? 'ᴇxᴘɪʀᴇᴅ' : 'ᴛᴏᴅᴀʏ';
-  return '<p><b>🗺️ KONOHA MAP</b></p>'
-    + '<p><b>🎯 DAILY QUEST</b></p>'
+  return '<p><b>🗺️ 𝐊𝐎𝐍𝐎𝐇𝐀 𝐌𝐀𝐏</b></p>'
+    + '<p><b>𝐃𝐀𝐈𝐋𝐘 𝐐𝐔𝐄𝐒𝐓</b></p>'
     + `<p>📜 ǫᴜᴇꜱᴛ: ${name}</p>`
     + `<p>🥷 ᴏʙᴊᴇᴄᴛɪᴠᴇ: ${objective}</p>`
     + `<p>🍥 ʀᴇᴡᴀʀᴅ: ${coins}</p>`
