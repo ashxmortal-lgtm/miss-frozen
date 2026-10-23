@@ -8,13 +8,14 @@
   const I = window.FBIcons || {
     icon: () => '',
     art: () => '',
+    emoji: () => '',
     artName: () => 'crate',
     has: () => false,
   };
   const G = window.FBGame || {
     fmt: (v) => (v == null || v === '' ? '—' : String(v)),
     rankProgress: () => ({ tier: 1, tiers: 6, rank: 'Academy Student', pct: 0, maxed: false, label: '—' }),
-    stripEmoji: (v) => String(v == null ? '' : v),
+    matches: (a, b) => String(a).toLowerCase().indexOf(String(b).toLowerCase()) >= 0,
     commandsIn: () => [],
     abilityKind: () => 'passive',
     cooldownIn: () => '',
@@ -59,6 +60,27 @@
   const fmt = G.fmt;
   const ico = (name, cls) => I.icon(name, cls);
   const art = (name, cls) => I.art(name, cls);
+  const emo = (value, cls) => (typeof I.emoji === 'function' ? I.emoji(value, cls) : '');
+
+  /** Emoji stored by the bot for a roster member (matches "/profile" output). */
+  function rosterEmoji(name) {
+    if (!name) return '';
+    const hit = roster().find((r) => G.matches(name, r.name));
+    return hit && hit.emoji ? String(hit.emoji) : '';
+  }
+
+  /** Artwork slot for an item: the bot's own emoji first, then the shared map.
+      Chakra always uses the crystal ball so every screen matches the stat card. */
+  function artFor(item, name, type) {
+    const label = name || (item && item.name) || '';
+    const kind = type || (item && item.type) || '';
+    if (kind === 'chakra' || /^chakra\b/i.test(String(label))) return art('chakra');
+    const fromBot = item && item.emoji ? String(item.emoji) : '';
+    if (fromBot) return emo(fromBot);
+    const known = rosterEmoji(label);
+    if (known) return emo(known);
+    return art(I.artName(label, kind));
+  }
 
   function serverlessAvailable() {
     const api = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.Serverless;
@@ -209,9 +231,11 @@
   }
 
   function footerHtml() {
-    return '<p class="credit">created by <a href="https://t.me/frozenblooded" data-url="https://t.me/frozenblooded">'
-      + '𝑭𝒓<span class="credit-snowflake">' + ico('logo') + '</span>𝒛𝒆𝒏 𝑩𝒍𝒐𝒐𝒅𝒆𝒅</a></p>'
-      + '<p class="version-line">MINI APP V' + VERSION + ' · SYNCED WITH @' + esc(C.BOT_USERNAME).toUpperCase() + '</p>';
+    return '<footer class="app-footer">'
+      + '<p class="credit">created by <a href="https://t.me/frozenblooded" data-url="https://t.me/frozenblooded">'
+      + '𝑭𝒓<span class="credit-snowflake" aria-hidden="true">❄️</span>𝒛𝒆𝒏 𝑩𝒍𝒐𝒐𝒅𝒆𝒅</a></p>'
+      + '<p class="version-line">MINI APP V' + VERSION + ' · SYNCED WITH @' + esc(C.BOT_USERNAME).toUpperCase() + '</p>'
+      + '</footer>';
   }
 
   function shell(content) {
@@ -345,7 +369,7 @@
         + '</div>';
     }).join('');
     return '<section class="card glow streak-panel" aria-labelledby="streak-title">'
-      + '<div class="streak-head"><h2 id="streak-title">Seven-day streak</h2>'
+      + '<div class="streak-head"><h2 id="streak-title">' + ico('streak') + 'Seven-day streak</h2>'
       + '<div class="streak-count"><b>' + fmt(view.completed) + '</b> / 7 days</div></div>'
       + '<div class="streak-days" role="list" aria-label="Seven day claim tracker">' + cells + '</div>'
       + '<div class="streak-progress"><progress class="xp" max="7" value="' + view.completed + '" aria-label="' + esc(view.completed + ' of 7 days claimed') + '"></progress></div>'
@@ -359,7 +383,7 @@
     const pending = b ? Number(b.pendingRewards) || 0 : 0;
     if (pending <= 0) return '';
     return '<button class="row" type="button" data-page="map" aria-label="Pending rewards, open the Konoha map">'
-      + '<span class="row-art gold">' + art('rose') + '</span>'
+      + '<span class="row-art gold">' + art('coin') + '</span>'
       + '<span class="row-body"><strong>Pending rewards</strong><small>Claim at the Hokage Office</small></span>'
       + '<span class="row-end"><span class="row-value">' + fmt(pending) + ' ' + ico('coin') + '</span>' + ico('chevron-right') + '</span>'
       + '</button>';
@@ -460,13 +484,13 @@
       + sectionTitle('Roster', 'inventory', rosterList.length + ' shinobi owned')
       + (rosterList.length
         ? '<div class="list">' + rosterList.map((r) =>
-          '<div class="row static"><span class="row-art">' + art(I.artName(r.name, 'shinobi')) + '</span>'
+          '<div class="row static"><span class="row-art">' + artFor(r, r.name, 'shinobi') + '</span>'
           + '<span class="row-body"><strong>' + esc(r.name) + '</strong><small>' + esc(eq.some((n) => String(n).toLowerCase() === String(r.name).toLowerCase()) ? 'Equipped' : 'In roster') + '</small></span>'
           + '<span class="row-end"><span class="row-value">' + (Number(r.qty) > 1 ? '×' + fmt(r.qty) : '') + '</span></span></div>').join('') + '</div>'
         : '<div class="empty">' + ico('inventory') + '<strong>No shinobi yet</strong><span>Recruit one from the Shinobi Store.</span></div>')
-      + sectionTitle('Jutsu', 'ability', jutsuList.length + ' unlocked')
+      + sectionTitle('Jutsu', 'jutsu', jutsuList.length + ' unlocked')
       + (jutsuList.length
-        ? '<div class="wrap">' + jutsuList.map((j) => '<span class="chip violet">' + ico('spark') + esc(j) + '</span>').join('') + '</div>'
+        ? '<div class="wrap">' + jutsuList.map((j) => '<span class="chip violet">' + ico('jutsu') + esc(j) + '</span>').join('') + '</div>'
         : '<div class="notice">' + ico('info') + '<div>No jutsu unlocked yet. Mind Transmission Jutsu is in the Shinobi Store.</div></div>')
       + '<div class="btn-row" style="margin-top:4px">'
       + '<a class="btn btn-ghost" href="/profile.html">' + ico('external') + 'Full profile page</a>'
@@ -480,15 +504,15 @@
       if (!name) {
         return '<div class="slot empty">' + ico('plus') + '<strong>Empty slot</strong><small>Slot ' + (i + 1) + '</small></div>';
       }
-      return '<div class="slot filled">' + art(I.artName(name, 'shinobi')) + '<strong>' + esc(name) + '</strong><small>Slot ' + (i + 1) + '</small></div>';
+      return '<div class="slot filled">' + artFor(null, name, 'shinobi') + '<strong>' + esc(name) + '</strong><small>Slot ' + (i + 1) + '</small></div>';
     }).join('');
     return '<div class="slot-row">' + slots + '</div>';
   }
 
   // -------------------------------------------------------------- inventory --
   const INVENTORY_SECTIONS = [
-    ['shinobi', 'Shinobi', 'profile', 'Recruit from the Shinobi Store.'],
-    ['jutsu', 'Jutsu', 'ability', 'Unlock jutsu in the Shinobi Store.'],
+    ['shinobi', 'Shinobi', 'shinobi', 'Recruit from the Shinobi Store.'],
+    ['jutsu', 'Jutsu', 'jutsu', 'Unlock jutsu in the Shinobi Store.'],
     ['gift', 'Gifts', 'gift', 'Gifts you received from other shinobi.'],
     ['chakra', 'Chakra', 'chakra', 'Chakra refills every daily claim.'],
     ['other', 'Other items', 'inventory', 'Anything else the bot has stored for you.'],
@@ -509,7 +533,7 @@
     const qty = Number(item.qty) > 1 ? '×' + fmt(item.qty) : '1';
     return '<div class="card flat" style="padding:10px 12px">'
       + '<button class="row" type="button" style="background:none;box-shadow:none;padding:0" data-detail="' + esc(key) + '" aria-expanded="' + (open ? 'true' : 'false') + '">'
-      + '<span class="row-art">' + art(I.artName(item.name, item.type)) + '</span>'
+      + '<span class="row-art">' + artFor(item, item.name, item.type) + '</span>'
       + '<span class="row-body"><strong>' + esc(item.name) + '</strong><small>' + esc(item.type) + ' · quantity ' + qty + '</small></span>'
       + '<span class="row-end">' + ico(open ? 'minus' : 'plus') + '</span>'
       + '</button>'
@@ -551,8 +575,8 @@
 
   // ------------------------------------------------------------------ store --
   const STORE_GROUPS = [
-    ['shinobi', 'Shinobi', 'profile'],
-    ['jutsu', 'Jutsu', 'ability'],
+    ['shinobi', 'Shinobi', 'shinobi'],
+    ['jutsu', 'Jutsu', 'jutsu'],
     ['chakra', 'Chakra', 'chakra'],
   ];
 
@@ -567,7 +591,7 @@
       : '<button class="btn-buy" type="button" data-confirm-buy="' + esc(name) + '" aria-label="Buy ' + esc(name) + ' for ' + fmt(item.price) + ' coins" '
         + (state.buying ? 'disabled' : '') + '>' + ico('plus') + ' Buy</button>';
     return '<article class="store-card ' + tone + (owned ? ' owned' : '') + '">'
-      + '<div class="store-art">' + art(I.artName(name, item.type)) + '</div>'
+      + '<div class="store-art">' + artFor(item, name, item.type) + '</div>'
       + '<div class="store-name">' + esc(name) + '</div>'
       + '<div class="store-meta"><span class="price">' + ico('coin') + fmt(item.price) + '</span><span class="faint" style="font-size:9.5px">' + esc(sub) + '</span></div>'
       + button + '</article>';
@@ -606,7 +630,7 @@
     return '<div class="scrim" data-scrim="1">'
       + '<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">'
       + '<div class="sheet-head"><span class="row-art lg ' + (item.type === 'jutsu' ? 'violet' : isChakra ? 'gold' : '') + '">'
-      + art(I.artName(isChakra ? 'Chakra' : item.name, item.type)) + '</span>'
+      + artFor(item, isChakra ? 'Chakra' : item.name, item.type) + '</span>'
       + '<div class="grow"><h2 id="sheet-title">Buy ' + esc(isChakra ? 'Chakra' : item.name) + '?</h2>'
       + '<div class="faint" style="font-size:11.5px">' + esc(isChakra ? '× ' + fmt(item.qty || 100) + ' chakra · repeatable' : 'One-time unlock') + '</div></div>'
       + '<button class="icon-btn sheet-close" type="button" data-action="cancel-purchase" aria-label="Close purchase dialog">' + ico('close') + '</button></div>'
@@ -622,8 +646,8 @@
 
   // -------------------------------------------------------------- abilities --
   function abilityOwnership(name) {
+    if (roster().some((r) => G.matches(name, r.name))) return 'owned';
     const n = String(name || '').toLowerCase();
-    if (roster().some((r) => String(r.name).toLowerCase() === n)) return 'owned';
     if (n.indexOf('mind transmission') >= 0) {
       return jutsu().some((j) => /mind/i.test(j)) ? 'owned' : 'locked';
     }
@@ -632,15 +656,15 @@
   }
 
   function abilityCard(row) {
-    const name = G.stripEmoji(row.name);
-    const desc = G.stripEmoji(row.description);
+    const name = String(row.name == null ? '' : row.name);
+    const desc = String(row.description == null ? '' : row.description);
     const cmds = G.commandsIn(row.description);
     const cooldown = G.cooldownIn(row.description);
     const owned = abilityOwnership(name);
     const kind = G.abilityKind(row.description);
     const tone = kind === 'active' ? '' : 'violet';
     return '<article class="card flat ability-card">'
-      + '<div class="ability-head"><span class="row-art ' + tone + '">' + art(I.artName(name, kind === 'active' ? 'shinobi' : 'jutsu')) + '</span>'
+      + '<div class="ability-head"><span class="row-art ' + tone + '">' + artFor(null, name, kind === 'active' ? 'shinobi' : 'jutsu') + '</span>'
       + '<div class="ability-title"><strong>' + esc(name) + '</strong>'
       + '<span class="faint" style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase">' + (kind === 'active' ? 'Active' : 'Passive') + '</span></div>'
       + '<span class="chip ' + (owned === 'owned' || owned === 'always' ? 'good' : 'plain') + '">'
@@ -676,8 +700,8 @@
       + '<span class="row-value">' + fmt(kills) + ' kills</span></div>'
       + '<div class="stack tight" style="margin-top:10px">' + rows + '</div>'
       + '<div class="divider" style="margin:12px 0"></div>'
-      + '<div class="row-between"><span class="faint" style="font-size:11.5px">Next milestone</span><span class="row-value">' + esc(G.stripEmoji(d.next || '—')) + '</span></div>'
-      + '<div class="row-between" style="margin-top:6px"><span class="faint" style="font-size:11.5px">Sakura training</span><span class="row-value">' + esc(G.stripEmoji(d.sakura || '—')) + '</span></div>'
+      + '<div class="row-between"><span class="faint" style="font-size:11.5px">Next milestone</span><span class="row-value">' + esc(d.next || '—') + '</span></div>'
+      + '<div class="row-between" style="margin-top:6px"><span class="faint" style="font-size:11.5px">Sakura training</span><span class="row-value">' + esc(d.sakura || '—') + '</span></div>'
       + '</div>';
   }
 
@@ -706,7 +730,7 @@
       + errorCard() + flashCard()
       + (gifts.length
         ? '<div class="gift-grid">' + gifts.map((g) =>
-          '<article class="gift-card"><div class="gift-art">' + art(I.artName(g.name, 'gift')) + '</div>'
+          '<article class="gift-card"><div class="gift-art">' + artFor(g, g.name, 'gift') + '</div>'
           + '<div class="gift-name">' + esc(g.name) + '</div>'
           + '<div class="gift-foot"><span class="gift-num">#' + esc(g.id) + '</span>'
           + '<span class="price">' + ico('coin') + fmt(g.price) + '</span></div></article>').join('') + '</div>'
@@ -721,12 +745,12 @@
 
   // -------------------------------------------------------------------- map --
   const LOCATIONS = [
-    ['hokage', 'trophy', 'Hokage Office', 'Claim pending rewards · earn here'],
-    ['ichiraku', 'coin', 'Ichiraku Ramen', 'Buy ramen · restore chakra'],
-    ['bbq', 'streak', 'BBQ', 'Recover exhausted shinobi'],
-    ['gate', 'shield', 'Village Gate', 'Patrols and missions start here'],
-    ['training', 'kunai', 'Training Ground', 'Tsunade training sessions'],
-    ['hotsprings', 'chakra', 'Hot Springs', 'Slow chakra recovery'],
+    ['hokage', 'hokage', 'Hokage Office', 'Claim pending rewards · earn here'],
+    ['ichiraku', 'ramen', 'Ichiraku Ramen', 'Buy ramen · restore chakra'],
+    ['bbq', 'bbq', 'BBQ', 'Recover exhausted shinobi'],
+    ['gate', 'gate', 'Village Gate', 'Patrols and missions start here'],
+    ['training', 'training', 'Training Ground', 'Tsunade training sessions'],
+    ['hotsprings', 'hotsprings', 'Hot Springs', 'Slow chakra recovery'],
     ['store', 'store', 'Stores', 'Shinobi and item shops'],
   ];
 
@@ -780,11 +804,11 @@
       + '</div>'
       + sectionTitle('Group actions', 'swords', 'These need a group where the bot is present')
       + '<div class="list">'
-      + commandRow('/mission', 'kunai', 'Mission', 'Send a shinobi on a mission', true)
+      + commandRow('/mission', 'mission', 'Mission', 'Send a shinobi on a mission', true)
       + commandRow('/patrol', 'shield', 'Patrol', 'Patrol the village for coins', true)
       + commandRow('/gift', 'gift', 'Send a gift', 'Reply to a member, then /gift number', true)
       + commandRow('/kill', 'kunai', 'Kill a target', 'Reply to a member with Itachi equipped', true)
-      + commandRow('/games', 'logo', 'Games', 'XOXO and rock-paper-scissors lobbies', true)
+      + commandRow('/games', 'game', 'Games', 'XOXO and rock-paper-scissors lobbies', true)
       + '</div>'
       + '<div class="notice">' + ico('info')
       + '<div>Every number on these screens is read from your bot account with Telegram\'s signed session. No balance is stored in the Mini App.</div></div>';
@@ -809,7 +833,7 @@
   function pageChannel() {
     return pageBar('Official channel', 'More')
       + '<section class="card glow"><div class="identity"><span class="row-art lg good">' + ico('channel') + '</span>'
-      + '<div class="grow"><h2 class="who" style="font-size:17px">𝑭𝒓<span class="brand-flake">' + ico('logo') + '</span>𝒛𝒆𝒏 𝑩𝒍𝒐𝒐𝒅𝒆𝒅</h2>'
+      + '<div class="grow"><h2 class="who" style="font-size:17px">𝑭𝒓<span class="brand-flake" aria-hidden="true">❄️</span>𝒛𝒆𝒏 𝑩𝒍𝒐𝒐𝒅𝒆𝒅</h2>'
       + '<p class="handle">Announcements, updates and new features.</p></div></div>'
       + '<p class="ability-desc">The channel is the only place where new releases and event schedules are posted. Join it to stay in sync with the bot.</p>'
       + '<a class="btn btn-primary btn-block" style="margin-top:14px" href="https://t.me/frozenblooded" data-url="https://t.me/frozenblooded" target="_blank" rel="noopener">'
