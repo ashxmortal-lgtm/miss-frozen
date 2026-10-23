@@ -1,12 +1,43 @@
-/* Profile standalone page — inherits app.css dark frost */
-.profile-shell { width: min(520px, 100%); margin: 0 auto; padding: 16px 14px calc(30px + env(safe-area-inset-bottom)); }
-.profile-top { margin-bottom: 16px; }
-.profile-intro { margin-bottom: 14px; }
-.profile-intro h1 { margin: 5px 0 6px; }
-.profile-intro p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.4; }
-.profile-eyebrow { font-size: 11px; letter-spacing: 0.12em; font-weight: 700; color: var(--muted); text-transform: uppercase; }
-.profile-content { margin-top: 8px; }
-.profile-retry { margin-top: 10px; }
+/* Standalone profile page — shares the app.css design system. */
+.profile-shell {
+  width: min(560px, 100%);
+  margin: 0 auto;
+  padding: 14px 14px calc(30px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.profile-top { margin-bottom: 2px; }
+.profile-content { display: flex; flex-direction: column; gap: 12px; }
+.profile-retry { align-self: flex-start; }
+.profile-section { display: flex; flex-direction: column; gap: 8px; }
+.profile-section .list { gap: 6px; }
+.profile-empty {
+  margin: 0;
+  padding: 12px;
+  border-radius: var(--r-sm);
+  background: var(--panel-soft);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--faint);
+  font-size: 12px;
+}
+.profile-footnote { margin: 2px 0 0; color: var(--faint); font-size: 11px; text-align: center; }
 
-.profile-identity { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
-.profile-identity .profile-name { font-size: 22px; font-weight: 800; }
+/* Identity block inside the shared hero card */
+.profile-shell .hero .who { font-size: 21px; }
+.profile-shell .hero .id-meta { margin-top: 8px; }
+.profile-shell .card .who { font-size: 18px; }
+.profile-shell .stat-grid.two { margin-top: 10px; }
+
+/* Icon fallback when SVG DOM APIs are unavailable */
+.ico-fallback {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  background: currentColor;
+  opacity: 0.35;
+}
+.slot .ico-fallback { width: 22px; height: 22px; border-radius: 6px; }
+.row-art .ico-fallback { width: 16px; height: 16px; }
+.chip .ico-fallback { width: 12px; height: 12px; border-radius: 3px; }

@@ -3,14 +3,31 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#122033">
-  <title>Miss Fr❄️zen</title>
+  <meta name="theme-color" content="#04080f">
+  <meta name="color-scheme" content="dark">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="description" content="Frozen Blooded — your Konoha coins, chakra, streak, shinobi and store, synced with the MissFrozen bot.">
+  <title>Frozen Blooded · Konoha Mini App</title>
   <link rel="stylesheet" href="css/app.css">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
-  <main id="app" aria-live="polite"></main>
+  <main id="app" class="shell-root">
+    <div class="shell">
+      <div class="skeleton" aria-hidden="true">
+        <div class="sk hero"></div>
+        <div class="sk grid"><div class="sk"></div><div class="sk"></div><div class="sk"></div></div>
+        <div class="sk row"></div>
+        <div class="sk row"></div>
+      </div>
+      <noscript><div class="notice warn"><div><strong>JavaScript is off.</strong><div>Open this Mini App from Telegram to load your account.</div></div></div></noscript>
+    </div>
+  </main>
   <script src="js/contract.js"></script>
+  <script src="js/icons.js"></script>
+  <script src="js/game.js"></script>
+  <script src="js/streak.js"></script>
   <script src="js/app.js"></script>
   <script src="js/snow.js"></script>
 </body>
