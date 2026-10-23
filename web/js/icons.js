@@ -123,14 +123,44 @@
     return 'crate';
   }
 
+  // Use native, full-colour emoji across the Mini App instead of monochrome SVG logos.
+  const EMOJI = {
+    logo: '❄️', home: '🏠', coin: '🪙', chakra: '🔮', streak: '🔥',
+    profile: '👤', inventory: '🎒', store: '🏪', ability: '✨', gift: '🎁',
+    map: '🗺️', more: '📱', feedback: '💬', channel: '📢', claim: '🎁',
+    check: '✅', lock: '🔒', 'chevron-right': '›', 'chevron-left': '‹',
+    refresh: '🔄', spark: '✨', shield: '🛡️', kunai: '🗡️', trophy: '🏆',
+    paw: '🐾', info: 'ℹ️', external: '🔗', alert: '⚠️', users: '👥',
+    clock: '🕒', swords: '⚔️', close: '✖️', plus: '➕', minus: '➖',
+    play: '▶️', dot: '⚫', star: '⭐'
+  };
+  const ART_EMOJI = {
+    mask: '👻', sasuke: '⚡', sakura: '🌸', naruto: '🍥', itachi: '👁️',
+    hinata: '👀', jiraiya: '🐸', jutsu: '🌀', chakra: '🔮', rose: '🌹',
+    ramen: '🍜', peanuts: '🥜', puppy: '🐶', butterfly: '🦋', hat: '👒',
+    rasengan: '🔵', chidori: '⚡', ring: '💍', sharingan: '👁️',
+    star: '⭐', swords: '⚔️', crate: '🎁', village: '🏘️'
+  };
+
   function icon(name, cls) {
-    const body = ICONS[name] || ICONS.spark;
-    return '<svg class="ico' + (cls ? ' ' + cls : '') + '" viewBox="0 0 24 24" aria-hidden="true" focusable="false">' + body + '</svg>';
+    const emoji = EMOJI[name] || '✨';
+    return '<span class="ico emoji-icon' + (cls ? ' ' + cls : '') + '" aria-hidden="true">' + emoji + '</span>';
   }
 
   function art(name, cls) {
-    const body = ART[name] || ART.crate;
-    return '<svg class="art' + (cls ? ' ' + cls : '') + '" viewBox="0 0 48 48" aria-hidden="true" focusable="false">' + body + '</svg>';
+    const emoji = ART_EMOJI[name] || '🎁';
+    return '<span class="art emoji-art' + (cls ? ' ' + cls : '') + '" aria-hidden="true">' + emoji + '</span>';
+  }
+
+  /** DOM-safe emoji builder for screens that may not use innerHTML. */
+  function svgNode(name, cls) {
+    const doc = typeof document !== 'undefined' ? document : null;
+    if (!doc || typeof doc.createElement !== 'function') return null;
+    const node = doc.createElement('span');
+    node.setAttribute('aria-hidden', 'true');
+    node.setAttribute('class', 'ico emoji-icon' + (cls ? ' ' + cls : ''));
+    node.textContent = EMOJI[name] || '✨';
+    return node;
   }
 
   function has(name) {
@@ -157,5 +187,5 @@
     return node;
   }
 
-  return { ICONS, ART, icon, art, artName, has, svgNode, iconNames: Object.keys(ICONS) };
+  return { ICONS, ART, icon, art, artName, has, svgNode, iconNames: Object.keys(EMOJI) };
 });
