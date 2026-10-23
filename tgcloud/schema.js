@@ -212,6 +212,8 @@ export const bbqSessions = table('bbq_sessions', {
   shinobi: text('shinobi').notNull(),
   bbqStart: integer('bbq_start').notNull().default(0),
   lastRecoveryAt: integer('last_recovery_at').notNull().default(0),
+  // 'bbq' | 'hotsprings' — both rest spots share the recovery cadence.
+  location: text('location').notNull().default('bbq'),
 }, (t) => ({
   ownerShinobi: uniqueIndex('uidx_bbq_sessions_owner_shinobi').on(t.telegramId, t.shinobi),
 }));

@@ -91,20 +91,19 @@ export function ichirakuKeyboard(userId) {
   };
 }
 
-/** BBQ — chakra recovery + instant exhaustion recovery */
+/** BBQ — chakra recovery + instant exhaustion recovery + pet actions. */
 export function bbqKeyboard(userId) {
   return {
     inline_keyboard: [
       [
-        btn('Send to BBQ', guard('map_bbq_select', userId)),
-        btn('Recall', guard('map_bbq_recall', userId)),
+        btn('Join BBQ', guard('map_bbq_select', userId)),
+        btn('Feed pet', guard('map_pet_feed', userId)),
       ],
-      [btn('🔥 Heal Exhaustion (200 🍥 each)', guard('map_bbq_heal', userId))],
+      [btn('Instant shinobi recovery', guard('map_bbq_heal', userId))],
       [
-        btn('🍖 Feed Pet', guard('map_pet_feed', userId)),
-        btn('🎾 Play with Pet', guard('map_pet_play', userId)),
+        btn('Play with pet', guard('map_pet_play', userId)),
+        btn('Back', guard('map_home', userId)),
       ],
-      backToMapRow(userId),
     ],
   };
 }
@@ -121,12 +120,18 @@ export function trainingKeyboard(userId) {
   };
 }
 
+/** Hot Springs — relax shinobi (chakra) + rest pet. */
 export function hotspringsKeyboard(userId) {
   return {
     inline_keyboard: [
-      [btn('♨️ Rest Pet', guard('map_pet_rest', userId))],
-      [btn('🐾 My Pets', guard('map_pet_menu', userId))],
-      backToMapRow(userId),
+      [
+        btn('Relax shinobis', guard('map_hot_relax', userId)),
+        btn('Rest pet', guard('map_pet_rest', userId)),
+      ],
+      [
+        btn('Recall shinobis', guard('map_hot_recall', userId)),
+        btn('Back', guard('map_home', userId)),
+      ],
     ],
   };
 }

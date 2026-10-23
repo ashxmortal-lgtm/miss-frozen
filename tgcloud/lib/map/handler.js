@@ -60,8 +60,8 @@ import { PET_ACTIVITIES } from '../pet/defs.js';
 import {
   petStoreHtml, petStoreKeyboard, petMenuHtml, petMenuKeyboard,
   shinobiPickerHtml, shinobiPickerKeyboard, performPetStart, startResultText,
-  petDetailHtml, petDetailKeyboard, petStatsHtml, petFoodHtml, petFoodHtmlFor,
-  petFoodKeyboard,
+  petDetailHtml, petDetailKeyboard, petStatsHtml,
+  petFoodCaptionHtml, petFoodPriceKeyboard, petCardCaption,
 } from '../pet/ui.js';
 import {
   buyPet, equipPet, buyPetFood, cancelPetActivity, getPetActivity, getEquippedPet,
@@ -69,12 +69,12 @@ import {
 } from '../pet/store.js';
 import { getPetPhotoFileId } from '../pet/media.js';
 import { PETS } from '../pet/defs.js';
-import { petStatusText } from '../pet/ui.js';
 import {
   buySuccessText, insufficientCoinsText, alreadyOwnedText, equipSuccessText,
   notOwnedText, NO_PETS_TEXT, PET_NOT_FOUND_TEXT, feedSuccessText,
-  feedInsufficientText, petFullEnergyText, petCannotEatText, NOT_RESTING_TEXT,
+  feedInsufficientText, petCannotEatText, NOT_RESTING_TEXT,
   STALE_MENU_TEXT, EQUIP_PET_FIRST_TEXT, PET_WOKE_TEXT, SHINOBI_BUSY_TEXT,
+  BBQ_CAPTION, HOTSPRINGS_CAPTION, petNotHungryText,
 } from '../pet/text.js';
 import {
   propertyStoreBody, propertyStoreKeyboard, buyPropertySolo,
@@ -161,7 +161,19 @@ function homeBody() {
   return p('Choose a location to explore.');
 }
 
+/** Paragraph body + a rich divider (HTML <hr/> == InputRichBlockDivider). */
+function captionBody(lines) {
+  return (lines || []).map((line) => (line ? p(line) : '')).join('') + '<hr/>';
+}
+
+const CAPTION_LOCATIONS = {
+  bbq: BBQ_CAPTION,
+  hotsprings: HOTSPRINGS_CAPTION,
+};
+
 function locationBody(locKey) {
+  const caption = CAPTION_LOCATIONS[locKey];
+  if (caption) return captionBody(caption);
   const c = LOC_COPY[locKey] || { title: 'Map', lines: [] };
   return locBody(c.title, c.lines);
 }
@@ -228,14 +240,8 @@ async function gateBody(telegramId) {
   try {
     try { await settleOwn({ id: telegramId }); } catch (e) { console.error('[gate settle]', e); }
     const status = await collectStatus(telegramId);
-    let pets = '';
-    try {
-      const rows = await listPets(telegramId);
-      if (rows.length) {
-        pets = '<p><b>🐾 PETS</b></p>' + rows.map((pet) => `<p>${escapeHtml(pet.name)} — ${escapeHtml(petStatusText(pet))}</p>`).join('');
-      }
-    } catch (e) { console.error('[gate pets]', e); }
-    return `<p><b>🚪 VILLAGE GATE</b></p>${statusTableHtml(status.rows)}${pets}`;
+    // Pet activity is deliberately not shown at the Gate.
+    return `<p><b>🚪 VILLAGE GATE</b></p>${statusTableHtml(status.rows)}`;
   } catch (e) {
     console.error('[gateBody]', e);
     return locBody('🚪 VILLAGE GATE', [
@@ -709,7 +715,7 @@ export async function handleMapCallback(cb) {
     if (locActions[action]) {
       const loc = locActions[action];
       await answer(cb);
-      if (loc === 'bbq') {
+      if (loc === 'bbq' || loc === 'hotsprings') {
         try {
           await applyBbqRecovery(user.id);
         } catch (_) {}
@@ -858,7 +864,8 @@ export async function handleMapCallback(cb) {
       await answer(cb);
       const fileId = await getPetPhotoFileId(chatId, pet.petId);
       await showScreen(
-        chatId, messageId, user, p(await petDetailHtml(user.id, pet.petId)),
+        chatId, messageId, user,
+        petCardCaption(pet).split('\n').map((line) => (line ? p(escapeHtml(style(line))) : '')).join(''),
         petDetailKeyboard(user.id, pet.petId, { pet }), 'store', { fileId },
       );
       return true;
@@ -885,11 +892,15 @@ export async function handleMapCallback(cb) {
         await answer(cb, petCannotEatText(pet.name, pet.status), true);
         return true;
       }
+      // Rule: a pet can only be fed while it is hungry (energy not full).
+      if (pet.energy >= 100) {
+        await answer(cb, petNotHungryText(pet.name), true);
+        return true;
+      }
       await answer(cb);
       await showScreen(
-        chatId, messageId, user,
-        locBody('🍱 ICHIRAKU PET FOOD', await petFoodHtmlFor(user.id, pet.petId)),
-        petFoodKeyboard(user.id, 'map_pet_food_buy', pet.petId), 'ichiraku',
+        chatId, messageId, user, petFoodCaptionHtml(),
+        petFoodPriceKeyboard(user.id, pet.petId), 'ichiraku',
       );
       return true;
     }
@@ -926,7 +937,7 @@ export async function handleMapCallback(cb) {
         const pet = await getPet(user.id, r.pet.petId);
         const fileId = await getPetPhotoFileId(chatId, r.pet.petId);
         await showScreen(
-          chatId, messageId, user, p(await petDetailHtml(user.id, r.pet.petId)),
+          chatId, messageId, user, await petDetailHtml(user.id, r.pet.petId),
           petDetailKeyboard(user.id, r.pet.petId, { pet }), 'training', { fileId },
         );
       }
@@ -949,7 +960,7 @@ export async function handleMapCallback(cb) {
       const after = await getPet(user.id, pet.petId);
       const fileId = await getPetPhotoFileId(chatId, pet.petId);
       await showScreen(
-        chatId, messageId, user, p(await petDetailHtml(user.id, pet.petId)),
+        chatId, messageId, user, await petDetailHtml(user.id, pet.petId),
         petDetailKeyboard(user.id, pet.petId, { pet: after }), 'hotsprings', { fileId },
       );
       return true;
@@ -964,7 +975,7 @@ export async function handleMapCallback(cb) {
       const after = await getPet(user.id, petId);
       const fileId = await getPetPhotoFileId(chatId, petId);
       await showScreen(
-        chatId, messageId, user, p(await petDetailHtml(user.id, petId)),
+        chatId, messageId, user, await petDetailHtml(user.id, petId),
         petDetailKeyboard(user.id, petId, { pet: after }), 'hotsprings', { fileId },
       );
       return true;
@@ -998,7 +1009,7 @@ export async function handleMapCallback(cb) {
       const pet = await getPet(user.id, r.pet.petId);
       const fileId = await getPetPhotoFileId(chatId, r.pet.petId);
       await showScreen(
-        chatId, messageId, user, p(await petDetailHtml(user.id, r.pet.petId)),
+        chatId, messageId, user, await petDetailHtml(user.id, r.pet.petId),
         petDetailKeyboard(user.id, r.pet.petId, { pet }),
         type === 'train' ? 'training' : 'bbq', { fileId },
       );
@@ -1011,7 +1022,7 @@ export async function handleMapCallback(cb) {
       if (!pet) { await answer(cb, PET_NOT_FOUND_TEXT, true); return true; }
       await answer(cb);
       await showScreen(
-        chatId, messageId, user, p(await petStatsHtml(user.id, pet)),
+        chatId, messageId, user, await petStatsHtml(user.id, pet),
         petDetailKeyboard(user.id, pet.petId, { pet }), 'hotsprings',
       );
       return true;
@@ -1021,9 +1032,8 @@ export async function handleMapCallback(cb) {
       await answer(cb);
       const equipped = await getEquippedPet(user.id);
       await showScreen(
-        chatId, messageId, user,
-        locBody('🍱 ICHIRAKU PET FOOD', await petFoodHtml(user.id, equipped?.petId || null)),
-        petFoodKeyboard(user.id, 'map_pet_food_buy', equipped?.petId || null), 'ichiraku',
+        chatId, messageId, user, petFoodCaptionHtml(),
+        petFoodPriceKeyboard(user.id, equipped?.petId || null), 'ichiraku',
       );
       return true;
     }
@@ -1037,14 +1047,13 @@ export async function handleMapCallback(cb) {
         await answer(cb, feedSuccessText(r.petName, r.name, r.energyBefore, r.energyAfter, r.petXp), true);
       } else if (r.code === 'no_pet' || r.code === 'not_owned') await answer(cb, NO_PETS_TEXT, true);
       else if (r.code === 'insufficient') await answer(cb, feedInsufficientText(r.name || foodKey, fmt(r.cost), fmt(r.balance)), true);
-      else if (r.code === 'full_energy') await answer(cb, petFullEnergyText(r.petName || 'ᴛʜɪꜱ ᴘᴇᴛ'), true);
+      else if (r.code === 'full_energy') await answer(cb, petNotHungryText(r.petName || 'ᴛʜɪꜱ ᴘᴇᴛ'), true);
       else if (r.code === 'busy') await answer(cb, petCannotEatText(r.petName || 'ᴛʜɪꜱ ᴘᴇᴛ', r.status), true);
       else if (r.code !== 'duplicate') await answer(cb, UNEXPECTED_PET_TEXT, true);
       const pet = petId ? await getPet(user.id, petId) : await getEquippedPet(user.id);
       await showScreen(
-        chatId, messageId, user,
-        locBody('🍱 ICHIRAKU PET FOOD', await petFoodHtml(user.id, pet?.petId || null)),
-        petFoodKeyboard(user.id, 'map_pet_food_buy', pet?.petId || null), 'ichiraku',
+        chatId, messageId, user, petFoodCaptionHtml(),
+        petFoodPriceKeyboard(user.id, pet?.petId || null), 'ichiraku',
       );
       return true;
     }
@@ -1539,9 +1548,13 @@ export async function handleMapCallback(cb) {
 
     if (action === 'map_bbq_go' && parts.length >= 3) {
       const shinobi = parts[1];
-      const result = await startBbq(user.id, shinobi);
+      const result = await startBbq(user.id, shinobi, 'bbq');
       if (result.code === 'busy') {
         await answer(cb, 'That shinobi is on a mission/patrol.', true);
+        return true;
+      }
+      if (result.code === 'full') {
+        await answer(cb, '⚡ Chakra is already full — nothing to recover.', true);
         return true;
       }
       await answer(cb);
@@ -1549,8 +1562,9 @@ export async function handleMapCallback(cb) {
         chatId,
         messageId,
         user,
-        locBody(`🍖 ${EMO[shinobi] || '🥷'} ${escapeHtml(shinobi)} at BBQ`, [
-          'Chakra recovers +20 every 30 minutes (catch-up when you open the map).',
+        captionBody([
+          `🍖 ${EMO[shinobi] || '🥷'} ${escapeHtml(shinobi)} joined the BBQ`,
+          'Chakra recovers +20 every 30 minutes. The shinobi stays busy until the pool is full, then is freed automatically.',
         ]),
         bbqKeyboard(user.id),
         'bbq',
@@ -1560,7 +1574,7 @@ export async function handleMapCallback(cb) {
 
     if (action === 'map_bbq_recall') {
       await answer(cb);
-      const sessions = await listBbqSessions(user.id);
+      const sessions = await listBbqSessions(user.id, 'bbq');
       if (!sessions.length) {
         await showScreen(
           chatId,
@@ -1596,9 +1610,96 @@ export async function handleMapCallback(cb) {
         chatId,
         messageId,
         user,
-        locBody(`🏠 ${EMO[shinobi] || '🥷'} ${escapeHtml(shinobi)} left BBQ`, []),
+        captionBody([`🏠 ${EMO[shinobi] || '🥷'} ${escapeHtml(shinobi)} left the BBQ`]),
         bbqKeyboard(user.id),
         'bbq',
+      );
+      return true;
+    }
+
+    // --- Hot Springs: relax / recall shinobi ---
+    if (action === 'map_hot_relax') {
+      await answer(cb);
+      const own = await ownedNames(user.id);
+      const resting = new Set((await listBbqSessions(user.id)).map((r) => r.shinobi));
+      const rows = own
+        .filter((name) => !resting.has(name))
+        .map((name) => [{
+          text: `${EMO[name] || '🥷'} ${name}`,
+          callback_data: `map_hot_go:${name}:${user.id}`,
+        }]);
+      if (!rows.length) {
+        await showScreen(
+          chatId, messageId, user,
+          captionBody(['♨️ 𝐇𝐎𝐓 𝐒𝐏𝐑𝐈𝐍𝐆𝐒', 'No free shinobi to relax (or none owned).']),
+          hotspringsKeyboard(user.id), 'hotsprings',
+        );
+        return true;
+      }
+      rows.push([{ text: '← Back', callback_data: guard('map_loc_hotsprings', user.id) }]);
+      await showScreen(
+        chatId, messageId, user,
+        locBody('♨️ RELAX A SHINOBI', ['Select a shinobi to relax in the springs.']),
+        { inline_keyboard: rows }, 'hotsprings',
+      );
+      return true;
+    }
+
+    if (action === 'map_hot_go' && parts.length >= 3) {
+      const shinobi = parts[1];
+      const result = await startBbq(user.id, shinobi, 'hotsprings');
+      if (result.code === 'busy') {
+        await answer(cb, 'That shinobi is on a mission/patrol.', true);
+        return true;
+      }
+      if (result.code === 'full') {
+        await answer(cb, '⚡ Chakra is already full — nothing to recover.', true);
+        return true;
+      }
+      await answer(cb);
+      await showScreen(
+        chatId, messageId, user,
+        captionBody([
+          `♨️ ${EMO[shinobi] || '🥷'} ${escapeHtml(shinobi)} is relaxing`,
+          'Chakra recovers +20 every 30 minutes. The shinobi stays busy until the pool is full, then is freed automatically.',
+        ]),
+        hotspringsKeyboard(user.id), 'hotsprings',
+      );
+      return true;
+    }
+
+    if (action === 'map_hot_recall') {
+      await answer(cb);
+      const sessions = await listBbqSessions(user.id, 'hotsprings');
+      if (!sessions.length) {
+        await showScreen(
+          chatId, messageId, user,
+          captionBody(['♨️ 𝐇𝐎𝐓 𝐒𝐏𝐑𝐈𝐍𝐆𝐒', 'No shinobi relaxing right now.']),
+          hotspringsKeyboard(user.id), 'hotsprings',
+        );
+        return true;
+      }
+      const rows = sessions.map((r) => [{
+        text: `${EMO[r.shinobi] || '🥷'} ${r.shinobi}`,
+        callback_data: `map_hot_stop:${r.shinobi}:${user.id}`,
+      }]);
+      rows.push([{ text: '← Back', callback_data: guard('map_loc_hotsprings', user.id) }]);
+      await showScreen(
+        chatId, messageId, user,
+        locBody('♨️ RECALL FROM THE SPRINGS', ['Select a shinobi to recall.']),
+        { inline_keyboard: rows }, 'hotsprings',
+      );
+      return true;
+    }
+
+    if (action === 'map_hot_stop' && parts.length >= 3) {
+      const shinobi = parts[1];
+      await stopBbq(user.id, shinobi);
+      await answer(cb);
+      await showScreen(
+        chatId, messageId, user,
+        captionBody([`🏠 ${EMO[shinobi] || '🥷'} ${escapeHtml(shinobi)} left the Hot Springs`]),
+        hotspringsKeyboard(user.id), 'hotsprings',
       );
       return true;
     }

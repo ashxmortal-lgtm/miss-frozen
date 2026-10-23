@@ -66,7 +66,7 @@ export async function collectStatus(telegramId) {
   let bbqMap = {};
   try {
     const bbq = await db.all(sql`
-      SELECT shinobi, last_recovery_at FROM bbq_sessions WHERE telegram_id = ${telegramId}
+      SELECT shinobi, last_recovery_at, location FROM bbq_sessions WHERE telegram_id = ${telegramId}
     `);
     bbqMap = Object.fromEntries((bbq || []).map((b) => [b.shinobi, b]));
   } catch (_) {}
@@ -120,7 +120,13 @@ export async function collectStatus(telegramId) {
     } else if (isExhausted(state, t)) {
       primary = { key: 'exhausted', icon: '🔥', label: 'Exhausted', due: `Ready at ${dueText(state.exhaustedUntil, t)}`, dueAt: state.exhaustedUntil };
     } else if (bbqMap[name]) {
-      primary = { key: 'bbq', icon: '🍖', label: 'At BBQ', due: null, dueAt: 0 };
+      const springs = bbqMap[name].location === 'hotsprings';
+      primary = {
+        key: springs ? 'hotsprings' : 'bbq',
+        icon: springs ? '♨️' : '🍖',
+        label: springs ? 'At Hot Springs' : 'At BBQ',
+        due: null, dueAt: 0,
+      };
     } else if ((state.nextTrainAt || 0) > t) {
       primary = { key: 'training', icon: '🏋️', label: 'Training', due: `Next session ${dueText(state.nextTrainAt, t)}`, dueAt: state.nextTrainAt };
     } else {
@@ -151,6 +157,7 @@ export function statusParts(row) {
     exhausted: 'exhausted',
     searching: 'searching',
     bbq: 'chilling in BBQ',
+    hotsprings: 'relaxing in hot springs',
     training: 'resting in Training Ground',
     dead: 'dead',
     ready: 'ready',
@@ -194,6 +201,7 @@ export function statusText(row) {
     case 'exhausted': return `🔥 Exhausted — ${p.due}`;
     case 'dead': return `☠️ Dead — Revives ${p.due}`;
     case 'bbq': return '🍖 At BBQ (chakra recovery)';
+    case 'hotsprings': return '♨️ At Hot Springs (chakra recovery)';
     default: return `🟢 ${p.label}`;
   }
 }

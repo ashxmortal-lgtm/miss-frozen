@@ -14,6 +14,37 @@ import { clearExhaustion } from '../rpg/state.js';
 
 const now = () => Math.floor(Date.now() / 1000);
 
+let schemaPromise = null;
+
+/**
+ * Rest sessions live in `bbq_sessions` for both the BBQ and the Hot Springs;
+ * the additive `location` column separates them. Runtime safety net only —
+ * `tgcloud migrate` remains the canonical migration.
+ */
+export function ensureRestSchema() {
+  if (schemaPromise) return schemaPromise;
+  schemaPromise = (async () => {
+    try {
+      await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS bbq_sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        telegram_id INTEGER NOT NULL,
+        shinobi TEXT NOT NULL,
+        bbq_start INTEGER NOT NULL DEFAULT 0,
+        last_recovery_at INTEGER NOT NULL DEFAULT 0,
+        location TEXT NOT NULL DEFAULT 'bbq'
+      )`));
+    } catch (e) { console.error('[rest schema]', e?.message || e); }
+    try {
+      await db.run(sql.raw("ALTER TABLE bbq_sessions ADD COLUMN location TEXT NOT NULL DEFAULT 'bbq'"));
+    } catch (_) { /* column already exists */ }
+    try {
+      await db.run(sql.raw(`CREATE UNIQUE INDEX IF NOT EXISTS uidx_bbq_sessions_owner_shinobi
+        ON bbq_sessions (telegram_id, shinobi)`));
+    } catch (e) { console.error('[rest schema index]', e?.message || e); }
+  })();
+  return schemaPromise;
+}
+
 async function chakraQty(id) {
   const r = await db.get(
     sql`SELECT qty FROM inventory WHERE telegram_id = ${id} AND item_name = 'Chakra'`,
@@ -38,14 +69,29 @@ async function addChakra(id, amount) {
   }
 }
 
-export async function listBbqSessions(telegramId) {
+/** Rest sessions, optionally filtered by location ('bbq' | 'hotsprings'). */
+export async function listBbqSessions(telegramId, location = null) {
+  await ensureRestSchema();
+  if (location) {
+    return db.all(sql`
+      SELECT shinobi, bbq_start, last_recovery_at, location
+      FROM bbq_sessions WHERE telegram_id = ${telegramId} AND location = ${location}
+    `);
+  }
   return db.all(sql`
-    SELECT shinobi, bbq_start, last_recovery_at
+    SELECT shinobi, bbq_start, last_recovery_at, location
     FROM bbq_sessions WHERE telegram_id = ${telegramId}
   `);
 }
 
+/** Shinobi names currently recovering at any rest location. */
+export async function restingShinobi(telegramId) {
+  const rows = await listBbqSessions(telegramId);
+  return new Set((rows || []).map((r) => r.shinobi));
+}
+
 export async function isAtBbq(telegramId, shinobi) {
+  await ensureRestSchema();
   const r = await db.get(sql`
     SELECT 1 FROM bbq_sessions
     WHERE telegram_id = ${telegramId} AND shinobi = ${shinobi}
@@ -53,26 +99,31 @@ export async function isAtBbq(telegramId, shinobi) {
   return !!r;
 }
 
-export async function startBbq(telegramId, shinobi) {
+export async function startBbq(telegramId, shinobi, location = 'bbq') {
+  await ensureRestSchema();
   const t = now();
-  // Block if on mission/patrol
+  // Block if on mission/patrol or playing with a pet.
   const act = await db.get(sql`
     SELECT status FROM activities
     WHERE telegram_id = ${telegramId} AND shinobi = ${shinobi}
   `);
   if (act && act.status === 'active') return { code: 'busy' };
+  // A full chakra pool means nothing left to recover — stay free.
+  if ((await chakraQty(telegramId)) >= MAX_CHAKRA) return { code: 'full' };
 
   await db.run(sql`
-    INSERT INTO bbq_sessions (telegram_id, shinobi, bbq_start, last_recovery_at)
-    VALUES (${telegramId}, ${shinobi}, ${t}, ${t})
+    INSERT INTO bbq_sessions (telegram_id, shinobi, bbq_start, last_recovery_at, location)
+    VALUES (${telegramId}, ${shinobi}, ${t}, ${t}, ${location})
     ON CONFLICT(telegram_id, shinobi) DO UPDATE SET
       bbq_start = excluded.bbq_start,
-      last_recovery_at = excluded.last_recovery_at
+      last_recovery_at = excluded.last_recovery_at,
+      location = excluded.location
   `);
   return { code: 'ok' };
 }
 
 export async function stopBbq(telegramId, shinobi) {
+  await ensureRestSchema();
   await db.run(sql`
     DELETE FROM bbq_sessions
     WHERE telegram_id = ${telegramId} AND shinobi = ${shinobi}
@@ -85,28 +136,39 @@ export async function stopBbq(telegramId, shinobi) {
  * Returns total chakra granted this call.
  */
 export async function applyBbqRecovery(telegramId = null) {
+  await ensureRestSchema();
   const t = now();
   const rows = telegramId
     ? await db.all(sql`
-        SELECT telegram_id, shinobi, last_recovery_at
+        SELECT telegram_id, shinobi, last_recovery_at, location
         FROM bbq_sessions WHERE telegram_id = ${telegramId}
       `)
     : await db.all(sql`
-        SELECT telegram_id, shinobi, last_recovery_at FROM bbq_sessions LIMIT 50
+        SELECT telegram_id, shinobi, last_recovery_at, location FROM bbq_sessions LIMIT 50
       `);
 
   let granted = 0;
   for (const row of rows) {
+    const before = await chakraQty(row.telegram_id);
+    // Chakra is full: everyone has recovered — free them automatically.
+    if (before >= MAX_CHAKRA) {
+      await db.run(sql`DELETE FROM bbq_sessions WHERE telegram_id = ${row.telegram_id}`);
+      continue;
+    }
     const last = row.last_recovery_at || t;
     const ticks = Math.floor((t - last) / BBQ_RECOVERY_INTERVAL_SEC);
     if (ticks <= 0) continue;
     const amount = ticks * BBQ_RECOVERY_AMOUNT;
-    const before = await chakraQty(row.telegram_id);
     const room = Math.max(0, MAX_CHAKRA - before);
     const give = Math.min(amount, room);
     if (give > 0) {
       await addChakra(row.telegram_id, give);
       granted += give;
+    }
+    if (before + give >= MAX_CHAKRA) {
+      // Recovery complete — the shinobi is free again.
+      await db.run(sql`DELETE FROM bbq_sessions WHERE telegram_id = ${row.telegram_id}`);
+      continue;
     }
     const advanced = last + ticks * BBQ_RECOVERY_INTERVAL_SEC;
     await db.run(sql`

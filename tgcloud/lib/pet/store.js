@@ -551,6 +551,14 @@ export async function shinobiAvailability(userId, shinobi) {
     WHERE telegram_id = ${userId} AND shinobi = ${shinobi}
   `);
   if (act?.status === 'active') return act.kind === 'pet' ? 'pet_busy' : `on_${act.kind}`;
+  // Recovering at the BBQ / Hot Springs counts as busy too.
+  try {
+    const rest = await db.get(sql`
+      SELECT 1 AS ok FROM bbq_sessions
+      WHERE telegram_id = ${userId} AND shinobi = ${shinobi}
+    `);
+    if (rest) return 'recovering';
+  } catch (_) { /* rest table may not exist yet */ }
   return null;
 }
 

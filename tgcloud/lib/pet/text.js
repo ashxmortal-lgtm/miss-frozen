@@ -51,6 +51,70 @@ export function statusInline(status, endsAt, nowSec = Math.floor(Date.now() / 10
   return `${base} · ${timeLeftText(endsAt - nowSec)}`;
 }
 
+/** Emoji-free status word for the pet card and the stats screen. */
+export function statusWord(status, endsAt, nowSec = Math.floor(Date.now() / 1000)) {
+  const key = PET_STATUS[status] || PET_STATUS.READY;
+  const label = (STATUS_LABEL[key] || STATUS_LABEL.READY).replace(/^\S+\s*/, '');
+  if (!endsAt || key === PET_STATUS.READY || key === PET_STATUS.EXHAUSTED) return label;
+  return `${label} · ${timeLeftText(endsAt - nowSec)}`;
+}
+
+// ---- pet card (/pet) ----
+
+export function petCardLines(pet) {
+  return [
+    pet?.name || 'ᴘᴇᴛ',
+    '',
+    'Current status: ' + statusWord(pet?.status, pet?.statusEndsAt),
+    '',
+    '✨ ' + (pet?.def?.abilityName || ''),
+  ];
+}
+
+export function petNotHungryText(petName) {
+  return `🍖 ${petName} ɪꜱ ɴᴏᴛ ʜᴜɴɢʀʏ ʀɪɢʜᴛ ɴᴏᴡ.`;
+}
+
+// ---- pet food menu (Ramen Shop / /pet food) ----
+// Verbatim captions requested for the three meals; buttons carry only the price.
+export const PET_FOOD_CAPTION = [
+  '🍱 𝐍𝐈𝐍𝐉𝐀 𝐏𝐄𝐓 𝐌𝐄𝐀𝐋',
+  '✨ ᴇꜰꜰᴇᴄᴛ: +100 xᴘ · +10 ⚡',
+  '💰 ᴘʀɪᴄᴇ: 500 🍥',
+  '',
+  '🍬 𝐂ʜᴀᴋʀᴀ 𝐓ʀᴇᴀᴛ',
+  '✨ ᴇꜰꜰᴇᴄᴛ: +250 xᴘ · +25 ⚡',
+  '💰 ᴘʀɪᴄᴇ: 1,000 🍥',
+  '',
+  '🍜 𝐈ᴄʜɪʀᴀᴋᴜ 𝐅ᴇᴀꜱᴛ',
+  '✨ ᴇꜰꜰᴇᴄᴛ: +500 xᴘ · +50 ⚡',
+  '💰 ᴘʀɪᴄᴇ: 2,000 🍥',
+];
+
+export const PET_FOOD_PRICE_LABEL = {
+  ninja_meal: '500 🍥',
+  chakra_treat: '1,000 🍥',
+  feast: '2,000 🍥',
+};
+
+// ---- map location captions ----
+
+export const BBQ_CAPTION = [
+  '🍖 𝐁𝐁𝐐',
+  '',
+  '⚡ ʀᴇᴄᴏᴠᴇʀ ᴄʜᴀᴋʀᴀ: +20 / 30 ᴍɪɴ',
+  '🥷 ꜱᴇɴᴅ ᴜʀ ꜱʜɪɴᴏʙɪ ʜᴇʀᴇ ᴛᴏ ʀᴇᴄᴏᴠᴇʀ ᴄʜᴀᴋʀᴀ ᴏᴠᴇʀ ᴛɪᴍᴇ.',
+  '',
+  '🍱 ꜰᴇᴇᴅ ᴏʀ ᴘʟᴀʏ ᴡɪᴛʜ ᴜʀ ᴘᴇᴛ ʜᴇʀᴇ!',
+];
+
+export const HOTSPRINGS_CAPTION = [
+  '♨️ 𝐇𝐎𝐓 𝐒𝐏𝐑𝐈𝐍𝐆𝐒',
+  '',
+  '⚡ ʀᴇʟᴀx ᴜʀ ꜱʜɪɴᴏʙɪ: +20 ᴄʜᴀᴋʀᴀ / 30 ᴍɪɴ',
+  '🐾 ʀᴇꜱᴛ ᴜʀ ᴘᴇᴛ ʜᴇʀᴇ ᴛᴏ ʀᴇᴄᴏᴠᴇʀ ʙᴏᴛʜ ᴇɴᴇʀɢʏ ᴀɴᴅ ᴍᴏᴏᴅ.',
+];
+
 // ---- ownership / selection ----
 
 export const NO_PETS_TEXT = "🐾 ʏᴏᴜ ᴅᴏɴ'ᴛ ᴏᴡɴ ᴀɴʏ ᴘᴇᴛꜱ ʏᴇᴛ.\nᴠɪꜱɪᴛ /pet_store ᴛᴏ ᴍᴇᴇᴛ ʏᴏᴜʀ ɴᴇᴡ ᴄᴏᴍᴘᴀɴɪᴏɴ!";
@@ -264,8 +328,8 @@ export const PET_ABILITY_URL = 'https://t.me/frozenblooded/23';
 export function petCommandsText() {
   return [
     '🐾 𝐏𝐄𝐓 𝐂ᴏᴍᴍᴀɴᴅꜱ',
-    '/pet — pet list & profile',
-    '/pet me [name] — pet menu (feed · play · train · rest · stats)',
+    '/pet — open your equipped pet menu',
+    '/pet me [name] — switch to one of your pets',
     '/pet_store — Axofly & Capycorn',
     '/buy <pet name> — buy a pet',
     '/equip <pet name> — set the active pet',

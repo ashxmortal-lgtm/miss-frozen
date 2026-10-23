@@ -5,7 +5,7 @@
 
 import { db } from 'sdk';
 import { sql } from 'sdk/db';
-import { escapeHtml, mention } from './texts.js';
+import { escapeHtml } from './texts.js';
 import { PET_XP_CAP } from './pet/defs.js';
 import { ensurePetSchema } from './pet/store.js';
 
@@ -212,33 +212,23 @@ export async function notifyDailyProgress(userId, requirementType, eventKey, amo
 }
 
 export function dailyMissionBody(user, mission) {
-  const who = mention(user);
   if (!mission) {
-    return `<p><b>📜 DAILY MISSION</b></p><p>${who}</p>`
-      + '<p>No daily mission could be assigned right now. Check back later.</p>';
+    return `<p><b>🗺️ KONOHA MAP</b></p>`
+      + '<p><b>🎯 DAILY QUEST</b></p>'
+      + '<p>No daily quest could be assigned right now. Check back later.</p>';
   }
-  const name = escapeHtml(mission.name || 'Daily Mission');
-  const emoji = mission.emoji || '📜';
-  if (mission.status === 'completed') {
-    return `<p><b>📜 DAILY MISSION COMPLETE</b></p><p>${who}</p>`
-      + `<p>${emoji} <b>${name}</b></p>`
-      + `<p>+${mission.rewardCoins.toLocaleString('en-US')} Konoha coins 🍥</p>`
-      + `<p>Progress: ${mission.targetCount}/${mission.targetCount}</p>`
-      + '<p>Next mission available tomorrow.</p>';
-  }
-  if (mission.status === 'expired') {
-    return `<p><b>📜 DAILY MISSION</b></p><p>${who}</p>`
-      + `<p>${emoji} <b>${name}</b> expired.</p><p>Come back tomorrow for a new mission.</p>`;
-  }
+  const name = escapeHtml(mission.name || 'Daily Quest');
   const template = DAILY_TEMPLATES[mission.missionId] || {};
-  const diff = DAILY_DIFFICULTY[mission.difficulty] || '';
-  return `<p><b>📜 DAILY MISSION</b></p><p>${who}</p>`
-    + `<p>${emoji} <b>${name}</b></p>`
-    + (diff ? `<p>${diff}</p>` : '')
-    + `<p>${escapeHtml(mission.description)}</p>`
-    + `<p>Reward: ${mission.rewardCoins.toLocaleString('en-US')} Konoha coins 🍥</p>`
-    + `<p>Progress: ${mission.progress}/${mission.targetCount}</p>`
-    + '<p>Expires today.</p>'
-    + (template.hint ? `<p><i>${escapeHtml(template.hint)}</i></p>` : '');
+  const objective = template.objective || escapeHtml(mission.description || 'Complete the daily quest.');
+  const coins = `${Number(mission.rewardCoins || 0).toLocaleString('en-US')} Konoha coins`;
+  const status = mission.status === 'completed' ? 'ᴄᴏᴍᴘʟᴇᴛᴇᴅ' : 'ᴘᴇɴᴅɪɴɢ';
+  const expires = mission.status === 'expired' ? 'ᴇxᴘɪʀᴇᴅ' : 'ᴛᴏᴅᴀʏ';
+  return '<p><b>🗺️ KONOHA MAP</b></p>'
+    + '<p><b>🎯 DAILY QUEST</b></p>'
+    + `<p>📜 ǫᴜᴇꜱᴛ: ${name}</p>`
+    + `<p>🥷 ᴏʙᴊᴇᴄᴛɪᴠᴇ: ${objective}</p>`
+    + `<p>🍥 ʀᴇᴡᴀʀᴅ: ${coins}</p>`
+    + `<p>📊 ꜱᴛᴀᴛᴜꜱ: ${status}</p>`
+    + `<p>⌛ ᴇxᴘɪʀᴇꜱ: ${expires}</p>`;
 }
 
