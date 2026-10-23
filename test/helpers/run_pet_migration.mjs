@@ -8,11 +8,15 @@
  */
 import assert from 'node:assert/strict';
 import { db, sql } from './sdk_db_stub.mjs';
+import { api } from 'sdk';
 import {
   restorePetsOnFirstInteraction, restorePetsForRecord, normalizeMigratedPet,
   getPetMigrationStatus, petMigrationRecordFor, ensurePetMigrationSchema,
-  PET_MIGRATION_USER_IDS, PET_MIGRATION_SOURCE, PET_MIGRATION_CLAIM_TTL_SECONDS,
+  sendPetRestoredNotice, PET_MIGRATION_USER_IDS, PET_MIGRATION_SOURCE,
+  PET_MIGRATION_CLAIM_TTL_SECONDS,
 } from '../../tgcloud/lib/pet/migration.js';
+import { PET_RESTORED_BODY, petRestoredText } from '../../tgcloud/lib/pet/text.js';
+import { mention, style } from '../../tgcloud/lib/texts.js';
 import { PET_MIGRATION_SNAPSHOT } from '../../tgcloud/lib/pet/migration_data.js';
 import { ensurePetSchema, listPets, getEquippedPet } from '../../tgcloud/lib/pet/store.js';
 import { PET_MAX_ENERGY, PET_XP_THRESHOLDS, petLevelForXp } from '../../tgcloud/lib/pet/defs.js';
@@ -297,5 +301,76 @@ const status = await getPetMigrationStatus(RECHECK);
 assert.equal(status.status, 'processed');
 assert.equal(status.outcome, 'none');
 assert.equal(status.petsRestored, 0);
+
+// ---- the one-time "your pets are back" notice ----------------------------
+const NOTICE = 6972384968;
+await db.run(sql`DELETE FROM pet_migration_status WHERE telegram_id = ${NOTICE}`);
+await db.run(sql`DELETE FROM user_pets WHERE telegram_id = ${NOTICE}`);
+await db.run(sql`DELETE FROM equipped_pet WHERE telegram_id = ${NOTICE}`);
+
+assert.equal(
+  style(petRestoredText(mention({ id: NOTICE, first_name: 'Snowy' }))),
+  `${style(mention({ id: NOTICE, first_name: 'Snowy' }))}\n\n${style(PET_RESTORED_BODY)}`,
+  'restore text = mention + the exact requested body',
+);
+assert.ok(PET_RESTORED_BODY.startsWith('🐾 ʏᴏᴜʀ ᴘᴇᴛꜱ ᴀʀᴇ ʙᴀᴄᴋ!'));
+assert.ok(PET_RESTORED_BODY.endsWith('✨ ᴄʜᴇᴄᴋ ᴏᴜᴛ: /pet'));
+
+const notices = [];
+const realSend = api.sendMessage;
+api.sendMessage = async (payload) => { notices.push(payload); return { message_id: 1 }; };
+
+const notified = await restorePetsOnFirstInteraction(NOTICE, {
+  notify: { user: { id: NOTICE, first_name: 'Snowy' }, chatId: -1001234 },
+});
+assert.equal(notified.status, 'restored');
+assert.equal(notified.restored, 2);
+assert.equal(notices.length, 1, 'exactly one notice per restoration');
+const notice = notices[0];
+assert.equal(notice.chat_id, NOTICE, 'the notice is a DM');
+assert.equal(notice.parse_mode, 'HTML');
+assert.ok(notice.text.startsWith(`<a href="tg://user?id=${NOTICE}">Snowy</a>`), 'the notice mentions the owner');
+assert.ok(notice.text.includes('🐾 ʏᴏᴜʀ ᴘᴇᴛꜱ ᴀʀᴇ ʙᴀᴄᴋ!'));
+assert.ok(notice.text.includes('✨ ᴄʜᴇᴄᴋ ᴏᴜᴛ: /pet'));
+assert.ok(!notice.text.includes('{mention}'), 'the mention placeholder is resolved');
+
+// Repeated interactions never send it again.
+const repeatNotice = await restorePetsOnFirstInteraction(NOTICE, {
+  notify: { user: { id: NOTICE, first_name: 'Snowy' }, chatId: -1001234 },
+});
+assert.equal(repeatNotice.status, 'already_processed');
+assert.equal(notices.length, 1, 'no second notice');
+
+// Users without pets are never notified.
+const silent = 777001;
+await db.run(sql`DELETE FROM pet_migration_status WHERE telegram_id = ${silent}`);
+const silentRun = await restorePetsOnFirstInteraction(silent, {
+  notify: { user: { id: silent, first_name: 'Nobody' }, chatId: silent },
+});
+assert.equal(silentRun.status, 'none');
+assert.equal(notices.length, 1, 'no notice for a pet-less user');
+
+// A blocked/closed DM falls back to the chat the user interacted in.
+const FALLBACK = 6100847287;
+await db.run(sql`DELETE FROM pet_migration_status WHERE telegram_id = ${FALLBACK}`);
+await db.run(sql`DELETE FROM user_pets WHERE telegram_id = ${FALLBACK}`);
+await db.run(sql`DELETE FROM equipped_pet WHERE telegram_id = ${FALLBACK}`);
+api.sendMessage = async (payload) => {
+  if (Number(payload.chat_id) === FALLBACK) throw new Error('bot was blocked by the user');
+  notices.push(payload);
+  return { message_id: 2 };
+};
+const fallback = await restorePetsOnFirstInteraction(FALLBACK, {
+  notify: { user: { id: FALLBACK, first_name: 'Capy' }, chatId: -1009876 },
+});
+api.sendMessage = realSend;
+assert.equal(fallback.status, 'restored');
+assert.equal(notices.length, 2, 'the notice still reaches the user');
+assert.equal(notices.at(-1).chat_id, -1009876, 'fallback target is the origin chat');
+assert.ok(notices.at(-1).text.includes(`tg://user?id=${FALLBACK}`));
+
+// The helper is directly usable (e.g. from an owner tool) and validates input.
+assert.equal(await sendPetRestoredNotice({ id: 0 }), false);
+assert.equal(await sendPetRestoredNotice({ id: NOTICE, first_name: 'Snowy' }), true);
 
 console.log('pet migration integration: OK');

@@ -36,7 +36,9 @@ export default async function (message, ctx) {
   // (one primary-key lookup once the user is marked processed).
   if (message?.from && !message.from.is_bot) {
     try {
-      await restorePetsOnFirstInteraction(message.from.id);
+      await restorePetsOnFirstInteraction(message.from.id, {
+        notify: { user: message.from, chatId: message.chat?.id },
+      });
     } catch (e) {
       console.error('[pet migration hook]', e);
     }

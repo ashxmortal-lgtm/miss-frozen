@@ -78,7 +78,8 @@ async function announceDone() {
     const claimKb = {
       inline_keyboard: [[{
         text: r.kind === 'pet' ? '🐾 Open Pets' : '🏯 Open Hokage Office',
-        callback_data: r.kind === 'pet' ? `map_pet_menu:${r.id}` : `map_loc_hokage:${r.id}`,
+        // Pet completions open the latest /pet card (not the retired menu).
+        callback_data: r.kind === 'pet' ? `pet_me:${r.id}` : `map_loc_hokage:${r.id}`,
         style: 'success',
       }]],
     };
@@ -246,8 +247,8 @@ export async function handleEconomyCommand(message, ctx) {
       });
     } else if (cmd === 'claim' || cmd === 'daily') {
       const claimButton = message.chat.type === 'private'
-        ? { text: 'Claim', web_app: { url: MINI_APP_URL } }
-        : { text: 'Claim', url: `https://t.me/${BOT_USERNAME}?start=mini_claim` };
+        ? { text: '🎁 Claim', web_app: { url: MINI_APP_URL } }
+        : { text: '🎁 Claim', url: `https://t.me/${BOT_USERNAME}?start=mini_claim` };
       await reply(message, '🎁 ᴏᴘᴇɴ ᴛʜᴇ ᴍɪɴɪ ᴀᴘᴘ ᴛᴏ ᴄʟᴀɪᴍ ᴜʀ ᴅᴀɪʟʏ ʀᴇᴡᴀʀᴅ! 😁❄️', {
         reply_markup: { inline_keyboard: [[claimButton]] },
       });
@@ -513,7 +514,7 @@ async function handleLeaderboard(message) {
         text: style(body),
         parse_mode: 'HTML',
         reply_markup: {
-          inline_keyboard: [[{ text: 'Global leaderboard', callback_data: 'lb:global', style: 'primary' }]],
+          inline_keyboard: [[{ text: '🌍 Global leaderboard', callback_data: 'lb:global', style: 'primary' }]],
         },
       });
     }

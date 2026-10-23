@@ -6,7 +6,10 @@ import { db, sql } from './sdk_db_stub.mjs';
 import {
   ensureRestSchema, startBbq, stopBbq, listBbqSessions, applyBbqRecovery, restingShinobi,
 } from '../../tgcloud/lib/map/bbq.js';
-import { bbqKeyboard, hotspringsKeyboard, ichirakuKeyboard } from '../../tgcloud/lib/map/ui.js';
+import {
+  bbqKeyboard, hotspringsKeyboard, ichirakuKeyboard,
+  hokageKeyboard, gateKeyboard, storeKeyboard,
+} from '../../tgcloud/lib/map/ui.js';
 import { MAX_CHAKRA } from '../../tgcloud/lib/map/constants.js';
 import { dailyMissionBody } from '../../tgcloud/lib/daily.js';
 import { DAILY_TEMPLATES } from '../../tgcloud/lib/daily_defs.js';
@@ -24,10 +27,18 @@ const flat = (kb) => kb.inline_keyboard.flat();
 
 // ---- keyboards: exact requested rows ----
 assert.deepEqual(labels(bbqKeyboard(U)), [
-  ['Join BBQ', 'Feed pet'],
-  ['Instant shinobi recovery'],
-  ['Play with pet', 'Back'],
+  ['🔥 Join BBQ', '🍱 Feed pet'],
+  ['⚡ Instant shinobi recovery'],
+  ['🎾 Play with pet', '⬅️ Back'],
 ]);
+// Every map button carries an emoji (requested).
+for (const [name, kb] of Object.entries({
+  bbqKeyboard, hotspringsKeyboard, hokageKeyboard, gateKeyboard, storeKeyboard,
+})) {
+  for (const button of kb(U).inline_keyboard.flat()) {
+    assert.ok(/^[^\w\s]/.test(button.text), `${name}: "${button.text}" has no emoji`);
+  }
+}
 assert.deepEqual(flat(bbqKeyboard(U)).map((b) => b.callback_data), [
   `map_bbq_select:${U}`, `map_pet_feed:${U}`,
   `map_bbq_heal:${U}`,
@@ -35,8 +46,22 @@ assert.deepEqual(flat(bbqKeyboard(U)).map((b) => b.callback_data), [
 ]);
 
 assert.deepEqual(labels(hotspringsKeyboard(U)), [
-  ['Relax shinobis', 'Rest pet'],
-  ['Recall shinobis', 'Back'],
+  ['♨️ Relax shinobis', '😴 Rest pet'],
+  ['🔄 Recall shinobis', '⬅️ Back'],
+]);
+assert.deepEqual(labels(hokageKeyboard(U)), [
+  ['🏯 Shinobi Mission', '🎯 Daily Quest'],
+  ['🎁 Claim All Rewards'],
+  ['⬅️ Back'],
+]);
+assert.deepEqual(labels(gateKeyboard(U)), [
+  ['🚀 Send Available on Patrol'],
+  ['⬅️ Back'],
+]);
+assert.deepEqual(labels(storeKeyboard(U)), [
+  ['🥷 Shinobi Store', '🎁 Gift Store'],
+  ['🐾 Pet Store', '🏠 Property'],
+  ['⬅️ Back'],
 ]);
 assert.deepEqual(flat(hotspringsKeyboard(U)).map((b) => b.callback_data), [
   `map_hot_relax:${U}`, `map_pet_rest:${U}`,

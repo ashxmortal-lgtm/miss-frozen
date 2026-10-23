@@ -12,7 +12,7 @@ settled lazily by the next interaction or by the message sweep.
 |---|---|
 | `/pet` | Opens the **equipped pet's card** directly: pet photo + status caption + the fixed menu. A single owned pet is opened even when none is equipped; otherwise the pet list appears |
 | `/pet me [name]` | Same card; a name/custom name opens that owned pet |
-| `/pet_store` | Store: catalogue + prices + balance + `Pet 🍖 food` · `Pet abilities` · `Back` |
+| `/pet_store` | Store: catalogue + prices + balance + `🍖 Pet food` · `🕸️ Pet abilities` · `Back` |
 | `/buy <pet name>` · `/buy <shinobi name>` | One command for pets and shinobi; the catalogue decides the type; multi-word names work (`/buy pet name`, `/buy Starter Shinobi`) |
 | `/equip <pet name>` · `/equip <shinobi name>` | Equips the pet (single active companion) or the shinobi (max 3) |
 | `/pet_rename [PetName] NewName` | Renames using one Pet Nametag |
@@ -82,6 +82,11 @@ shows total XP / 15,000. The divider is the rich block `{ type: 'divider' }` and
 renders as a line of `─` on the classic path.
 
 ### Map entry points and locations
+
+Every pet entry point (completion DM button, legacy `map_pet_menu` button,
+Training Ground / BBQ / Hot Springs pet buttons) renders the **same `/pet` card**;
+the retired map pet menu no longer exists. All map buttons carry an emoji
+(Hokage Office, Gate, BBQ, Stores, Hot Springs, Back).
 
 Store → 🐾 Pet Store · Training Ground → 🐾 Train Pet · Ichiraku → 🍱 Pet Food.
 Map screens keep the existing artwork, Close button and Frozen Blooded theme.

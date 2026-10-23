@@ -21,7 +21,9 @@ export default async function (cq) {
   // First interaction can be a button tap: restore legacy pets before routing.
   if (cq?.from && !cq.from.is_bot) {
     try {
-      await restorePetsOnFirstInteraction(cq.from.id);
+      await restorePetsOnFirstInteraction(cq.from.id, {
+        notify: { user: cq.from, chatId: cq.message?.chat?.id },
+      });
     } catch (e) {
       console.error('[pet migration hook]', e);
     }

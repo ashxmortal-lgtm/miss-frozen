@@ -21,12 +21,15 @@
  */
 import { db } from 'sdk';
 import { sql } from 'sdk/db';
+import { api } from '../message_api.js';
+import { mention, style } from '../texts.js';
 import { ensurePetSchema } from './store.js';
 import {
   PETS, PET_MAX_LEVEL, PET_MAX_ENERGY, PET_XP_CAP, PET_XP_THRESHOLDS,
   petLevelForXp, sanitizePetName,
 } from './defs.js';
 import { PET_MIGRATION_SNAPSHOT } from './migration_data.js';
+import { petRestoredText } from './text.js';
 
 const now = () => Math.floor(Date.now() / 1000);
 
@@ -218,6 +221,35 @@ async function releaseClaim(id, claimTs) {
 }
 
 /**
+ * One-time "your pets are back" notice. DM first (restoration is personal),
+ * then the originating chat when the bot cannot open a DM with the user.
+ */
+export async function sendPetRestoredNotice(user, chatId = null) {
+  const id = Number(user?.id);
+  if (!Number.isSafeInteger(id) || id <= 0) return false;
+  const who = { id, first_name: String(user?.first_name || 'User') };
+  let text;
+  try {
+    text = style(petRestoredText(mention(who)));
+  } catch (e) {
+    console.error('[pet migration notice]', e?.message || e);
+    return false;
+  }
+  const targets = [id];
+  const origin = Number(chatId);
+  if (Number.isSafeInteger(origin) && origin !== 0 && origin !== id) targets.push(origin);
+  for (const target of targets) {
+    try {
+      await api.sendMessage({ chat_id: target, text, parse_mode: 'HTML' });
+      return true;
+    } catch (e) {
+      console.error('[pet migration notice]', target, e?.description || e?.message || e);
+    }
+  }
+  return false;
+}
+
+/**
  * Run (at most once) the legacy pet restoration for one user.
  * Called from the message + callback routers on every interaction; the marker
  * table turns every later call into a single primary-key lookup.
@@ -299,6 +331,9 @@ export async function restorePetsOnFirstInteraction(userId, options = {}) {
     if (marked.rowsAffected === 0) {
       // Our claim was taken over by a retry; the restore itself was idempotent.
       console.error('[pet migration] claim taken over', id);
+    } else if (restored > 0 && options.notify) {
+      // Exactly once, after the marker is committed: never on a retry.
+      await sendPetRestoredNotice(options.notify.user || { id }, options.notify.chatId);
     }
     if (restored > 0 || skipped > 0) {
       console.log(`[pet migration] user ${id}: restored=${restored} skipped=${skipped} equipped=${result.equipped || '-'}`);

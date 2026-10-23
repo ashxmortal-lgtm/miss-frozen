@@ -47,6 +47,29 @@ test('restoration runs on first interaction from both routers', () => {
   const hook = messageHandler.indexOf('await restorePetsOnFirstInteraction(');
   assert.ok(hook < messageHandler.indexOf('handleEconomyCommand(message, ctx)'),
     'pets are restored before command handling');
+
+  // The restore notice needs the sender + the origin chat for the DM fallback.
+  for (const file of ['tgcloud/handlers/message.js', 'tgcloud/handlers/callback_query.js']) {
+    const src = read(file);
+    assert.match(src, /notify: \{ user: .*?, chatId: /, `${file} passes the notice context`);
+  }
+});
+
+test('a restored owner gets the exact one-time notice', async () => {
+  const { PET_RESTORED_BODY, petRestoredText } = await import('../tgcloud/lib/pet/text.js');
+  assert.equal(PET_RESTORED_BODY.split('\n')[0], '🐾 ʏᴏᴜʀ ᴘᴇᴛꜱ ᴀʀᴇ ʙᴀᴄᴋ!');
+  assert.equal(PET_RESTORED_BODY.split('\n').at(-1), '✨ ᴄʜᴇᴄᴋ ᴏᴜᴛ: /pet');
+  assert.ok(PET_RESTORED_BODY.includes('\n\n\n'), 'blank lines between the two blocks');
+  assert.ok(petRestoredText('<a href="tg://user?id=1">U</a>')
+    .startsWith('<a href="tg://user?id=1">U</a>\n\n🐾'), 'mention comes first');
+
+  const src = read('tgcloud/lib/pet/migration.js');
+  assert.match(src, /options\.notify/, 'notice sent only when the router asks for it');
+  assert.match(src, /await api\.sendMessage\(\{ chat_id: target, text, parse_mode: 'HTML' \}\)/);
+  // Sent after the marker is committed, so a retry can never repeat it.
+  const markAt = src.indexOf("SET status = 'processed'");
+  const notifyAt = src.indexOf('await sendPetRestoredNotice(');
+  assert.ok(markAt > 0 && notifyAt > markAt, 'notify happens after marking processed');
 });
 
 test('migration module is idempotent, offline and free of side effects', () => {

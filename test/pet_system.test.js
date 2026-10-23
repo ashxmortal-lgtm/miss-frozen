@@ -302,9 +302,10 @@ test('every pet callback is routed with a server-side owner and pet guard', () =
   const handler = read('tgcloud/lib/map/handler.js');
 
   // Every map_pet_* action the UI emits has a handler branch.
+  // The card path is `pet_*`; only the map picker/back/food emit `map_pet_*`.
   const actions = new Set();
   for (const m of ui.matchAll(/`(map_pet_[a-z_]+):/g)) actions.add(m[1]);
-  assert.ok(actions.size >= 10, 'map pet actions are wired');
+  assert.ok(actions.size >= 5, `map pet actions are wired (${[...actions].join(', ')})`);
   for (const action of actions) {
     assert.match(handler, new RegExp(`action === '${action}'`), action);
   }

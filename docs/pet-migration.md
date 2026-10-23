@@ -54,6 +54,26 @@ never charges coins, never writes a `purchases` row and sends no extra message �
 A user who is absent from the snapshot, or whose `owned_pets` is empty, receives
 no pet. The check still completes and is recorded (`outcome = 'none'`).
 
+## The restore notice
+
+When at least one pet is actually inserted, the user receives this message once
+(a DM; if the bot cannot DM them, the chat they interacted in):
+
+```
+{mention}
+
+🐾 ʏᴏᴜʀ ᴘᴇᴛꜱ ᴀʀᴇ ʙᴀᴄᴋ!
+
+
+✨ ᴄʜᴇᴄᴋ ᴏᴜᴛ: /pet
+```
+
+`{mention}` is the owner's own `tg://user` link. The notice is sent **after** the
+marker row is committed to `processed`, so a retry, a duplicate update or a
+second mirror worker can never send it twice. Users without pets never get it,
+and nothing is sent when restoration merely keeps already-existing rows
+(`restored = 0`).
+
 ## Idempotency and concurrency
 
 1. **Claim.** `pet_migration_status` holds one row per user. A fresh worker
