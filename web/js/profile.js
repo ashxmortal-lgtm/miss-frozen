@@ -1,25 +1,25 @@
-/* Profile-only Mini App: read the signed-in user's existing /profile data. */
+/* Standalone profile Mini App.
+   Reads the signed-in user's existing /profile record through the getProfile
+   endpoint. DOM nodes are built with textContent only — bot data is never
+   interpreted as HTML. */
 (function () {
   const tg = window.Telegram && window.Telegram.WebApp;
   const state = document.getElementById('profile-state');
   const content = document.getElementById('profile-content');
   const retry = document.getElementById('profile-retry');
 
+  const I = window.FBIcons;
+  const G = window.FBGame || {
+    fmt: (v) => (v == null || v === '' ? '—' : String(v)),
+    rankProgress: () => ({ tier: 1, pct: 0, label: '', rank: '' }),
+    stripEmoji: (v) => String(v == null ? '' : v),
+    initial: (v) => String(v || 'S').charAt(0).toUpperCase(),
+  };
+
   if (tg) {
     try { tg.ready(); } catch (_) {}
     try { tg.expand(); } catch (_) {}
-    try { tg.setHeaderColor('#07111f'); tg.setBackgroundColor('#07111f'); } catch (_) {}
-  }
-
-  function setState(message, isError) {
-    state.textContent = message;
-    state.className = isError ? 'notice error' : 'notice';
-  }
-
-  function setLoading() {
-    content.replaceChildren();
-    retry.hidden = true;
-    setState('Loading your profile from the bot…', false);
+    try { tg.setHeaderColor('#04080f'); tg.setBackgroundColor('#04080f'); } catch (_) {}
   }
 
   function element(tag, className, text) {
@@ -29,43 +29,213 @@
     return node;
   }
 
+  /** setAttribute is optional so the page also runs in restricted clients. */
+  function attr(node, name, value) {
+    if (node && typeof node.setAttribute === 'function') node.setAttribute(name, value);
+    return node;
+  }
+
+  function icon(name, cls) {
+    if (I && typeof I.svgNode === 'function') {
+      const node = I.svgNode(name, cls);
+      if (node) return node;
+    }
+    return element('span', 'ico-fallback' + (cls ? ' ' + cls : ''));
+  }
+
+  function setState(message, isError) {
+    state.textContent = String(message);
+    state.className = isError ? 'notice error' : 'notice';
+  }
+
+  function setLoading() {
+    content.replaceChildren();
+    retry.hidden = true;
+    setState('Loading your profile from the bot…', false);
+  }
+
   function displayNumber(value) {
     if (value == null || value === '') return '—';
-    const number = Number(value);
-    return Number.isFinite(number) ? number.toLocaleString('en-US') : String(value);
+    return G.fmt(value);
+  }
+
+  function chip(label, iconName, tone) {
+    const box = element('span', 'chip' + (tone ? ' ' + tone : ''));
+    box.append(icon(iconName));
+    box.append(element('span', null, label));
+    return box;
   }
 
   function addStat(target, label, value) {
-    const box = element('div', 'profile-stat');
-    box.append(element('div', 'profile-stat-label', label));
-    box.append(element('div', 'profile-stat-value', value));
+    const box = element('div', 'mini-stat');
+    box.append(element('small', null, label));
+    box.append(element('strong', null, value));
     target.append(box);
   }
 
-  function addCollection(target, title, values, renderItem, emptyText) {
-    const section = element('section', 'profile-section');
-    section.append(element('h2', '', title));
-    if (!values.length) {
-      section.append(element('p', 'profile-empty', emptyText));
-    } else {
-      const list = element('ul', 'profile-list');
-      for (const value of values) list.append(element('li', 'profile-chip', renderItem(value)));
-      section.append(list);
-    }
-    target.append(section);
+  function addSection(target, title, iconName, hint) {
+    const head = element('div', 'section-title');
+    if (iconName) head.append(icon(iconName));
+    head.append(element('span', null, title));
+    target.append(head);
+    if (hint) target.append(element('p', 'section-hint', hint));
   }
 
-  function renderBotAvatar(src) {
-    const target = document.getElementById('profile-bot-avatar');
-    if (!target) return;
-    target.replaceChildren(element('span', 'avatar-fallback', '❄️'));
-    if (typeof src !== 'string' || !src.startsWith('data:image/')) return;
-    const img = document.createElement('img');
-    img.alt = '';
-    img.decoding = 'async';
-    img.src = src;
-    img.addEventListener('error', () => { img.style.display = 'none'; });
-    target.prepend(img);
+  function avatarNode(name, photo) {
+    const box = element('div', 'avatar ring');
+    attr(box, 'role', 'img');
+    attr(box, 'aria-label', 'Your profile picture');
+    if (photo) {
+      const img = document.createElement('img');
+      img.alt = '';
+      img.decoding = 'async';
+      img.src = photo;
+      img.addEventListener('error', () => { if (img.style) img.style.display = 'none'; });
+      box.append(img);
+    }
+    box.append(element('span', 'avatar-fallback', G.initial(name)));
+    return box;
+  }
+
+  function userPhoto() {
+    try {
+      const u = tg && tg.initDataUnsafe && tg.initDataUnsafe.user;
+      if (u && u.photo_url) return String(u.photo_url);
+    } catch (_) {}
+    return '';
+  }
+
+  function identityCard(profile) {
+    const card = element('section', 'hero');
+    const row = element('div', 'identity');
+    row.append(avatarNode(profile.displayName, userPhoto()));
+    const body = element('div', 'grow');
+    body.append(element('h1', 'who', profile.displayName || 'Shinobi'));
+    body.append(element('p', 'handle', profile.username ? '@' + profile.username : 'Telegram account'));
+    const meta = element('div', 'id-meta');
+    const info = G.rankProgress(profile.xp);
+    meta.append(chip('Lv. ' + info.tier, 'spark', ''));
+    meta.append(chip(profile.rank || info.rank, 'trophy', 'violet'));
+    if (profile.globalRank != null) meta.append(chip('#' + G.fmt(profile.globalRank), 'users', ''));
+    if (profile.life) meta.append(chip(profile.life.alive ? 'Alive' : 'Dead', profile.life.alive ? 'shield' : 'alert', profile.life.alive ? 'good' : 'warn'));
+    body.append(meta);
+    row.append(body);
+    card.append(row);
+
+    const xpRow = element('div', 'xp-row');
+    xpRow.append(element('span', 'xp-label', 'Rank progress'));
+    xpRow.append(element('span', 'xp-value', G.stripEmoji(profile.xpText || info.label)));
+    card.append(xpRow);
+    const bar = document.createElement('progress');
+    bar.className = 'xp';
+    bar.max = 100;
+    bar.value = info.pct;
+    attr(bar, 'aria-label', 'Rank progress ' + info.pct + ' percent');
+    card.append(bar);
+    return card;
+  }
+
+  function rankCard(profile) {
+    const info = G.rankProgress(profile.xp);
+    const card = element('section', 'card');
+    card.append(element('div', 'section-title', 'Current rank'));
+    const title = element('div', 'row-between');
+    title.append(element('div', 'who', profile.rank || info.rank));
+    title.append(element('span', 'chip violet', 'Level ' + info.tier + ' / ' + info.tiers));
+    card.append(title);
+    card.append(element('p', 'section-hint', G.stripEmoji(profile.xpText || info.label)));
+    const bar = document.createElement('progress');
+    bar.className = 'xp';
+    bar.max = 100;
+    bar.value = info.pct;
+    attr(bar, 'aria-label', 'Rank progress ' + info.pct + ' percent');
+    card.append(bar);
+    return card;
+  }
+
+  function statsCard(profile) {
+    const card = element('section', 'card');
+    card.append(element('div', 'section-title', 'Account stats'));
+    const grid = element('div', 'stat-grid two');
+    addStat(grid, 'Coins', displayNumber(profile.balance));
+    addStat(grid, 'Chakra', displayNumber(profile.chakra));
+    addStat(grid, 'XP', displayNumber(profile.xp));
+    addStat(grid, 'Kills', displayNumber(profile.kills));
+    addStat(grid, 'Patrols', displayNumber(profile.narutoPatrols));
+    addStat(grid, 'Claim streak', displayNumber(profile.streak) + ' / 7');
+    addStat(grid, 'Last claim', profile.lastClaim || '—');
+    addStat(grid, 'Global rank', profile.globalRank != null ? '#' + displayNumber(profile.globalRank) : '—');
+    card.append(grid);
+    return card;
+  }
+
+  function equippedCard(profile) {
+    const list = Array.isArray(profile.equippedList) ? profile.equippedList
+      : (profile.life && profile.life.equipped ? [profile.life.equipped] : []);
+    const card = element('section', 'profile-section');
+    card.append(element('div', 'section-title', 'Equipped shinobi (' + list.length + ' / 3)'));
+    if (!list.length) {
+      card.append(element('p', 'profile-empty', 'No shinobi equipped — use /equip in the bot.'));
+      return card;
+    }
+    const row = element('div', 'slot-row');
+    for (let i = 0; i < 3; i += 1) {
+      const name = list[i];
+      const slot = element('div', 'slot ' + (name ? 'filled' : 'empty'));
+      if (name) {
+        slot.append(icon('profile'));
+        slot.append(element('strong', null, name));
+        slot.append(element('small', null, 'Slot ' + (i + 1)));
+      } else {
+        slot.append(icon('plus'));
+        slot.append(element('strong', null, 'Empty slot'));
+        slot.append(element('small', null, 'Slot ' + (i + 1)));
+      }
+      row.append(slot);
+    }
+    card.append(row);
+    return card;
+  }
+
+  function rosterSection(profile) {
+    const list = Array.isArray(profile.roster) ? profile.roster : [];
+    const section = element('section', 'profile-section');
+    section.append(element('div', 'section-title', 'Roster (' + list.length + ')'));
+    if (!list.length) {
+      section.append(element('p', 'profile-empty', 'No shinobi in your roster yet.'));
+      return section;
+    }
+    const rows = element('div', 'list');
+    for (const item of list) {
+      const row = element('div', 'row static');
+      const art = element('span', 'row-art');
+      art.append(icon('profile'));
+      row.append(art);
+      const body = element('span', 'row-body');
+      body.append(element('strong', null, item.name || 'Shinobi'));
+      body.append(element('small', null, 'Owned'));
+      row.append(body);
+      const end = element('span', 'row-end');
+      if (Number(item.qty) > 1) end.append(element('span', 'row-value', '×' + displayNumber(item.qty)));
+      row.append(end);
+      rows.append(row);
+    }
+    section.append(rows);
+    return section;
+  }
+
+  function jutsuSection(profile) {
+    const list = Array.isArray(profile.jutsu) ? profile.jutsu : [];
+    const section = element('section', 'profile-section');
+    section.append(element('div', 'section-title', 'Jutsu (' + list.length + ')'));
+    if (!list.length) {
+      section.append(element('p', 'profile-empty', 'No jutsu unlocked yet.'));
+      return section;
+    }
+    const wrap = element('div', 'wrap');
+    for (const name of list) wrap.append(chip(String(name), 'spark', 'violet'));
+    section.append(wrap);
+    return section;
   }
 
   function renderProfile(profile) {
@@ -76,66 +246,13 @@
     }
 
     content.replaceChildren();
-    renderBotAvatar(profile.botAvatar);
-    const identity = element('section', 'profile-identity');
-    // User profile photo (Telegram) with initial fallback
-    const avatar = element('div', 'avatar');
-    let userPhoto = '';
-    try {
-      const u = tg && tg.initDataUnsafe && tg.initDataUnsafe.user;
-      if (u && u.photo_url) userPhoto = u.photo_url;
-    } catch (_) {}
-    if (userPhoto) {
-      const img = document.createElement('img');
-      img.alt = '';
-      img.decoding = 'async';
-      img.src = userPhoto;
-      img.addEventListener('error', () => { img.style.display = 'none'; });
-      avatar.append(img);
-    }
-    const letter = (profile.displayName || 'S').charAt(0).toUpperCase();
-    avatar.append(element('span', 'avatar-fallback', letter));
-    identity.append(avatar);
-    const nameBlock = element('div', '');
-    nameBlock.append(element('div', 'profile-name', profile.displayName || 'Shinobi'));
-    if (profile.life) {
-      const statusText = profile.life.alive
-        ? 'Status: Alive'
-        : 'Status: Dead' + (profile.life.label ? ' · ' + String(profile.life.label).replace(/^Dead · /, '') : '');
-      nameBlock.append(element('div', 'life ' + (profile.life.alive ? 'alive' : 'dead'), statusText));
-      nameBlock.append(element('div', 'profile-username',
-        'XP: ' + displayNumber(profile.xp) + ' · GLOBAL RANK: ' + (profile.globalRank != null ? '#' + profile.globalRank : '—')));
-    }
-    nameBlock.append(element('div', 'profile-username', profile.username ? `@${profile.username}` : 'Telegram user'))
-    identity.append(nameBlock);
-    content.append(identity);
-
-    const rank = element('section', 'profile-rank');
-    rank.append(element('div', 'profile-rank-label', 'Current rank'));
-    rank.append(element('div', 'profile-rank-value', profile.rank));
-    rank.append(element('div', 'profile-xp', profile.xpText || 'XP progress unavailable'));
-    content.append(rank);
-
-    const stats = element('section', 'profile-section');
-    stats.append(element('h2', '', 'Profile stats'));
-    const grid = element('div', 'profile-stats');
-    addStat(grid, 'Coins', displayNumber(profile.balance));
-    addStat(grid, 'Chakra', displayNumber(profile.chakra));
-    addStat(grid, 'XP', displayNumber(profile.xp));
-    addStat(grid, 'Kills', displayNumber(profile.kills));
-    addStat(grid, 'Claim streak', displayNumber(profile.streak));
-    addStat(grid, 'Last claim', profile.lastClaim || '—');
-    if (Number(profile.narutoPatrols) > 0) addStat(grid, 'Naruto patrols', displayNumber(profile.narutoPatrols));
-    stats.append(grid);
-    content.append(stats);
-
-    addCollection(content, 'Shinobi roster', profile.roster,
-      (item) => `${item.emoji || '🥷'} ${item.name || 'Shinobi'}${Number(item.qty) > 1 ? ` ×${displayNumber(item.qty)}` : ''}`,
-      'No shinobi in your roster yet.');
-    addCollection(content, 'Jutsu', profile.jutsu,
-      (name) => `🌀 ${name}`,
-      'No jutsu unlocked yet.');
-    content.append(element('p', 'profile-footnote', 'Synced from your bot profile.'));
+    content.append(identityCard(profile));
+    content.append(rankCard(profile));
+    content.append(statsCard(profile));
+    content.append(equippedCard(profile));
+    content.append(rosterSection(profile));
+    content.append(jutsuSection(profile));
+    content.append(element('p', 'profile-footnote', 'Synced from your bot profile — the same record /profile shows.'));
 
     setState('Profile loaded from the bot.', false);
     retry.hidden = true;
