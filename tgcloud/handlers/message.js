@@ -22,8 +22,12 @@ import { handleMapCommand, mapSweep } from '../lib/map/handler.js';
 import { handleSupportCommand, handleSupportMessage, handleSupportAdminReply } from '../lib/support_inbox.js';
 import { handleCouponWizardText } from '../lib/coupons.js';
 import { sweepClones } from '../lib/rpg/combat.js';
+import { rememberInbound } from '../lib/reply_target.js';
 
 export default async function (message, ctx) {
+  // Command replies are sent as replies to the command message (60s window).
+  if (String(message?.text || '').trim().startsWith('/')) rememberInbound(message);
+
   // Serverless has no setTimeout; resolve due Shadow Clone attacks on update.
   try { await sweepClones(); } catch (e) { console.error('[clone sweep]', e); }
 

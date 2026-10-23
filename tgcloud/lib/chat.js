@@ -26,6 +26,8 @@ function deliveryExtra(params) {
   if (params.reply_parameters) extra.reply_parameters = params.reply_parameters;
   if (params.message_thread_id) extra.message_thread_id = params.message_thread_id;
   if (params.ephemeral_message_parameters) extra.ephemeral_message_parameters = params.ephemeral_message_parameters;
+  // Background sends (activity reminders) must not become replies.
+  if (params.disable_reply_target) extra.disable_reply_target = params.disable_reply_target;
   return extra;
 }
 function toRichHtml(text) {
@@ -39,20 +41,23 @@ function toRichHtml(text) {
 
 // Every HTML text without an inline keyboard goes out as a rich message.
 // If Telegram refuses it, the classic message is sent instead.
+// `classic: true` keeps a message on the plain Bot API path (e.g. /balance needs
+// its tg:// mention and blank lines inside <blockquote> to render exactly).
 export async function send(chatId, params) {
+  const { classic, ...message } = params;
   let sent;
-  if (params.parse_mode === 'HTML' && params.text && !params.reply_markup) {
+  if (!classic && message.parse_mode === 'HTML' && message.text && !message.reply_markup) {
     try {
-      const extra = deliveryExtra(params);
+      const extra = deliveryExtra(message);
       sent = await api.sendRichMessage({
-        chat_id: chatId, rich_message: { html: toRichHtml(params.text) }, ...extra,
+        chat_id: chatId, rich_message: { html: toRichHtml(message.text) }, ...extra,
       });
     } catch (e) {
       if (!(e instanceof BotApiError)) throw e;
       console.error(e);
     }
   }
-  if (!sent) sent = await api.sendMessage({ chat_id: chatId, ...params });
+  if (!sent) sent = await api.sendMessage({ chat_id: chatId, ...message });
   await remember(chatId, sent);
   return sent;
 }

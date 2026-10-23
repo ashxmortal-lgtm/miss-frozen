@@ -97,6 +97,25 @@ export function sakuraHealUnlocked(sakuraLevel) {
   return sakuraLevel >= SAKURA_MAX_LEVEL;
 }
 
+/**
+ * Unlock flags for the two healing skills. Both only ever move forward
+ * (Sakura levelling up, Sakura-heal uses stacking), so once true they stay
+ * true — the /inventory buttons keep their green colour after unlocking.
+ */
+export function healUnlocks(sakuraLevel, sakuraHealUses) {
+  return {
+    sakura: sakuraHealUnlocked(sakuraLevel),
+    katsuyu: (sakuraHealUses || 0) >= KATSUYU_UNLOCK_USES,
+  };
+}
+
+/** Read the persisted level/use counters and report both unlock flags. */
+export async function healUnlockState(telegramId) {
+  const st = await getShinobiState(telegramId, 'Sakura');
+  const skills = await getUserSkills(telegramId);
+  return healUnlocks(st ? st.level : 1, skills ? skills.sakuraHealUses : 0);
+}
+
 /** What Sakura's Healing would restore right now (dead / exhausted / mission cooldowns). */
 async function healTargets(telegramId, t = now()) {
   const stMap = await getAllShinobiState(telegramId);

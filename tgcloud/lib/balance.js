@@ -15,6 +15,24 @@ export async function trackGroup(message) {
   `);
 }
 
+/**
+ * Balance card: the mention header stays outside, the stats live in one quoted
+ * block. Pure so the exact wording is testable.
+ */
+export function formatBalanceText({ mentionHtml, balance, kills, rankName, chakra, rank = '', pending = 0 }) {
+  const lines = [
+    `🍥 ᴄᴏɪɴꜱ: ${fmt(balance)}${rank ? `  ${rank}` : ''}`,
+    `🔪 ᴋɪʟʟꜱ: ${fmt(kills)}`,
+    `🥷🏻 ꜱʜɪɴᴏʙɪ ʀᴀɴᴋ: ${rankName}`,
+    `⚡ ᴄʜᴀᴋʀᴀ: ${fmt(chakra)}`,
+  ];
+  if (pending > 0) {
+    lines.push(`⏳ ᴘᴇɴᴅɪɴɢ ʀᴇᴡᴀʀᴅꜱ: ${fmt(pending)} 🍥`);
+    lines.push('→ ᴄʟᴀɪᴍ ᴀᴛ ʜᴏᴋᴀɢᴇ ᴏꜰꜰɪᴄᴇ: /map');
+  }
+  return `${mentionHtml}'ꜱ ʙᴀʟᴀɴᴄᴇ\n\n<blockquote>${lines.join('\n\n')}</blockquote>`;
+}
+
 export async function balanceText(message) {
   const user = message.from;
   const u = await db.get(sql`
@@ -45,16 +63,13 @@ export async function balanceText(message) {
     pending = await pendingRewardTotal(user.id);
   } catch (_) {}
 
-  const pendingLine =
-    pending > 0
-      ? `\n⏳ Pending rewards: ${fmt(pending)} 🍥\n→ Claim at Hokage Office: /map`
-      : '';
-
-  return (
-    `🍥 Coins: ${fmt(bal)}${rank}\n` +
-    `🔪 Kills: ${fmt(kills)}\n` +
-    `🥷🏻 Shinobi Rank: ${rankOf(xp)[1]}\n` +
-    `⚡ Chakra: ${fmt(chakra)}` +
-    pendingLine
-  );
+  return formatBalanceText({
+    mentionHtml: mention(user),
+    balance: bal,
+    kills,
+    rankName: rankOf(xp)[1],
+    chakra,
+    rank: rank.trim(),
+    pending,
+  });
 }

@@ -8,6 +8,7 @@ import { OWNER_ID } from './admin.js';
 import { send, sendRich } from './chat.js';
 import { getEquipped, getAllShinobiState } from './rpg/state.js';
 import { MINI_APP_STORE_URL } from './config.js';
+import { ABILITY_URL } from './ability.js';
 
 // ---- block shapes (the only place to fix if Telegram rejects one) ----
 const S = (t) => style(t);
@@ -153,7 +154,7 @@ export async function storeContent(screen, ownerId, options = {}) {
 
 export function abilityContent(_ownerId, opts = {}) {
   const buttons = [
-    row(btn('Check ❄️ abilities', { url: 'https://t.me/frozenblooded/27', style: 'success' })),
+    row(btn('Check ❄️ abilities', { url: ABILITY_URL, style: 'success' })),
   ];
   if (opts.fromMap) {
     buttons.push(row(btn('Back', { callback_data: `map_home:${_ownerId}`, style: 'danger' })));

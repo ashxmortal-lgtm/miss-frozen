@@ -24,7 +24,7 @@ import { abilityText, abilityKeyboard, backKeyboard } from './ability.js';
 import { levelsText, levelsContent } from './levels.js';
 import { economyLocked, ECO_LOCKED_TEXT } from './groupadmin.js';
 import { richOr, editRichOr, storeContent, abilityContent, groupOnlyContent, table } from './rich.js';
-import { helpText } from './help.js';
+import { helpText, helpKeyboard } from './help.js';
 import { profileText } from './profile.js';
 import { sendWelcome, buildUserHelpBlocks } from './welcome_ui.js';
 import {
@@ -88,6 +88,7 @@ async function announceDone() {
           text: render(who, r.reminder),
           parse_mode: 'HTML',
           reply_markup: claimKb,
+          disable_reply_target: true,
         });
       } catch (e) { console.error(e); }
     }
@@ -96,6 +97,7 @@ async function announceDone() {
         text: render(who, r.dm),
         parse_mode: 'HTML',
         reply_markup: claimKb,
+        disable_reply_target: true,
       });
     } catch (e) { /* user never started the bot in DM */ }
   }
@@ -175,7 +177,7 @@ export async function handleEconomyCommand(message, ctx) {
         });
       } catch (e) {
         console.error('help rich failed:', e?.description || e);
-        await reply(message, helpText(user));
+        await reply(message, helpText(user), { reply_markup: helpKeyboard() });
       }
     } else if (
       cmd === 'pet' || cmd === 'pet_store' || cmd === 'pet_rename'
@@ -250,9 +252,11 @@ export async function handleEconomyCommand(message, ctx) {
         reply_markup: { inline_keyboard: [[claimButton]] },
       });
     } else if (cmd === 'balance') {
+      // Classic HTML keeps the <blockquote> stats and the tg:// mention intact.
       await send(message.chat.id, {
         text: style(await balanceText(message)),
         parse_mode: 'HTML',
+        classic: true,
       });
     } else if (cmd === 'profile') {
       await reply(message, await profileText(user, message));
