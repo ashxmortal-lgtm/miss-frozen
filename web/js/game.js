@@ -1,5 +1,5 @@
 /* Frozen Blooded — presentation rules shared by every screen.
-   Mirrors the bot's rank table and cleans bot text for the emoji-free UI.
+   Mirrors the bot's rank table and preserves the bot's original emoji labels.
    Pure functions only: no DOM, no network, no storage. */
 (function (root, factory) {
   const api = factory();
@@ -56,16 +56,9 @@
     };
   }
 
-  /** Remove every pictographic emoji from bot text, then tidy the spacing. */
+  /** Keep bot-provided emoji and text intact for the Mini App UI. */
   function stripEmoji(value) {
-    const text = String(value == null ? '' : value)
-      .replace(EMOJI, ' ')
-      .replace(/\s*·\s*/g, ' · ')
-      .replace(/\s*\|\s*/g, ' | ')
-      .replace(/\(\s*\)/g, '')
-      .replace(/\s+/g, ' ')
-      .trim();
-    return text.replace(/^[·|]+\s*/, '').replace(/\s*[·|]+$/, '').trim();
+    return String(value == null ? '' : value).trim();
   }
 
   /** Commands referenced inside an ability description ("" when none). */
