@@ -17,7 +17,8 @@ export async function trackGroup(message) {
 
 /**
  * Balance card: the mention header stays outside, the stats live in one quoted
- * block. Pure so the exact wording is testable.
+ * block. One row per stat — no blank spacer lines between them.
+ * Pure so the exact wording is testable.
  */
 export function formatBalanceText({ mentionHtml, balance, kills, rankName, chakra, rank = '', pending = 0 }) {
   const lines = [
@@ -30,7 +31,7 @@ export function formatBalanceText({ mentionHtml, balance, kills, rankName, chakr
     lines.push(`⏳ ᴘᴇɴᴅɪɴɢ ʀᴇᴡᴀʀᴅꜱ: ${fmt(pending)} 🍥`);
     lines.push('→ ᴄʟᴀɪᴍ ᴀᴛ ʜᴏᴋᴀɢᴇ ᴏꜰꜰɪᴄᴇ: /map');
   }
-  return `${mentionHtml}'ꜱ ʙᴀʟᴀɴᴄᴇ\n\n<blockquote>${lines.join('\n\n')}</blockquote>`;
+  return `${mentionHtml}'ꜱ ʙᴀʟᴀɴᴄᴇ\n\n<blockquote>${lines.join('\n')}</blockquote>`;
 }
 
 export async function balanceText(message) {

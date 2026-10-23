@@ -7,7 +7,7 @@ import { BotApiError, db } from 'sdk';
 import { sql } from 'sdk/db';
 import { api } from './message_api.js';
 import {
-  claimDaily, DAILY_XP, DAILY_COINS, DAILY_CHAKRA, BONUS_COINS, BONUS_CHAKRA,
+  claimDaily, todayKey, DAILY_XP, DAILY_COINS, DAILY_CHAKRA, BONUS_COINS, BONUS_CHAKRA,
   SAKURA_COINS, SAKURA_CHAKRA, getBalance, adjustBalance,
 } from './economy.js';
 import { render, style, escapeHtml, COIN, mention as mentionFn } from './texts.js';
@@ -102,6 +102,46 @@ async function announceDone() {
       });
     } catch (e) { /* user never started the bot in DM */ }
   }
+}
+
+// ---- /claim · /daily ----
+// Claiming happens in the Mini App only. The bot DM gets the Mini App button;
+// groups are told to move to the DM (the old text promised a Mini App that the
+// group button could not open); already-claimed users get the short notice.
+export const CLAIM_DM_TEXT = '❄️ ᴏᴘᴇɴ ᴛʜᴇ ᴍɪɴɪ ᴀᴘᴘ ᴛᴏ ᴄʟᴀɪᴍ ʏᴏᴜʀ ᴅᴀɪʟʏ ʀᴇᴡᴀʀᴅ!';
+export const CLAIM_ALREADY_TEXT = '❄️ ʏᴏᴜ’ᴠᴇ ᴀʟʀᴇᴀᴅʏ ᴄʟᴀɪᴍᴇᴅ ʏᴏᴜʀ ʀᴇᴡᴀʀᴅ ᴛᴏᴅᴀʏ!\n\n✨ ᴄᴏᴍᴇ ʙᴀᴄᴋ ᴛᴏᴍᴏʀʀᴏᴡ ꜰᴏʀ ᴍᴏʀᴇ!';
+export const CLAIM_GROUP_TEXT = {
+  claim: "❄️ ᴘʟᴇᴀꜱᴇ ᴜꜱᴇ /claim ɪɴ ᴛʜᴇ ʙᴏᴛ'ꜱ ᴅᴍ ᴛᴏ ᴄʟᴀɪᴍ ʏᴏᴜʀ ᴅᴀɪʟʏ ʀᴇᴡᴀʀᴅꜱ!",
+  daily: "❄️ ᴘʟᴇᴀꜱᴇ ᴜꜱᴇ /daily ɪɴ ᴛʜᴇ ʙᴏᴛ'ꜱ ᴅᴍ ᴛᴏ ᴄʟᴀɪᴍ ʏᴏᴜʀ ᴅᴀɪʟʏ ʀᴇᴡᴀʀᴅꜱ!",
+};
+
+/** `last_claim_date` is stamped by the Mini App claim (IST day key). */
+async function claimedToday(telegramId) {
+  const row = await db.get(sql`
+    SELECT last_claim_date AS d FROM users WHERE telegram_id = ${telegramId}
+  `);
+  return !!row && row.d === todayKey();
+}
+
+async function replyClaimPrompt(message, cmd) {
+  if (await claimedToday(message.from.id)) {
+    await reply(message, CLAIM_ALREADY_TEXT);
+    return;
+  }
+  if (message.chat.type === 'private') {
+    await reply(message, CLAIM_DM_TEXT, {
+      reply_markup: { inline_keyboard: [[{ text: '🎁 Claim', web_app: { url: MINI_APP_URL } }]] },
+    });
+    return;
+  }
+  await reply(message, CLAIM_GROUP_TEXT[cmd] || CLAIM_GROUP_TEXT.claim, {
+    reply_markup: {
+      inline_keyboard: [[{
+        text: '📩 Open bot DM',
+        url: `https://t.me/${BOT_USERNAME}?start=mini_claim`,
+      }]],
+    },
+  });
 }
 
 // Everything that touches coins, shinobi, inventory or rewards. /start and /help stay open.
@@ -246,12 +286,7 @@ export async function handleEconomyCommand(message, ctx) {
         reply_parameters: { message_id: message.message_id },
       });
     } else if (cmd === 'claim' || cmd === 'daily') {
-      const claimButton = message.chat.type === 'private'
-        ? { text: '🎁 Claim', web_app: { url: MINI_APP_URL } }
-        : { text: '🎁 Claim', url: `https://t.me/${BOT_USERNAME}?start=mini_claim` };
-      await reply(message, '🎁 ᴏᴘᴇɴ ᴛʜᴇ ᴍɪɴɪ ᴀᴘᴘ ᴛᴏ ᴄʟᴀɪᴍ ᴜʀ ᴅᴀɪʟʏ ʀᴇᴡᴀʀᴅ! 😁❄️', {
-        reply_markup: { inline_keyboard: [[claimButton]] },
-      });
+      await replyClaimPrompt(message, cmd);
     } else if (cmd === 'balance') {
       // Classic HTML keeps the <blockquote> stats and the tg:// mention intact.
       await send(message.chat.id, {
@@ -309,12 +344,23 @@ export async function handleEconomyCallback(cb) {
     api.answerCallbackQuery({ callback_query_id: cb.id, ...(text ? { text, show_alert } : {}) });
 
   const data = String(cb.data || '');
-  // Global leaderboard button
-  if (data === 'lb:global') {
+  // Leaderboard switch buttons: edit the tapped board in place (requested).
+  if (data === 'lb:global' || data === 'lb:group') {
     await answer();
+    const kind = data === 'lb:global' ? 'global' : 'group';
+    const chat = cb.message?.chat;
+    const isGroup = !!chat && (chat.type === 'group' || chat.type === 'supergroup');
+    const options = kind === 'global' && isGroup ? { backToGroup: true } : {};
     try {
-      await sendGlobalLeaderboard(cb.message ? cb.message.chat.id : cb.from.id);
-    } catch (e) { console.error('[lb:global]', e); }
+      if (kind === 'group' && !isGroup) {
+        // A stray group button outside a group: show the personal board.
+        await sendGlobalLeaderboard(cb.from.id);
+      } else if (chat && cb.message?.message_id) {
+        await editLeaderboardScreen(cb, kind, options);
+      } else {
+        await sendLeaderboardScreen(chat?.id || cb.from.id, kind, options);
+      }
+    } catch (e) { console.error(`[${data}]`, e); }
     return true;
   }
 
@@ -464,104 +510,125 @@ async function handleTransfer(message, text) {
   } catch (_) {}
 }
 
-async function handleLeaderboard(message) {
-  const chat = message.chat;
-  const isGroup = chat.type === 'group' || chat.type === 'supergroup';
-  if (isGroup) {
-    const rows = await db.all(sql`
-      SELECT u.telegram_id AS id, u.username, u.first_name, u.balance
-      FROM group_members g
-      JOIN users u ON u.telegram_id = g.telegram_id
-      WHERE g.chat_id = ${chat.id}
-      ORDER BY u.balance DESC
-      LIMIT 10
-    `);
-    const tableRows = [['Rank', 'Name', 'Coins']];
-    if (rows && rows.length) {
-      rows.forEach((r, i) => {
-        const display = r.username
-          ? `@${r.username}`
-          : (r.first_name || String(r.id));
-        // Group: mention everyone (text_mention works with or without username)
-        tableRows.push([String(i + 1), display, `${fmt(r.balance)} 🍥`]);
-      });
-    } else {
-      tableRows.push(['—', 'No data yet', '—']);
-    }
-    const blocks = [
-      { type: 'heading', text: '🏆 Group Leaderboard', size: 2 },
-      table(tableRows),
-      { type: 'buttons', align: 'center', buttons: [
-        { text: style('Global leaderboard'), callback_data: 'lb:global', style: 'primary' },
-      ]},
-    ];
-    // For group mentions we still want clickable names when possible; use classic fallback with mentions
-    try {
-      await api.sendRichMessage({
-        chat_id: message.chat.id,
-        rich_message: { blocks, skip_entity_detection: false },
-      });
-    } catch (e) {
-      // Fallback classic with mentions for all
-      let body = `🏆 <b>Group Leaderboard</b>\n\n`;
-      if (!rows || !rows.length) body += 'No data yet.';
-      else {
-        rows.forEach((r, i) => {
-          body += `${i + 1}. ${mentionFn({ id: r.id, first_name: r.first_name || r.username || String(r.id) })} — ${fmt(r.balance)} 🍥\n`;
-        });
-      }
-      await send(message.chat.id, {
-        text: style(body),
-        parse_mode: 'HTML',
-        reply_markup: {
-          inline_keyboard: [[{ text: '🌍 Global leaderboard', callback_data: 'lb:global', style: 'primary' }]],
-        },
-      });
-    }
-  } else {
-    await sendGlobalLeaderboard(message.chat.id);
-  }
+const LB_LIMIT = 10;
+
+async function groupLeaderboardRows(chatId) {
+  return (await db.all(sql`
+    SELECT u.telegram_id AS id, u.username, u.first_name, u.balance
+    FROM group_members g
+    JOIN users u ON u.telegram_id = g.telegram_id
+    WHERE g.chat_id = ${chatId}
+    ORDER BY u.balance DESC
+    LIMIT ${LB_LIMIT}
+  `)) || [];
 }
 
-async function sendGlobalLeaderboard(chatId) {
-  const rows = await db.all(sql`
+async function globalLeaderboardRows() {
+  return (await db.all(sql`
     SELECT telegram_id AS id, username, first_name, balance
     FROM users
     ORDER BY balance DESC
-    LIMIT 10
-  `);
+    LIMIT ${LB_LIMIT}
+  `)) || [];
+}
+
+function leaderboardTableRows(rows) {
   const tableRows = [['Rank', 'Name', 'Coins']];
-  if (rows && rows.length) {
-    rows.forEach((r, i) => {
-      // Global: plain name; only show @username if set (no forced mention link)
-      const display = r.username ? `@${r.username}` : (r.first_name || String(r.id));
-      tableRows.push([String(i + 1), display, `${fmt(r.balance)} 🍥`]);
-    });
-  } else {
+  if (!rows.length) {
     tableRows.push(['—', 'No data yet', '—']);
+    return tableRows;
   }
+  rows.forEach((r, i) => {
+    // Global rows show @username when set; group rows mention everyone.
+    const display = r.username ? `@${r.username}` : (r.first_name || String(r.id));
+    tableRows.push([String(i + 1), display, `${fmt(r.balance)} 🍥`]);
+  });
+  return tableRows;
+}
+
+const LB_BUTTONS = {
+  global: { text: style('Global leaderboard'), callback_data: 'lb:global', style: 'primary' },
+  group: { text: style('Group leaderboard'), callback_data: 'lb:group', style: 'primary' },
+};
+
+function leaderboardBlocks(kind, rows, options = {}) {
   const blocks = [
-    { type: 'heading', text: '🌍 Global Leaderboard', size: 2 },
-    table(tableRows),
+    { type: 'heading', text: kind === 'global' ? '🌍 Global Leaderboard' : '🏆 Group Leaderboard', size: 2 },
+    table(leaderboardTableRows(rows)),
   ];
+  // A group board always offers the global board; the global board offers the
+  // way back only when it was opened from a group.
+  const button = kind === 'group' ? LB_BUTTONS.global : (options.backToGroup ? LB_BUTTONS.group : null);
+  if (button) blocks.push({ type: 'buttons', align: 'center', buttons: [button] });
+  return blocks;
+}
+
+function leaderboardHtml(kind, rows) {
+  const title = kind === 'global' ? '🌍 <b>Global Leaderboard</b>' : '🏆 <b>Group Leaderboard</b>';
+  let body = `${title}\n\n`;
+  if (!rows.length) {
+    body += 'No data yet.';
+  } else {
+    rows.forEach((r, i) => {
+      // Group names stay clickable in the classic fallback.
+      const label = kind === 'group'
+        ? mentionFn({ id: r.id, first_name: r.first_name || r.username || String(r.id) })
+        : (r.username ? `@${r.username}` : (r.first_name || r.id));
+      body += `${i + 1}. ${label} — ${fmt(r.balance)} 🍥\n`;
+    });
+  }
+  return style(body);
+}
+
+function leaderboardKeyboard(kind, options = {}) {
+  const button = kind === 'group' ? LB_BUTTONS.global : (options.backToGroup ? LB_BUTTONS.group : null);
+  return button ? { inline_keyboard: [[button]] } : undefined;
+}
+
+async function sendLeaderboardScreen(chatId, kind, options = {}) {
+  const rows = kind === 'global' ? await globalLeaderboardRows() : await groupLeaderboardRows(chatId);
   try {
     await api.sendRichMessage({
       chat_id: chatId,
-      rich_message: { blocks, skip_entity_detection: false },
+      rich_message: { blocks: leaderboardBlocks(kind, rows, options), skip_entity_detection: false },
     });
   } catch (e) {
-    let body = `🌍 <b>Global Leaderboard</b>\n\n`;
-    if (!rows || !rows.length) body += 'No data yet.';
-    else {
-      rows.forEach((r, i) => {
-        const label = r.username ? `@${r.username}` : (r.first_name || r.id);
-        body += `${i + 1}. ${label} — ${fmt(r.balance)} 🍥\n`;
-      });
-    }
-    await send(chatId, { text: style(body), parse_mode: 'HTML' });
+    const keyboard = leaderboardKeyboard(kind, options);
+    await send(chatId, {
+      text: leaderboardHtml(kind, rows),
+      parse_mode: 'HTML',
+      ...(keyboard ? { reply_markup: keyboard } : {}),
+    });
   }
 }
 
+/** Edit the tapped board in place — /lb never sends a second message. */
+async function editLeaderboardScreen(cb, kind, options = {}) {
+  const msg = cb.message;
+  const rows = kind === 'global' ? await globalLeaderboardRows() : await groupLeaderboardRows(msg.chat.id);
+  try {
+    await api.editMessageText({
+      chat_id: msg.chat.id,
+      message_id: msg.message_id,
+      rich_message: { blocks: leaderboardBlocks(kind, rows, options) },
+    });
+  } catch (e) {
+    if (!(e instanceof BotApiError)) throw e;
+    if (/not modified/i.test(String(e.description || ''))) return;
+    await classicEdit(msg, leaderboardHtml(kind, rows), leaderboardKeyboard(kind, options));
+  }
+}
+
+async function handleLeaderboard(message) {
+  const chat = message.chat;
+  const isGroup = chat.type === 'group' || chat.type === 'supergroup';
+  if (isGroup) await sendLeaderboardScreen(chat.id, 'group');
+  else await sendGlobalLeaderboard(chat.id);
+}
+
+async function sendGlobalLeaderboard(chatId, options = {}) {
+  await sendLeaderboardScreen(chatId, 'global', options);
+}
 
 
 async function handleEquip(message, text) {

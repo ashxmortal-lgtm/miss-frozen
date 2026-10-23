@@ -134,7 +134,7 @@ async function finish(a) {
     try { await resetPatrolStreak(id, a.shinobi); } catch (e) { console.error('[streak reset]', e); }
   }
 
-  const u = await db.get(sql`SELECT xp, first_name FROM users WHERE telegram_id = ${id}`);
+  const u = await db.get(sql`SELECT xp, first_name, username FROM users WHERE telegram_id = ${id}`);
   const xpBefore = u ? u.xp : 0;
   const own = await owned(id);
   const base = a.base_roll > 0 ? a.base_roll : rollBase(c);
@@ -194,46 +194,69 @@ async function finish(a) {
   }
   let pendingTotal = 0;
   try { pendingTotal = await pendingRewardTotal(id); } catch (_) {}
+  // Capycorn shortens the scheduled activity; the stored window is the truth.
+  const planned = Number(c.duration) || 0;
+  const actual = Math.max(0, Number(a.ends_at || 0) - Number(a.started_at || 0));
+  const timeCutPct = planned > 0 && actual > 0 && actual < planned
+    ? Math.round(((planned - actual) / planned) * 100)
+    : 0;
   return {
-    id, name: (u && u.first_name) || 'Shinobi', chatId: a.chat_id,
-    kind: a.kind, shinobi: a.shinobi, coins, petBonus, xp: xpGain,
+    id, name: (u && u.first_name) || 'Shinobi', username: u ? u.username : null,
+    chatId: a.chat_id,
+    kind: a.kind, shinobi: a.shinobi, coins, petBonus, sakuraBonus,
+    xp: xpGain, timeCutPct,
     rankUp: after !== before ? after : null, found, had, exhaustedUntil,
-    pendingTotal, username: null,
+    pendingTotal,
   };
 }
 
 const FOUND = `「𝐋𝐄𝐆𝐄𝐍𝐃𝐀𝐑𝐘 𝐃𝐈𝐒𝐂𝐎𝐕𝐄𝐑𝐘」\n\n🐸 Jiraiya has joined your shinobi roster!\n\n𝑺𝒐𝒎𝒆 𝒑𝒂𝒕𝒓𝒐𝒍𝒔 𝒍𝒆𝒂𝒅 𝒕𝒐 𝒖𝒏𝒆𝒙𝒑𝒆𝒄𝒕𝒆𝒅 𝒎𝒆𝒆𝒕𝒊𝒏𝒈𝒔.\n\n» Check your inventory to see your new shinobi.`;
 
-function fullText(r) {
+// The returning user is always mentioned (after the heading, never as the
+// leading line), so the reward card is unambiguous in a busy group.
+function returningMention(r) {
+  return mention({ id: r.id, first_name: r.name, username: r.username });
+}
+
+// Active boost breakdown — every value is shown in the currency it pays,
+// and Capycorn is named only when it actually shortened this activity.
+function boostLines(r) {
+  const lines = [];
+  if (r.sakuraBonus > 0) lines.push(`🌸 Sakura boost: +${fmt(r.sakuraBonus)} 🍥`);
+  if (r.petBonus > 0) lines.push(`🦋 Axofly boost: +${fmt(r.petBonus)} 🍥`);
+  if (r.timeCutPct > 0) lines.push(`🦄 Capycorn: −${r.timeCutPct}% ${KINDS[r.kind].word} time`);
+  return lines;
+}
+
+/**
+ * The reward card for a finished patrol/mission. Pure so the exact wording is
+ * testable; `reminder` renders the background group version (Jiraiya one-liner
+ * instead of the extra "next mission" line).
+ */
+export function rewardCard(r, { reminder = false } = {}) {
   const emo = EMO[r.shinobi] || '🥷';
   const title = r.kind === 'patrol' ? '🏮 𝐓𝐄𝐀𝐌 𝐏𝐀𝐓𝐑𝐎𝐋 𝐑𝐄𝐓𝐔𝐑𝐍𝐄𝐃' : '⚔️ 𝐌𝐈𝐒𝐒𝐈𝐎𝐍 𝐂𝐎𝐌𝐏𝐋𝐄𝐓𝐄';
   let s = `${title}\n\n`;
   if (r.kind === 'patrol') s += `ʜɪᴅᴅᴇɴ ʟᴇᴀғ ᴠɪʟʟᴀɢᴇ ɪs sᴀғᴇ.\n\n`;
+  s += `${returningMention(r)}\n`;
   s += `${emo} ${bold(r.shinobi)} → +${fmt(r.coins)} 🍥\n`;
   s += `⭐ +${r.xp} xᴘ\n`;
+  for (const line of boostLines(r)) s += `${line}\n`;
   if (r.rankUp) s += `🏅 Rank up: ${r.rankUp}\n`;
+  if (reminder && r.found) s += `🐸 Jiraiya joined your roster!\n`;
   if (r.pendingTotal > 0) s += `\n🍥 𝐏𝐞𝐧𝐝𝐢𝐧𝐠 𝐭𝐨𝐭𝐚𝐥: ${fmt(r.pendingTotal)} ᴋᴏɴᴏʜᴀ ᴄᴏɪɴs\n`;
-  if (r.exhaustedUntil) s += `\n🔥 ${r.shinobi} is exhausted — ready at ${dueText(r.exhaustedUntil)}.\n`;
-  if (r.kind === 'mission') s += `\n⏳ Next mission available in: ${hours(KINDS.mission.cooldown)}\n`;
-  if (r.had) s += `\n𝑱𝒊𝒓𝒂𝒊𝒚𝒂 𝒊𝒔 𝒂𝒍𝒓𝒆𝒂𝒅𝒚 𝒑𝒂𝒓𝒕 𝒐𝒇 𝒚𝒐𝒖𝒓 𝒓𝒐𝒔𝒕𝒆𝒓.\n`;
+  if (r.exhaustedUntil) s += reminder
+    ? `🔥 ${r.shinobi} is exhausted — ready at ${dueText(r.exhaustedUntil)}.\n`
+    : `\n🔥 ${r.shinobi} is exhausted — ready at ${dueText(r.exhaustedUntil)}.\n`;
+  if (!reminder && r.kind === 'mission') s += `\n⏳ Next mission available in: ${hours(KINDS.mission.cooldown)}\n`;
+  if (!reminder && r.had) s += `\n𝑱𝒊𝒓𝒂𝒊𝒚𝒂 𝒊𝒔 𝒂𝒍𝒓𝒆𝒂𝒅𝒚 𝒑𝒂𝒓𝒕 𝒐𝒇 𝒚𝒐𝒖𝒓 𝒓𝒐𝒔𝒕𝒆𝒓.\n`;
   s += `\n💰 ᴄʟᴀɪᴍ ᴀᴛ ᴛʜᴇ ʜᴏᴋᴀɢᴇ ᴏғғɪᴄᴇ — /map → 🏯 → 💰 ᴄʟᴀɪᴍ ʀᴇᴡᴀʀᴅ.`;
   return s;
 }
-// Group reminder (the mention is added by the caller).
-function remindText(r) {
-  const emo = EMO[r.shinobi] || '🥷';
-  const title = r.kind === 'patrol' ? '🏮 𝐓𝐄𝐀𝐌 𝐏𝐀𝐓𝐑𝐎𝐋 𝐑𝐄𝐓𝐔𝐑𝐍𝐄𝐃' : '⚔️ 𝐌𝐈𝐒𝐒𝐈𝐎𝐍 𝐂𝐎𝐌𝐏𝐋𝐄𝐓𝐄';
-  let s = `${title}\n\n`;
-  if (r.kind === 'patrol') s += `ʜɪᴅᴅᴇɴ ʟᴇᴀғ ᴠɪʟʟᴀɢᴇ ɪs sᴀғᴇ.\n\n`;
-  s += `${emo} ${bold(r.shinobi)} → +${fmt(r.coins)} 🍥\n`;
-  s += `⭐ +${r.xp} xᴘ\n`;
-  if (r.rankUp) s += `🏅 Rank up: ${r.rankUp}\n`;
-  if (r.found) s += `🐸 Jiraiya joined your roster!\n`;
-  if (r.pendingTotal > 0) s += `\n🍥 𝐏𝐞𝐧𝐝𝐢𝐧𝐠 𝐭𝐨𝐭𝐚𝐥: ${fmt(r.pendingTotal)} ᴋᴏɴᴏʜᴀ ᴄᴏɪɴs\n`;
-  if (r.exhaustedUntil) s += `🔥 ${r.shinobi} is exhausted — ready at ${dueText(r.exhaustedUntil)}.\n`;
-  s += `\n💰 ᴄʟᴀɪᴍ ᴀᴛ ᴛʜᴇ ʜᴏᴋᴀɢᴇ ᴏғғɪᴄᴇ — /map → 🏯 → 💰 ᴄʟᴀɪᴍ ʀᴇᴡᴀʀᴅ.`;
-  return s;
-}
+function fullText(r) { return rewardCard(r); }
+// Group reminder — same card, mention included so the caller need not add it.
+function remindText(r) { return rewardCard(r, { reminder: true }); }
+
 // Short DM.
 function dmText(r) {
   const emo = EMO[r.shinobi] || '🥷';

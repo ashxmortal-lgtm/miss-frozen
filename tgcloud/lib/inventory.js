@@ -81,7 +81,7 @@ export async function buildInventoryBlocks(user) {
   if (shinobi.length) {
     const status = await collectStatus(uid);
     const byName = Object.fromEntries(status.rows.map((r) => [r.name, r]));
-    const deadRows = status.rows.filter((r) => r.primary?.key === 'dead' && r.name !== 'Starter Shinobi');
+    const deadRows = status.rows.filter((r) => r.primary?.key === 'dead');
     // Overall player status above the table
     if (deadRows.length) {
       const reviveAt = Math.max(...deadRows.map((r) => Number(r.primary.dueAt) || 0));

@@ -87,7 +87,10 @@ export async function collectStatus(telegramId) {
     const extras = [];
     let primary;
 
-    if (name === 'Starter Shinobi') {
+    if (isDead(state, t)) {
+      // Death is account-level: the starter dies like every other shinobi.
+      primary = { key: 'dead', icon: '☠️', label: 'Dead', due: dueText(state.deadUntil, t), dueAt: state.deadUntil };
+    } else if (name === 'Starter Shinobi') {
       if (act && act.status === 'active' && act.ends_at > t) {
         const label = `${ACT_WORD[act.kind] || 'Activity'}`;
         primary = { key: act.kind, icon: act.kind === 'mission' ? '⚔️' : act.kind === 'pet' ? '🐾' : '🏃', label, due: dueText(act.ends_at, t), dueAt: act.ends_at };
@@ -96,8 +99,6 @@ export async function collectStatus(telegramId) {
       } else {
         primary = { key: 'ready', icon: '🟢', label: 'Ready', due: null, dueAt: 0 };
       }
-    } else if (isDead(state, t)) {
-      primary = { key: 'dead', icon: '☠️', label: 'Dead', due: dueText(state.deadUntil, t), dueAt: state.deadUntil };
     } else if (act && act.status === 'active' && act.ends_at > t) {
       const petAct = act.kind === 'pet' ? petActByShinobi[name] : null;
       const petLabel = petAct ? (petAct.pet_name || petAct.pet_id) : '';

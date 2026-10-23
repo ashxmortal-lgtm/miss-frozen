@@ -55,6 +55,27 @@ never use the ExFrozen token here.
 Coins, inventory, purchases, games and RPG state live in this app's own
 database only. Study rewards do not exist here and never touch this balance.
 
+**Daily claim** happens in the Mini App only. `/claim` and `/daily` in the bot DM
+open it via the `🎁 Claim` button; in a group the bot asks the member to run the
+same command in the DM (`📩 Open bot DM` button); a member who already claimed
+today gets the "come back tomorrow" notice instead.
+
+**Leaderboards** — `/lb` shows the group board in a group (global board in the
+DM). The `Global leaderboard` button edits the same message, and the global board
+opened from a group keeps a `Group leaderboard` button to switch back — no new
+message is ever sent.
+
+**Patrol/mission return** — the card mentions the returning user, pays each line
+in coins with the 🍥 icon (`→ +N 🍥`), shows XP on a `⭐` row, names active
+boosters with what they added (Sakura/Axofly in coins, Capycorn only when it
+actually shortened the activity), then the pending total and the Hokage Office
+claim hint. `/balance` prints one stat per line with no blank spacer rows.
+
+**`/kill` / `/rob` targeting** — the kill lands on the account: the target's
+equipped shinobi is used, and a real shinobi always beats a legacy `Starter
+Shinobi` row in slot 0. Nobody is protected — members who own no shinobi at all
+are still valid targets and their starter becomes the killable companion.
+
 ## Layout
 
 `tgcloud/` = deployed code (schema, lib, handlers, endpoints) · `web/` = Mini
