@@ -23,6 +23,7 @@ import { handleSupportCommand, handleSupportMessage, handleSupportAdminReply } f
 import { handleCouponWizardText } from '../lib/coupons.js';
 import { sweepClones } from '../lib/rpg/combat.js';
 import { rememberInbound } from '../lib/reply_target.js';
+import { restorePetsOnFirstInteraction } from '../lib/pet/migration.js';
 
 export default async function (message, ctx) {
   // Command replies are sent as replies to the command message (60s window).
@@ -30,6 +31,16 @@ export default async function (message, ctx) {
 
   // Serverless has no setTimeout; resolve due Shadow Clone attacks on update.
   try { await sweepClones(); } catch (e) { console.error('[clone sweep]', e); }
+
+  // First interaction: restore the pets this user owned in the legacy economy.db
+  // (one primary-key lookup once the user is marked processed).
+  if (message?.from && !message.from.is_bot) {
+    try {
+      await restorePetsOnFirstInteraction(message.from.id);
+    } catch (e) {
+      console.error('[pet migration hook]', e);
+    }
+  }
 
   // Fixed, whitelisted deep-link payloads from the Mini App.
   if (message.chat?.type === 'private') {

@@ -498,6 +498,21 @@ export const userPets = table('user_pets', {
   pk: uniqueIndex('uidx_user_pets').on(t.telegramId, t.petId),
 }));
 
+/**
+ * One-time legacy (`economy.db`) pet-migration bookkeeping: one row per user.
+ * `processing` is a short-lived claim; `processed` is written only after the
+ * restoration (or the "no pets for this user" check) succeeds.
+ */
+export const petMigrationStatus = table('pet_migration_status', {
+  telegramId: integer('telegram_id').primaryKey(),
+  source: text('source').notNull(),
+  status: text('status').notNull(),
+  outcome: text('outcome'),
+  petsRestored: integer('pets_restored').notNull().default(0),
+  petsSkipped: integer('pets_skipped').notNull().default(0),
+  processedAt: integer('processed_at').notNull().default(0),
+});
+
 export const equippedPet = table('equipped_pet', {
   telegramId: integer('telegram_id').primaryKey(),
   petId: text('pet_id').notNull(),

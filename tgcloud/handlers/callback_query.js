@@ -15,8 +15,17 @@ import { handleGamesCallback, isGamesCallback } from '../lib/games/handler.js';
 import { handleMapCallback, isMapCallback } from '../lib/map/handler.js';
 import { handleSupportCallback } from '../lib/support_inbox.js';
 import { handlePetCallback } from '../lib/pet/ui.js';
+import { restorePetsOnFirstInteraction } from '../lib/pet/migration.js';
 
 export default async function (cq) {
+  // First interaction can be a button tap: restore legacy pets before routing.
+  if (cq?.from && !cq.from.is_bot) {
+    try {
+      await restorePetsOnFirstInteraction(cq.from.id);
+    } catch (e) {
+      console.error('[pet migration hook]', e);
+    }
+  }
   if (await handleSupportCallback(cq)) return;
   // Combat callbacks first so no other handler can claim or delay them.
   if (isCloneCallback(cq.data)) return handleCloneCallback(cq);
