@@ -15,7 +15,7 @@ export const COMMANDS = [
   { cmd: '/patrol', desc: 'Start a patrol (group)', access: 'user' },
   { cmd: '/map', desc: 'Konoha village map (missions, BBQ, Ichiraku, …)', access: 'user' },
   { cmd: '/ability', desc: 'Your abilities (alias /abilities)', access: 'user' },
-  { cmd: '/pet', desc: 'Pets — /pet me for feed/play/train/rest, stats & abilities', access: 'user' },
+  { cmd: '/pet', desc: 'Pet menu — feed/play/train/rest, stats & abilities', access: 'user' },
   { cmd: '/pet_store', desc: 'Pet store — Axofly & Capycorn (buy with /buy, equip with /equip)', access: 'user' },
   { cmd: '/pet_rename', desc: 'Rename a pet — /pet_rename PetName NewName (needs Pet Nametag)', access: 'user' },
   { cmd: '/mt', desc: 'Mind Transmission — reply in group (requires jutsu)', access: 'user' },

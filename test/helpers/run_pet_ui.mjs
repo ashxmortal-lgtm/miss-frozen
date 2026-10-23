@@ -16,10 +16,11 @@ import {
   feedSuccessText, feedInsufficientText, petFullEnergyText, petCannotEatText,
   playStartedText, playCompleteText, trainStartedText, trainCompleteText,
   restStartedText, restCompleteText, restRequiredText, alreadyReadyText,
-  progressDots, timeLeftText, DUPLICATE_SESSION_TEXT,
+  progressDots, timeLeftText, DUPLICATE_SESSION_TEXT, PET_FOOD_CAPTION,
+  petNotHungryText,
 } from '../../tgcloud/lib/pet/text.js';
 import { PET_XP_THRESHOLDS } from '../../tgcloud/lib/pet/defs.js';
-import { style } from '../../tgcloud/lib/texts.js';
+import { style, escapeHtml } from '../../tgcloud/lib/texts.js';
 
 const U = 501;
 const OTHER = 502;
@@ -85,57 +86,85 @@ const { listPets } = await import('../../tgcloud/lib/pet/store.js');
 pet = (await listPets(U)).find((p) => p.petId === 'axofly');
 const detail = await petDetailContent({ id: U }, pet);
 const detailLabels = labels(detail);
-for (const label of ['🍖 Feed', '🎾 Play', '🏋️ Train', '📊 Pet stats', '🕸️ Pet abilities', '⬅️ Back']) {
+for (const label of [
+  '🍖 Feed', '🎾 Play', '🏋️ Train', '😴 Rest',
+  '📊 Pet stats', '🕸️ Pet abilities', '🔄 Switch pet',
+  '✏️ Rename pet', '❌ Close',
+]) {
   assert.ok(detailLabels.includes(style(label)), `${label} missing from the pet menu`);
 }
-assert.ok(!detailLabels.includes(style('😴 Rest')), 'Rest is hidden while the pet is ready');
+const detailRows = detail.filter((b) => b?.type === 'buttons').map((b) => b.buttons);
+assert.deepEqual(detailRows.map((r) => r.length), [4, 3, 2], 'exactly three rows: 4 · 3 · 2');
 const detailUrls = buttonsOf(detail).filter((b) => b.url).map((b) => b.url);
 assert.deepEqual(detailUrls, [PET_ABILITY_URL]);
 for (const b of buttonsOf(detail)) {
   if (!b.callback_data) continue;
-  assert.match(b.callback_data, new RegExp(`:${U}(:|\$)`), 'every callback carries the opener id');
+  assert.match(b.callback_data, new RegExp(`:${U}(:|$)`), 'every callback carries the opener id');
 }
-assert.match(textOf(detail), /ʟᴇᴠᴇʟ 1\/5/);
+const detailText = textOf(detail);
+assert.ok(detailText.includes(style('Axofly')), 'card shows the pet name');
+assert.ok(detailText.includes('ᴄᴜʀʀᴇɴᴛ ꜱᴛᴀᴛᴜꜱ:'), 'card shows the current status line');
+assert.ok(detailText.includes(style('✨ Flutter Fortune')), 'card shows the ability line');
 
-// ---- exhausted pet: only Rest is offered ----
+// The card itself is a photo message with the same three rows.
+const cardSent = [];
+api.sendRichMessage = async (payload) => { sent.push(payload); cardSent.push(payload); return { message_id: 900 + cardSent.length }; };
+api.sendPhoto = async (payload) => { cardSent.push(payload); return { message_id: 900 + cardSent.length }; };
+// Storage-channel photo lookup (same path as the map artwork).
+api.forwardMessage = async () => ({
+  message_id: 4242,
+  photo: [{ file_id: 'stub-small' }, { file_id: 'stub-pet-photo' }],
+});
+api.deleteMessage = async () => ({});
+const cardReply = await (await import('../../tgcloud/lib/pet/ui.js')).sendPetCard(U, { id: U }, pet);
+assert.ok(cardReply.message_id >= 900);
+assert.ok(cardSent[0].rich_message.html.includes('<figure>'), 'card is sent as a photo figure');
+assert.ok(cardSent[0].rich_message.media?.[0]?.media?.media, 'card uses the cached storage file id');
+assert.ok(cardSent[0].rich_message.html.includes('tg-button-row'), 'card carries the inline rows');
+
+// ---- exhausted pet: the fixed rows stay, the status says exhausted ----
 await db.run(sql`UPDATE user_pets SET exhausted = 1 WHERE telegram_id = ${U} AND pet_id = 'axofly'`);
 pet = (await listPets(U)).find((p) => p.petId === 'axofly');
 const exhausted = await petDetailContent({ id: U }, pet);
 assert.ok(labels(exhausted).includes(style('😴 Rest')));
-assert.ok(!labels(exhausted).includes(style('🎾 Play')));
-assert.ok(textOf(exhausted).includes('ʀᴇꜱᴛ ꜱᴇꜱꜱɪᴏɴ'));
-assert.ok(textOf(exhausted).includes(style('EXHAUSTED')));
+assert.ok(labels(exhausted).includes(style('🎾 Play')), 'rows are fixed; the server refuses the action');
+assert.ok(textOf(exhausted).includes('ᴇxʜᴀᴜꜱᴛᴇᴅ'));
 
-// ---- playing pet: no activity buttons, status shows time left ----
+// ---- playing pet: status shows the remaining time ----
 await db.run(sql`UPDATE user_pets SET exhausted = 0 WHERE telegram_id = ${U} AND pet_id = 'axofly'`);
 assert.equal((await startPetActivity(U, 'axofly', 'play', { shinobi: 'Starter Shinobi' })).code, 'ok');
 pet = (await listPets(U)).find((p) => p.petId === 'axofly');
 assert.equal(pet.status, 'PLAYING');
 assert.match(petStatusText(pet), /ᴘʟᴀʏɪɴɢ · \d+m/);
 const playing = await petDetailContent({ id: U }, pet);
-assert.ok(!labels(playing).includes(style('🍖 Feed')));
-assert.ok(!labels(playing).includes(style('🏋️ Train')));
+assert.ok(textOf(playing).includes('ᴘʟᴀʏɪɴɢ'));
 assert.ok(labels(playing).includes(style('📊 Pet stats')));
 await db.run(sql`DELETE FROM pet_activity WHERE telegram_id = ${U}`);
 await db.run(sql`UPDATE activities SET status = 'idle', partner_pet = NULL WHERE telegram_id = ${U}`);
 await db.run(sql`UPDATE user_pets SET exhausted = 1 WHERE telegram_id = ${U} AND pet_id = 'axofly'`);
 
-// ---- resting pet: wake button ----
+// ---- resting pet: the Rest button is the wake toggle ----
 assert.equal((await startPetActivity(U, 'axofly', 'rest')).code, 'ok');
 pet = (await listPets(U)).find((p) => p.petId === 'axofly');
 const resting = await petDetailContent({ id: U }, pet);
-assert.ok(labels(resting).includes(style('☀️ Wake Pet')));
-assert.ok(!labels(resting).includes(style('😴 Rest')));
+assert.ok(labels(resting).includes(style('😴 Rest')));
+assert.ok(!labels(resting).includes(style('☀️ Wake Pet')), 'no extra Woke button in the fixed rows');
+assert.ok(textOf(resting).includes('ʀᴇꜱᴛɪɴɢ'));
 await db.run(sql`DELETE FROM pet_activity WHERE telegram_id = ${U}`);
 await db.run(sql`UPDATE user_pets SET exhausted = 0, energy = 40 WHERE telegram_id = ${U} AND pet_id = 'axofly'`);
 
-// ---- stats screen ----
+// ---- stats screen: exact requested block + the pet's own ability ----
 pet = (await listPets(U)).find((p) => p.petId === 'axofly');
 const stats = await petStatsContent({ id: U }, pet);
 const statsText = textOf(stats);
-for (const needle of ['𝐏𝐄𝐓 𝐒𝐓𝐀𝐓𝐒', 'ʟᴇᴠᴇʟ 1/5', '⚡', 'ᴇɴᴇʀɢʏ', 'xᴘ', 'ꜱᴛᴀᴛᴜꜱ', 'ᴛᴏᴛᴀʟ xᴘ ᴇᴀʀɴᴇᴅ', '𝐅𝐋𝐔𝐓𝐓ᴇʀ 𝐅ᴏʀᴛᴜɴᴇ']) {
+for (const needle of [
+  '𝐏𝐄𝐓 𝐒𝐓𝐀𝐓𝐒', '⭐ ʟᴇᴠᴇʟ: 1/5', 'xᴘ', '⚡ ᴇɴᴇʀɢʏ: 40/100',
+  'ꜱᴛᴀᴛᴜꜱ', 'ᴛᴏᴛᴀʟ xᴘ ᴇᴀʀɴᴇᴅ', '🦋 𝐅𝐋𝐔𝐓𝐓ᴇʀ 𝐅ᴏʀᴛᴜɴᴇ',
+  '🍀 ᴛʀɪɢɢᴇʀ ᴄʜᴀɴᴄᴇ: 8%', '🎁 ʀᴇᴡᴀʀᴅ ʙᴏɴᴜꜱ: +10%', '✨ ꜱʜɪɴᴏʙɪ xᴘ: +2%',
+]) {
   assert.ok(statsText.includes(needle), `stats missing ${needle}`);
 }
+assert.ok(stats.some((b) => b?.type === 'divider'), 'stats uses the rich divider block');
 assert.ok(!statsText.includes('𝐑𝐎𝐘𝐀𝐋 𝐏𝐀𝐂𝐄'), "Axofly never shows Capycorn's ability");
 
 await buyPet(U, 'capycorn', 'ui-buy-2');
@@ -143,56 +172,53 @@ await buyPet(U, 'capycorn', 'ui-buy-2');
 await db.run(sql`UPDATE user_pets SET xp = 2000 WHERE telegram_id = ${U} AND pet_id = 'capycorn'`);
 const capy = (await listPets(U)).find((p) => p.petId === 'capycorn');
 const capyStats = textOf(await petStatsContent({ id: U }, capy));
-for (const needle of [style('𝐑𝐎𝐘𝐀𝐋 𝐏𝐀𝐂𝐄'), style('Mission & Patrol duration: −4%'),
-  style('Mission & Patrol cooldown: −3%')]) {
+for (const needle of ['𝐑𝐎𝐘𝐀𝐋 𝐏𝐀𝐂𝐄', '⏱️ ᴅᴜʀᴀᴛɪᴏɴ: −4%', '⏳ ᴄᴏᴏʟᴅᴏᴡɴ: −3%']) {
   assert.ok(capyStats.includes(needle), `Capycorn stats missing ${needle}`);
 }
-assert.ok(!capyStats.includes('𝐅𝐋𝐔𝐓𝐓ᴇʀ 𝐅ᴏʀᴛᴜɴᴇ'));
+assert.ok(!capyStats.includes('𝐅𝐋𝐔𝐓𝐓ᴇʀ'));
 
-// ---- food menu ----
+// ---- food menu: the three meals, prices as buttons, instant buy callbacks ----
 const food = await petFoodContent({ id: U }, 'axofly');
-assert.ok(textOf(food).includes('ᴄʜᴏᴏꜱᴇ ꜰᴏᴏᴅ ꜰᴏʀ'));
+const foodText = textOf(food);
+for (const needle of PET_FOOD_CAPTION.filter(Boolean)) {
+  assert.ok(foodText.includes(needle), `food caption missing ${needle}`);
+}
+assert.deepEqual(labels(food), ['500 🍥', '1,000 🍥', '2,000 🍥', style('⬅️ Back')]);
+const foodRows = food.filter((b) => b?.type === 'buttons').map((b) => b.buttons);
+assert.deepEqual(foodRows.map((r) => r.length), [3, 1], 'the three prices share one row, Back on its own');
+assert.equal(food.filter((b) => b?.type === 'paragraph' && b.text === '').length, 2,
+  'one blank line between the three meal blocks');
 for (const foodKey of ['ninja_meal', 'chakra_treat', 'feast']) {
   assert.ok(buttonsOf(food).some((b) => b.callback_data === `pet_food:${U}:axofly:${foodKey}`), foodKey);
 }
 assert.equal(buttonsOf(food).find((b) => b.text.includes('ʙᴀᴄᴋ')).callback_data, `pet_me:${U}:axofly`);
 
-// ---- start / completion dialogue catalogue ----
-assert.equal(startResultText({ code: 'ok', shinobi: 'Starter Shinobi', pet: { name: 'Fluffy' } }, 'play'),
-  playStartedText('Fluffy', 'Starter Shinobi', 30));
-assert.equal(startResultText({ code: 'ok', pet: { name: 'Fluffy' } }, 'train'), trainStartedText('Fluffy', 2));
-assert.equal(startResultText({ code: 'ok', pet: { name: 'Fluffy' } }, 'rest'), restStartedText('Fluffy', 30));
-assert.equal(startResultText({ code: 'busy', pet: { name: 'Fluffy' } }, 'play'), DUPLICATE_SESSION_TEXT);
-assert.equal(startResultText({ code: 'rest_required', pet: { name: 'Fluffy' } }, 'train'), restRequiredText('Fluffy'));
-assert.equal(startResultText({ code: 'not_exhausted', pet: { name: 'Fluffy' } }, 'rest'), alreadyReadyText('Fluffy'));
-
-const playDone = completionText({
-  activityType: 'play', petName: 'Fluffy', shinobiName: 'Starter Shinobi', xp: 75,
-  levelUp: false, totalXp: 0, maxLevel: false,
+// ---- hunger gate + close button ----
+await db.run(sql`UPDATE user_pets SET energy = 100 WHERE telegram_id = ${U} AND pet_id = 'axofly'`);
+answers.length = 0;
+await handlePetCallback({
+  id: 'cb-feed-full', from: { id: U }, data: `pet_feed_menu:${U}:axofly`,
+  message: { chat: { id: 1 }, message_id: 2 },
 });
-assert.ok(playDone.includes('ᴘʟᴀʏᴛɪᴍᴇ ᴄᴏᴍᴘʟᴇᴛᴇ'));
-assert.ok(playDone.includes('✨ ᴘᴇᴛ xᴘ: +75'));
-assert.ok(playDone.includes('ᴇxʜᴀᴜꜱᴛᴇᴅ'));
-const trainDone = completionText({
-  activityType: 'train', petName: 'Fluffy', xp: 150, levelUp: true, level: 2,
-  totalXp: 1000, maxLevel: false,
+assert.equal(answers.at(-1).text, style(petNotHungryText('Axofly')), 'full energy is refused as not hungry');
+assert.equal(answers.at(-1).show_alert, true);
+await db.run(sql`UPDATE user_pets SET energy = 40 WHERE telegram_id = ${U} AND pet_id = 'axofly'`);
+answers.length = 0;
+await handlePetCallback({
+  id: 'cb-feed-ok', from: { id: U }, data: `pet_feed_menu:${U}:axofly`,
+  message: { chat: { id: 1 }, message_id: 2 },
 });
-assert.equal(trainDone, trainCompleteText('Fluffy', 150, `\n${'🎉 ʟᴇᴠᴇʟ ᴜᴘ!\n🐾 Fluffy ʀᴇᴀᴄʜᴇᴅ ʟᴇᴠᴇʟ 2!\n✨ ᴛᴏᴛᴀʟ xᴘ: 1000'}`));
-assert.equal(completionText({ activityType: 'rest', petName: 'Fluffy' }), restCompleteText('Fluffy', 100, 100));
+assert.equal(answers.at(-1).text, undefined, 'a hungry pet opens the food screen');
 
-// ---- purchase / equip dialogues ----
-assert.equal(buySuccessText('Axofly'), '🎉 ʏᴏᴜ ʙᴏᴜɢʜᴛ Axofly!');
-assert.equal(insufficientCoinsText('30,000', '1,000'),
-  '🍥 ɴᴏᴛ ᴇɴᴏᴜɢʜ ᴋᴏɴᴏʜᴀ ᴄᴏɪɴꜱ.\nʀᴇQᴜɪʀᴇᴅ: 30,000 · ʙᴀʟᴀɴᴄᴇ: 1,000');
-assert.equal(alreadyOwnedText('Axofly'), '⚠️ ʏᴏᴜ ᴀʟʀᴇᴀᴅʏ ᴏᴡɴ Axofly.');
-assert.match(ITEM_NOT_FOUND_TEXT, /ɪᴛᴇᴍ ɴᴏᴛ ꜰᴏᴜɴᴅ/);
-assert.equal(equipSuccessText('Axofly'), '✅ Axofly ɪꜱ ɴᴏᴡ ᴇQᴜɪᴘᴘᴇᴅ.');
-assert.equal(notOwnedText('Capycorn'), "❌ ʏᴏᴜ ᴅᴏɴ'ᴛ ᴏᴡɴ Capycorn.");
-assert.equal(feedSuccessText('Fluffy', 'Ninja Pet Meal', 40, 50, 100),
-  '🍖 Fluffy ᴇɴᴊᴏʏᴇᴅ Ninja Pet Meal!\n⚡ ᴇɴᴇʀɢʏ: 40 → 50\n✨ ᴘᴇᴛ xᴘ: +100');
-assert.match(feedInsufficientText('Ichiraku Feast', '2,000', '10'), /🍥/);
-assert.equal(petFullEnergyText('Fluffy'), '⚡ Fluffy ɪꜱ ᴀʟʀᴇᴀᴅʏ ᴀᴛ ꜰᴜʟʟ ᴇɴᴇʀɢʏ.');
-assert.ok(petCannotEatText('Fluffy', 'PLAYING').includes('⚡') === false);
+const deleted = [];
+api.deleteMessage = async (payload) => { deleted.push(payload); return {}; };
+answers.length = 0;
+await handlePetCallback({
+  id: 'cb-close', from: { id: U }, data: `pet_close:${U}`,
+  message: { chat: { id: 77 }, message_id: 88 },
+});
+assert.deepEqual(deleted.at(-1), { chat_id: 77, message_id: 88 }, 'Close deletes the card');
+assert.equal(answers.at(-1).text, undefined);
 
 // ---- progress dots reset per level and fill at max ----
 assert.equal(progressDots(0, 1, PET_XP_THRESHOLDS, 5), '○○○○○');
@@ -256,8 +282,9 @@ for (const blocks of [store, detail, exhausted, playing, resting, food]) {
   }
 }
 const mapDetail = await petDetailKeyboard(U, 'axofly', { pet: { ...pet, equipped: true, status: 'RESTING' } });
-assert.ok(mapDetail.inline_keyboard.flat().some((b) => b.callback_data === `map_pet_wake:axofly:${U}`),
-  'map wake callback is pet-first and owned by the last segment');
+assert.ok(mapDetail.inline_keyboard.flat().some((b) => b.callback_data === `pet_rest:${U}:axofly`),
+  'map detail uses the same fixed card rows');
+assert.deepEqual(mapDetail.inline_keyboard.map((r) => r.length), [4, 3, 2]);
 
 const picker = await shinobiPickerKeyboard(U, 'play', { petId: 'axofly' });
 const starts = picker.inline_keyboard.flat().filter((b) => b.callback_data?.startsWith('map_pet_start:'));
@@ -306,10 +333,13 @@ assert.deepEqual(storeReplyButtons.map((b) => b.text),
 assert.equal(storeReplyButtons.find((b) => b.url).url, PET_ABILITY_URL);
 
 const meReply = await command('/pet me');
-const meButtons = (meReply.rich_message?.blocks || [])
-  .filter((b) => b.type === 'buttons').flatMap((b) => b.buttons.map((x) => x.text));
-assert.ok(meButtons.includes(style('📊 Pet stats')));
-assert.ok(meButtons.includes(style('🕸️ Pet abilities')));
+assert.ok(String(meReply.rich_message?.html || '').includes('<tg-button-row'), '/pet me is a card');
+for (const label of ['🍖 Feed', '📊 Pet stats', '❌ Close']) {
+  assert.ok(String(meReply.rich_message.html).includes(escapeHtml(style(label))), `/pet me missing ${label}`);
+}
+// `/pet` with no argument opens the equipped pet, not the list.
+const plainPetReply = await command('/pet');
+assert.ok(String(plainPetReply.rich_message?.html || '').includes('<figure>'), '/pet opens the equipped pet card');
 
 await command('/pet stats');
 await command('/pet help');

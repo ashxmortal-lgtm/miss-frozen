@@ -10,12 +10,37 @@ settled lazily by the next interaction or by the message sweep.
 
 | Entry | Behaviour |
 |---|---|
-| `/pet` | Pet list / active pet card |
-| `/pet me [name]` | Pet menu: Feed · Play · Train · Rest · Stats · Abilities · Back (only actions valid for the pet's state) |
+| `/pet` | Opens the **equipped pet's card** directly: pet photo + status caption + the fixed menu. A single owned pet is opened even when none is equipped; otherwise the pet list appears |
+| `/pet me [name]` | Same card; a name/custom name opens that owned pet |
 | `/pet_store` | Store: catalogue + prices + balance + `Pet 🍖 food` · `Pet abilities` · `Back` |
 | `/buy <pet name>` · `/buy <shinobi name>` | One command for pets and shinobi; the catalogue decides the type; multi-word names work (`/buy pet name`, `/buy Starter Shinobi`) |
 | `/equip <pet name>` · `/equip <shinobi name>` | Equips the pet (single active companion) or the shinobi (max 3) |
 | `/pet_rename [PetName] NewName` | Renames using one Pet Nametag |
+
+The card is a photo message (storage-channel `file_id`, same mechanism as the map
+artwork) whose caption is:
+
+```text
+{pet name or custom name}
+
+Current status: ready / playing / training / resting / exhausted
+
+✨ {ability name}
+```
+
+with these exact rows:
+
+```text
+[🍖 Feed] [🎾 Play] [🏋️ Train] [😴 Rest]
+[📊 Pet stats] [🕸️ Pet abilities] [🔄 Switch pet]
+[✏️ Rename pet] [❌ Close]
+```
+
+The rows never change with state: the server refuses what the pet cannot do
+right now — Feed only while the pet is hungry (energy below 100 and the pet is
+`READY`), Play/Train never while `EXHAUSTED` (the answer asks for rest), and Rest
+is the wake toggle while `RESTING`. Switch pet opens the list, Rename pet opens
+the nametag/rename screen, Close deletes the card.
 
 Pet commands live behind the **PETS** button of `/help` (the main help message no
 longer lists them). `/help` itself shows the profile block, the PvP block and
@@ -35,18 +60,103 @@ exactly like this; `/buy` and `/equip` keep their real spelling):
 pet-food menu, abilities opens <https://t.me/frozenblooded/23>, Back returns to
 the caller's pet menu (or the store hub when opened from the map).
 
-Map entry points: Store → 🐾 Pet Store, Hot Springs → 🐾 My Pets / ♨️ Rest Pet,
-BBQ → 🍖 Feed Pet / 🎾 Play with Pet, Training Ground → 🐾 Train Pet,
-Ichiraku → 🍱 Pet Food. Map screens keep the existing artwork, Close button and
-Frozen Blooded theme.
+### Stats screen
+
+```text
+📊 𝐏𝐄𝐓 𝐒𝐓𝐀𝐓𝐒
+⭐ ʟᴇᴠᴇʟ: 1/5　○○○○○
+✨ xᴘ: 0 / 1,000
+⚡ ᴇɴᴇʀɢʏ: 70/100
+🏋️ ꜱᴛᴀᴛᴜꜱ: ᴛʀᴀɪɴɪɴɢ · 1h 55m
+🏆 ᴛᴏᴛᴀʟ xᴘ ᴇᴀʀɴᴇᴅ: 1,350
+──────────  (rich divider block)
+🦋 𝐅𝐋𝐔𝐓𝐓𝐄𝐑 𝐅𝐎𝐑𝐓𝐔𝐍𝐄
+🍀 ᴛʀɪɢɢᴇʀ ᴄʜᴀɴᴄᴇ: 8%
+🎁 ʀᴇᴡᴀʀᴅ ʙᴏɴᴜꜱ: +10%
+✨ ꜱʜɪɴᴏʙɪ xᴘ: +2%
+```
+
+Only the equipped pet's own ability is shown (Capycorn shows duration/cooldown
+reductions instead). `xᴘ` is progress inside the current level; at max level it
+shows total XP / 15,000. The divider is the rich block `{ type: 'divider' }` and
+renders as a line of `─` on the classic path.
+
+### Map entry points and locations
+
+Store → 🐾 Pet Store · Training Ground → 🐾 Train Pet · Ichiraku → 🍱 Pet Food.
+Map screens keep the existing artwork, Close button and Frozen Blooded theme.
+
+**BBQ** (`🍖 𝐁𝐁𝐐` caption + rich divider):
+
+```text
+[Join BBQ] [Feed pet]
+[Instant shinobi recovery]
+[Play with pet] [Back]
+```
+
+Join BBQ opens the shinobi picker; the chosen shinobi recovers `+20` chakra
+every 30 minutes and stays **busy** until the chakra pool is full, then is freed
+automatically (the catch-up sweep deletes the session). Feed pet opens the pet
+food caption below.
+
+**Hot Springs** (`♨️ 𝐇𝐎𝐓 𝐒𝐏𝐑𝐈𝐍𝐆𝐒` caption):
+
+```text
+[Relax shinobis] [Rest pet]
+[Recall shinobis] [Back]
+```
+
+Relax sends a shinobi into the springs with the same `+20 / 30 min` recovery and
+the same auto-free rule; Recall lists everyone currently relaxing so they can be
+pulled out early.
+
+**Ramen shop pet food** (one caption, then the price buttons):
+
+```text
+🍱 𝐍𝐈𝐍𝐉𝐀 𝐏𝐄𝐓 𝐌𝐄𝐀𝐋
+✨ ᴇꜰꜰᴇᴄᴛ: +100 xᴘ · +10 ⚡
+💰 ᴘʀɪᴄᴇ: 500 🍥
+
+🍬 𝐂ʜᴀᴋʀᴀ 𝐓ʀᴇᴀᴛ
+✨ ᴇꜰꜰᴇᴄᴛ: +250 xᴘ · +25 ⚡
+💰 ᴘʀɪᴄᴇ: 1,000 🍥
+
+🍜 𝐈ᴄʜɪʀᴀᴋᴜ 𝐅ᴇᴀꜱᴛ
+✨ ᴇꜰꜰᴇᴄᴛ: +500 xᴘ · +50 ⚡
+💰 ᴘʀɪᴄᴇ: 2,000 🍥
+
+[500 🍥] [1,000 🍥] [2,000 🍥]
+[⬅️ Back]
+```
+
+Tapping a price buys that meal immediately (same `feedPet` path, charge + XP +
+energy, duplicate taps stay silent).
+
+### Daily quest (Hokage Office)
+
+```text
+🗺️ 𝐊𝐎𝐍𝐎𝐇𝐀 𝐌𝐀𝐏
+🎯 𝐃𝐀𝐈𝐋𝐘 𝐐𝐔𝐄𝐒𝐓
+📜 ǫᴜᴇꜱᴛ: {mission name}
+🥷 ᴏʙᴊᴇᴄᴛɪᴠᴇ: {mission objective}
+🍥 ʀᴇᴡᴀʀᴅ: {rewardCoins} Konoha coins
+📊 ꜱᴛᴀᴛᴜꜱ: pending / completed
+⌛ ᴇxᴘɪʀᴇꜱ: today
+```
+
+The objective comes from the assigned mission template, and the reward is that
+mission's own `rewardCoins` — never a hardcoded value.
 
 Callbacks are owner-first and re-validated server-side:
 
 ```text
 pet_menu:{uid} · pet_me:{uid}:{petId} · pet_feed_menu:{uid}:{petId}
 pet_food:{uid}:{petId}:{foodKey} · pet_play:{uid}:{petId}
-pet_start:{uid}:{petId}:{type}:{shinobi} · pet_train|rest|wake|stats|equip:{uid}:{petId}
+pet_start:{uid}:{petId}:{type}:{shinobi} · pet_train|rest|wake|stats|equip|name|close:{uid}:{petId?}
 map_pet_*:…  (owner id first for uid-first shapes, last for pet-first shapes)
+map_hot_relax|map_hot_recall:{uid} · map_hot_go|map_hot_stop:{shinobi}:{uid}
+map_bbq_select|map_bbq_recall|map_bbq_heal|map_bbq_hpay:{uid}
+map_bbq_go|map_bbq_stop:{shinobi}:{uid}
 ```
 
 The owner id must equal `cb.from.id` (`🔒 ᴛʜɪꜱ ᴍᴇɴᴜ ɪꜱɴ'ᴛ ʏᴏᴜʀꜱ.`), and every
@@ -115,13 +225,14 @@ completion message (XP + level-up combined) sent as a DM with no buttons; a
 completion that nobody observed is delivered by the next sweep, so the bot never
 claims a notice it did not send.
 
-## `/inventory` and `/gate`
+## `/inventory` and the Village Gate
 
 `/inventory` lists owned pets with `🟢 ʀᴇᴀᴅʏ`, `🎾 ᴘʟᴀʏɪɴɢ · 29m`,
 `🏋️ ᴛʀᴀɪɴɪɴɢ · 1h 59m`, `😴 ʀᴇꜱᴛɪɴɢ · 29m` or `⚠️ ᴇxʜᴀᴜꜱᴛᴇᴅ · ʀᴇꜱᴛ ʀᴇQᴜɪʀᴇᴅ`.
-`/gate` shows the same pet status plus, in the shinobi row, `🎾 Playing with
-{pet} — Returns …` and the remaining time while a Play session runs. Nothing
-else in those screens changed.
+
+The **Village Gate does not show pet activity at all** — only the shinobi status
+table. The shinobi row still says `🎾 Playing with {pet} — Returns …` while a
+Play session locks that shinobi (that is shinobi availability, not a pet panel).
 
 ## Files
 
@@ -134,7 +245,8 @@ else in those screens changed.
 | `tgcloud/lib/pet/media.js` | Storage-channel photo `file_id` resolver (540 / 541) |
 | `tgcloud/lib/buy.js` | `/buy` for pets **and** shinobi items (catalogue decides, multi-word names) |
 | `tgcloud/lib/economy_handler.js` | `/equip` for pets **and** shinobi, `/pet*` dispatch |
-| `tgcloud/lib/map/handler.js`, `map/ui.js` | Map pet entry points and `map_pet_*` routing |
+| `tgcloud/lib/map/handler.js`, `map/ui.js` | Map pet entry points, `map_pet_*` / `map_hot_*` routing, BBQ and Hot Springs captions |
+| `tgcloud/lib/map/bbq.js` | Shared BBQ / Hot Springs recovery sessions (`bbq_sessions.location`) |
 | `tgcloud/lib/activities.js` | Patrol/mission settlement, `busy_pet` guard, pet sweep DMs |
 | `tgcloud/lib/rpg/status.js`, `inventory.js` | Roster "Playing with {pet}" label, pet status lines |
 | `tgcloud/lib/rpg/training.js` | Shinobi training `busy` guard while a pet session runs |

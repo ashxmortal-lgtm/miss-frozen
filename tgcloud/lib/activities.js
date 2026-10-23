@@ -15,6 +15,7 @@ import {
 import { reducedActivitySeconds, reducedCooldownSeconds } from './pet/defs.js';
 import { activityCompleteText } from './pet/text.js';
 import { notifyDailyProgress } from './daily.js';
+import { restingShinobi, applyBbqRecovery } from './map/bbq.js';
 
 const H = 3600;
 export const KINDS = {
@@ -322,6 +323,12 @@ async function dispatch(user, kind, rawName, chatId) {
     const s = await db.get(sql`SELECT status, ends_at FROM tsunade_search WHERE telegram_id = ${id}`);
     if (s && s.status === 'active') return { status: 'searching', shinobi, until: s.ends_at };
   }
+  // Shinobi recovering at the BBQ / Hot Springs stay busy until the pool is
+  // full; the catch-up runs here so they are freed even without opening the map.
+  try {
+    await applyBbqRecovery(id);
+    if ((await restingShinobi(id)).has(shinobi)) return { status: 'busy_rest', shinobi };
+  } catch (e) { console.error('[rest busy]', e); }
 
   await db.run(sql`INSERT OR IGNORE INTO activities (telegram_id, shinobi, kind) VALUES (${id}, ${shinobi}, ${kind})`);
   const row = await db.get(sql`SELECT kind, status, ends_at, cooldown_until FROM activities WHERE telegram_id = ${id} AND shinobi = ${shinobi}`);
@@ -385,6 +392,8 @@ function notice(kind, r, user) {
       return kind === 'mission'
         ? { own: true, text: `⚔️ ${m}, ${bold(`${sh} is already on a mission.`)}\n\n🎯 completes at: ${dueText(r.endsAt)}` }
         : { own: true, text: `${quote('🥷 𝐏𝐀𝐓𝐑𝐎𝐋 𝐈𝐍 𝐏𝐑𝐎𝐆𝐑𝐄𝐒𝐒')}\n\n🥷 ${m}\n${EMO[sh]} ${bold(sh)} is still patrolling konoha.\n🏃 returns at: ${dueText(r.endsAt)}` };
+    case 'busy_rest':
+      return { own: true, text: `♨️ ${m}, ${bold(`${sh} is recovering chakra.`)}\n\n⏳ busy until the chakra pool is full.` };
     case 'busy_pet':
       return { own: true, text: `🐾 ${m}, ${bold(`${sh} is busy with a pet activity.`)}\n\n⏳ free at ${dueText(r.until)}.\n\n» Open /pet to manage your companion.` };
     case 'busy':

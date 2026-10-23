@@ -192,14 +192,17 @@ test('/buy and /equip serve both catalogues with multi-word names', () => {
   assert.match(eq, /Max 3 shinobi equipped/);
 });
 
-test('/inventory and /gate show live pet status and the playing-with-pet label', () => {
+test('/inventory shows live pet status and the Gate shows no pet activity', () => {
   const inv = read('tgcloud/lib/inventory.js');
   assert.match(inv, /await listPets\(uid\)/);
   assert.match(inv, /statusInline\(pet\.status, pet\.statusEndsAt\)/);
 
+  // Spec: the Village Gate must not surface pet activity.
   const gate = read('tgcloud/lib/map/handler.js');
-  assert.match(gate, /const rows = await listPets\(telegramId\);/);
-  assert.match(gate, /petStatusText\(pet\)/);
+  const gateBody = gate.slice(gate.indexOf('async function gateBody'), gate.indexOf('// --- Training Ground'));
+  assert.doesNotMatch(gateBody, /listPets/);
+  assert.doesNotMatch(gateBody, /petStatusText/);
+  assert.doesNotMatch(gateBody, /pets/i);
 
   const status = read('tgcloud/lib/rpg/status.js');
   assert.match(status, /LEFT JOIN user_pets up ON up\.telegram_id = pa\.telegram_id AND up\.pet_id = pa\.pet_id/);
@@ -231,11 +234,18 @@ test('map exposes every pet entry point and the daily quest screen', () => {
     'map_prop_store', 'map_prop_buy', 'map_prop_claim',
   ]) assert.match(handler, new RegExp(`'${action}'`), action);
   assert.match(ui, /🐾 Pet Store/);
-  assert.match(ui, /♨️ Rest Pet/);
-  assert.match(ui, /🍖 Feed Pet/);
-  assert.match(ui, /🐾 Train Pet/);
+  // BBQ: join / feed · instant recovery · play / back
+  assert.match(ui, /Join BBQ/);
+  assert.match(ui, /Feed pet/);
+  assert.match(ui, /Instant shinobi recovery/);
+  assert.match(ui, /Play with pet/);
+  // Hot Springs: relax / rest · recall / back
+  assert.match(ui, /Relax shinobis/);
+  assert.match(ui, /Rest pet/);
+  assert.match(ui, /Recall shinobis/);
+  // Ramen shop entry + the pet-food caption live in the handler.
   assert.match(ui, /🍱 Pet Food/);
-  assert.match(handler, /ICHIRAKU PET FOOD/);
+  assert.match(handler, /petFoodCaptionHtml\(\)/);
   assert.doesNotMatch(handler, /Pet rest is not available/);
   assert.match(handler, /ensureDailyMission\(user\.id, chatId\)/);
   assert.match(handler, /dailyMissionBody\(user, mission\)/);
