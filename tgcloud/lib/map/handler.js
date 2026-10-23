@@ -58,7 +58,7 @@ import { send } from '../chat.js';
 import { ensureDailyMission, dailyMissionBody } from '../daily.js';
 import { PET_ACTIVITIES } from '../pet/defs.js';
 import {
-  petStoreHtml, petStoreKeyboard, showPetCard,
+  petStoreHtml, petStoreKeyboard, showPetCard, busyActivityText,
   shinobiPickerHtml, shinobiPickerKeyboard, performPetStart, startResultText,
   petDetailHtml, petDetailKeyboard, petStatsHtml,
   petFoodCaptionHtml, petFoodPriceKeyboard, petCardCaption,
@@ -72,9 +72,9 @@ import { PETS } from '../pet/defs.js';
 import {
   buySuccessText, insufficientCoinsText, alreadyOwnedText, equipSuccessText,
   notOwnedText, NO_PETS_TEXT, PET_NOT_FOUND_TEXT, feedSuccessText,
-  feedInsufficientText, petCannotEatText, NOT_RESTING_TEXT,
+  feedInsufficientText, petCurrentActivityText, NOT_RESTING_TEXT,
   STALE_MENU_TEXT, EQUIP_PET_FIRST_TEXT, PET_WOKE_TEXT, SHINOBI_BUSY_TEXT,
-  BBQ_CAPTION, HOTSPRINGS_CAPTION, petNotHungryText,
+  BBQ_CAPTION, HOTSPRINGS_CAPTION, petNotHungryText, restRequiredText,
 } from '../pet/text.js';
 import {
   propertyStoreBody, propertyStoreKeyboard, buyPropertySolo,
@@ -887,8 +887,12 @@ export async function handleMapCallback(cb) {
         await answer(cb, EQUIP_PET_FIRST_TEXT, true);
         return true;
       }
+      if (pet.status === 'EXHAUSTED') {
+        await answer(cb, restRequiredText(pet.name), true);
+        return true;
+      }
       if (pet.status !== 'READY') {
-        await answer(cb, petCannotEatText(pet.name, pet.status), true);
+        await answer(cb, busyActivityText({ pet }, 'feed'), true);
         return true;
       }
       // Rule: a pet can only be fed while it is hungry (energy not full).
@@ -1048,7 +1052,9 @@ export async function handleMapCallback(cb) {
       } else if (r.code === 'no_pet' || r.code === 'not_owned') await answer(cb, NO_PETS_TEXT, true);
       else if (r.code === 'insufficient') await answer(cb, feedInsufficientText(r.name || foodKey, fmt(r.cost), fmt(r.balance)), true);
       else if (r.code === 'full_energy') await answer(cb, petNotHungryText(r.petName || 'ᴛʜɪꜱ ᴘᴇᴛ'), true);
-      else if (r.code === 'busy') await answer(cb, petCannotEatText(r.petName || 'ᴛʜɪꜱ ᴘᴇᴛ', r.status), true);
+      else if (r.code === 'busy') {
+        await answer(cb, petCurrentActivityText(r.petName || 'ᴛʜɪꜱ ᴘᴇᴛ', r.activity, 'feed', r.until), true);
+      }
       else if (r.code !== 'duplicate') await answer(cb, UNEXPECTED_PET_TEXT, true);
       const pet = petId ? await getPet(user.id, petId) : await getEquippedPet(user.id);
       await showScreen(

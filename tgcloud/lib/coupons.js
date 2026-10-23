@@ -4,14 +4,12 @@ import { coupons, couponRedemptions, inventory, topicSettings } from '../schema.
 import { fmt, SHINOBI } from './store.js';
 import { GIFTS } from './gift.js';
 import { adjustBalance } from './economy.js';
-import { escapeHtml } from './texts.js';
 import { OWNER_ID } from './config.js';
 import { api } from './message_api.js';
 
 const now = () => Math.floor(Date.now() / 1000);
 const SESSION_PREFIX = 'coupon.wizard.';
 const TYPES = ['shinobi', 'coins', 'chakra', 'gifts'];
-const escape = escapeHtml;
 const para = (...text) => ({ type: 'paragraph', text: text.length === 1 ? text[0] : text });
 const heading = (text) => ({ type: 'heading', size: 2, text });
 const divider = { type: 'divider' };
@@ -120,6 +118,34 @@ export async function handleListCoupons(message) {
   await send(message.chat.id, blocks);
   return true;
 }
+/** One `✦` line per granted reward (coins, chakra, shinobi, gifts). */
+export function redeemRewardLines(reward) {
+  const items = [];
+  if (Number(reward?.coins) > 0) items.push(`${fmt(Number(reward.coins))} 🍥`);
+  if (Number(reward?.chakra) > 0) items.push(`${fmt(Number(reward.chakra))} ⚡`);
+  for (const name of (Array.isArray(reward?.shinobis) ? reward.shinobis : [])) items.push(String(name));
+  const gifts = Array.isArray(reward?.gifts)
+    ? reward.gifts
+    : (typeof reward?.gift === 'string' && reward.gift ? [{ name: reward.gift, qty: 1 }] : []);
+  for (const gift of gifts) {
+    const qty = Math.max(1, Number(gift?.qty) || 1);
+    items.push(qty > 1 ? `${gift.name} × ${qty}` : String(gift.name));
+  }
+  return items;
+}
+
+/** `/redeem` success card (requested layout: title, reward list, follow-up). */
+export function redeemRedeemedText(reward) {
+  const items = redeemRewardLines(reward);
+  const shown = items.slice(0, 4).map((item) => `✦ ${item}`);
+  if (items.length > 4) shown.push('✦ …');
+  return '🎉 𝐂𝐎𝐔𝐏𝐎𝐍 𝐑𝐄𝐃𝐄𝐄𝐌𝐄𝐃!\n\n\n'
+    + '🎁 𝐑𝐄𝐖𝐀𝐑𝐃𝐒\n\n'
+    + `${shown.join('\n') || '✦ —'}\n\n\n`
+    + '❄️ ᴄʜᴇᴄᴋ ʏᴏᴜʀ ʀᴇᴡᴀʀᴅꜱ\n\n'
+    + '"/balance" · "/inventory"';
+}
+
 function rewardSummary(reward) {
   const parts = [];
   if (Number(reward.coins) > 0) parts.push(`${fmt(reward.coins)} coins`);
@@ -396,8 +422,7 @@ export async function handleRedeemCoupon(message, text) {
     await db.delete(couponRedemptions).where(and(eq(couponRedemptions.code, code), eq(couponRedemptions.telegramId, user.id))).run().catch(() => {});
     throw e;
   }
-  const rewardText = rewardSummary(reward);
-  await api.sendMessage({ chat_id: message.chat.id, text: `🎉 Coupon redeemed!\n\n${escape(rewardText)}\n\nUse /balance or /inventory to check your rewards.` });
+  await api.sendMessage({ chat_id: message.chat.id, text: redeemRedeemedText(reward) });
   return true;
 }
 async function addInventory(telegramId, itemType, itemName, qty) {

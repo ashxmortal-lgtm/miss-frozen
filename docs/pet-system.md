@@ -32,15 +32,26 @@ with these exact rows:
 
 ```text
 [🍖 Feed] [🎾 Play] [🏋️ Train] [😴 Rest]
-[📊 Pet stats] [🕸️ Pet abilities] [🔄 Switch pet]
-[✏️ Rename pet] [❌ Close]
+[📊 Pet stats] [🕸️ Pet abilities]
+[🔄 Switch pet] [✏️ Rename pet] [❌ Close]
 ```
 
 The rows never change with state: the server refuses what the pet cannot do
 right now — Feed only while the pet is hungry (energy below 100 and the pet is
 `READY`), Play/Train never while `EXHAUSTED` (the answer asks for rest), and Rest
-is the wake toggle while `RESTING`. Switch pet opens the list, Rename pet opens
-the nametag/rename screen, Close deletes the card.
+is the wake toggle while `RESTING`. **Switch pet never opens the pet list**: one
+tap equips the other owned pet, answers with `🔄 ꜱᴡɪᴛᴄʜᴇᴅ ᴛᴏ …` and renders that
+pet's card in place; with a single owned pet it only explains that the user owns
+one pet. Rename pet opens the nametag/rename screen, Close deletes the card.
+
+When the pet is already busy, tapping any other activity answers with an alert
+that names the **running** activity and its remaining time:
+
+```text
+⏳ {PetName} ɪꜱ ʙᴜꜱʏ
+🏋️ ᴄᴜʀʀᴇɴᴛ ᴀᴄᴛɪᴠɪᴛʏ: ᴛʀᴀɪɴɪɴɢ · 1h 55m
+❌ ᴘʟᴀʏ ᴄᴀɴ'ᴛ ꜱᴛᴀʀᴛ ᴜɴᴛɪʟ ᴛʜɪꜱ ᴇɴᴅꜱ.
+```
 
 Pet commands live behind the **PETS** button of `/help` (the main help message no
 longer lists them). `/help` itself shows the profile block, the PvP block and
@@ -57,18 +68,21 @@ exactly like this; `/buy` and `/equip` keep their real spelling):
 
 `/pet_store` never shows purchase buttons. Its only buttons are
 `[Pet 🍖 food] [Pet abilities]` and `[⬅️ Back]`; food opens the existing Ichiraku
-pet-food menu, abilities opens <https://t.me/frozenblooded/23>, Back returns to
-the caller's pet menu (or the store hub when opened from the map).
+pet-food menu, abilities opens the store-wide guide
+<https://t.me/frozenblooded/23> (per-pet cards and the stats screen use the pet's
+own guide), Back returns to the caller's pet menu (or the store hub when opened
+from the map).
 
 ### Stats screen
 
 ```text
-📊 𝐏𝐄𝐓 𝐒𝐓𝐀𝐓𝐒
-⭐ ʟᴇᴠᴇʟ: 1/5　○○○○○
-✨ xᴘ: 0 / 1,000
-⚡ ᴇɴᴇʀɢʏ: 70/100
-🏋️ ꜱᴛᴀᴛᴜꜱ: ᴛʀᴀɪɴɪɴɢ · 1h 55m
-🏆 ᴛᴏᴛᴀʟ xᴘ ᴇᴀʀɴᴇᴅ: 1,350
+📊 𝐏𝐄𝐓 𝐒𝐓𝐀𝐓𝐒          ← heading, outside the quote
+> ⭐ ʟᴇᴠᴇʟ: 1/5　○○○○○
+> ✨ xᴘ: 0 / 1,000
+> ⚡ ᴇɴᴇʀɢʏ: 70/100
+> 🏋️ ꜱᴛᴀᴛᴜꜱ: ᴛʀᴀɪɴɪɴɢ · 1h 55m
+> 🏆 ᴛᴏᴛᴀʟ xᴘ ᴇᴀʀɴᴇᴅ: 1,350
+
 ──────────  (rich divider block)
 🦋 𝐅𝐋𝐔𝐓𝐓𝐄𝐑 𝐅𝐎𝐑𝐓𝐔𝐍𝐄
 🍀 ᴛʀɪɢɢᴇʀ ᴄʜᴀɴᴄᴇ: 8%
@@ -76,10 +90,15 @@ the caller's pet menu (or the store hub when opened from the map).
 ✨ ꜱʜɪɴᴏʙɪ xᴘ: +2%
 ```
 
+The heading stays outside; every stat line is inside a rich `blockquote`
+(`<blockquote>` in the HTML card, flattened quote lines on the classic path).
 Only the equipped pet's own ability is shown (Capycorn shows duration/cooldown
-reductions instead). `xᴘ` is progress inside the current level; at max level it
-shows total XP / 15,000. The divider is the rich block `{ type: 'divider' }` and
-renders as a line of `─` on the classic path.
+reductions instead), and its button opens that pet's guide: Axofly
+<https://t.me/frozenblooded/26>, Capycorn <https://t.me/frozenblooded/27>,
+fallback <https://t.me/frozenblooded/23> for any other pet. `xᴘ` is progress
+inside the current level; at max level it shows total XP / 15,000. The divider is
+the rich block `{ type: 'divider' }` and renders as a line of `─` on the classic
+path.
 
 ### Map entry points and locations
 
@@ -118,17 +137,23 @@ pulled out early.
 **Ramen shop pet food** (one caption, then the price buttons):
 
 ```text
-🍱 𝐍𝐈𝐍𝐉𝐀 𝐏𝐄𝐓 𝐌𝐄𝐀𝐋
-✨ ᴇꜰꜰᴇᴄᴛ: +100 xᴘ · +10 ⚡
-💰 ᴘʀɪᴄᴇ: 500 🍥
+➤ 🍱 𝐍𝐈𝐍𝐉𝐀 𝐏𝐄𝐓 𝐌𝐄𝐀𝐋
 
-🍬 𝐂ʜᴀᴋʀᴀ 𝐓ʀᴇᴀᴛ
-✨ ᴇꜰꜰᴇᴄᴛ: +250 xᴘ · +25 ⚡
-💰 ᴘʀɪᴄᴇ: 1,000 🍥
+✨ +100 xᴘ · +10 ⚡
 
-🍜 𝐈ᴄʜɪʀᴀᴋᴜ 𝐅ᴇᴀꜱᴛ
-✨ ᴇꜰꜰᴇᴄᴛ: +500 xᴘ · +50 ⚡
-💰 ᴘʀɪᴄᴇ: 2,000 🍥
+💰 500 🍥
+
+➤ 🍬 𝐂ʜᴀᴋʀᴀ 𝐓ʀᴇᴀᴛ
+
+✨ +250 xᴘ · +25 ⚡
+
+💰 1,000 🍥
+
+➤ 🍜 𝐈ᴄʜɪʀᴀᴋᴜ 𝐅ᴇᴀꜱᴛ
+
+✨ +500 xᴘ · +50 ⚡
+
+💰 2,000 🍥
 
 [500 🍥] [1,000 🍥] [2,000 🍥]
 [⬅️ Back]
@@ -157,7 +182,7 @@ Callbacks are owner-first and re-validated server-side:
 ```text
 pet_menu:{uid} · pet_me:{uid}:{petId} · pet_feed_menu:{uid}:{petId}
 pet_food:{uid}:{petId}:{foodKey} · pet_play:{uid}:{petId}
-pet_start:{uid}:{petId}:{type}:{shinobi} · pet_train|rest|wake|stats|equip|name|close:{uid}:{petId?}
+pet_start:{uid}:{petId}:{type}:{shinobi} · pet_train|rest|wake|stats|equip|name|close:{uid}:{petId?} · pet_switch:{uid}:{petId}
 map_pet_*:…  (owner id first for uid-first shapes, last for pet-first shapes)
 map_hot_relax|map_hot_recall:{uid} · map_hot_go|map_hot_stop:{shinobi}:{uid}
 map_bbq_select|map_bbq_recall|map_bbq_heal|map_bbq_hpay:{uid}

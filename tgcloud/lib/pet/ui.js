@@ -28,7 +28,7 @@ import { getPetPhotoFileId } from './media.js';
 import {
   PETS, PET_MAX_LEVEL, PET_MAX_ENERGY, PET_ACTIVITIES, PET_FOOD_MENU,
   PET_NAMETAG_PRICE, PET_NAMETAG_MAX_LEN, PET_NAMETAG_KEY,
-  PET_XP_THRESHOLDS, PET_XP_CAP, petXpForNextLevel,
+  PET_XP_THRESHOLDS, PET_XP_CAP, petXpForNextLevel, petAbilityUrl,
 } from './defs.js';
 import {
   listPets, getPet, getEquippedPet, getPetActivity, equipPet, renamePet,
@@ -42,7 +42,7 @@ import {
   feedInsufficientText, petFullEnergyText, petCannotEatText, playStartedText,
   petBusyText, shinobiBusyText, playCompleteText, trainStartedText,
   trainCompleteText, restStartedText, restCompleteText, restRequiredText,
-  alreadyReadyText, levelUpText, maxLevelText, DUPLICATE_SESSION_TEXT,
+  alreadyReadyText, levelUpText, maxLevelText,
   SESSION_CANNOT_START_TEXT, STALE_MENU_TEXT, UNEXPECTED_ERROR_TEXT,
   WRONG_OWNER_TEXT, NOT_RESTING_TEXT, progressDots, timeLeftText, PET_ABILITY_URL,
   STORE_INSTRUCTION, insufficientCoinsText, equipSuccessText, notOwnedText,
@@ -52,6 +52,7 @@ import {
   nametagBoughtText, renameSuccessText, renameUsageText, noNametagText,
   invalidPetNameText, petCommandsText, petCardLines, petNotHungryText,
   PET_FOOD_CAPTION, PET_FOOD_PRICE_LABEL, statusWord,
+  petCurrentActivityText, ONE_PET_ONLY_TEXT, petSwitchedText,
 } from './text.js';
 
 const now = () => Math.floor(Date.now() / 1000);
@@ -235,10 +236,11 @@ export function petCardRows(userId, pet) {
     ],
     [
       btn('📊 Pet stats', { callback_data: `pet_stats:${userId}:${pet.petId}`, style: 'primary' }),
-      btn('🕸️ Pet abilities', { url: PET_ABILITY_URL, style: 'primary' }),
-      btn('🔄 Switch pet', { callback_data: `pet_menu:${userId}`, style: 'primary' }),
+      btn('🕸️ Pet abilities', { url: petAbilityUrl(pet.petId, PET_ABILITY_URL), style: 'primary' }),
     ],
     [
+      // Switch is a one-tap auto-equip of the other owned pet (no picker).
+      btn('🔄 Switch pet', { callback_data: `pet_switch:${userId}:${pet.petId}`, style: 'primary' }),
       btn('✏️ Rename pet', { callback_data: `pet_name:${userId}:${pet.petId}`, style: 'primary' }),
       btn('❌ Close', { callback_data: `pet_close:${userId}`, style: 'danger' }),
     ],
@@ -368,17 +370,27 @@ export async function showPetCard(msg, user, pet = null) {
   return target;
 }
 
+/** Heading stays outside the quote; every stat line is quoted (requested). */
+function statsHeadingAndLines(pet, lifetimeXp) {
+  const [heading, ...lines] = petStatsLines(pet, lifetimeXp);
+  return { heading, lines };
+}
+
 export async function petStatsContent(user, pet) {
   const target = pet || await getEquippedPet(user.id);
   if (!target) return petListContent(user);
   const stats = await getPetStats(user.id);
+  const { heading, lines } = statsHeadingAndLines(target, stats.xpEarned);
   return [
-    ...petStatsLines(target, stats.xpEarned).map((line) => P(line)),
+    P(heading),
+    { type: 'blockquote', blocks: lines.map((line) => P(line)) },
     { type: 'divider' },
     ...abilityLines(target).map((line) => P(line)),
     row(
       btn('⬅️ Back', { callback_data: `pet_me:${user.id}:${target.petId}`, style: 'danger' }),
-      btn('🕸️ Pet abilities', { url: PET_ABILITY_URL, style: 'primary' }),
+      btn('🕸️ Pet abilities', {
+        url: petAbilityUrl(target.petId, PET_ABILITY_URL), style: 'primary',
+      }),
     ),
   ];
 }
@@ -435,7 +447,10 @@ export async function petFoodContent(user, petId = null) {
 
 /** Pet food caption as one HTML string (Ramen Shop panel). */
 export function petFoodCaptionHtml() {
-  return PET_FOOD_CAPTION.map((line) => (line ? `<p>${style(line)}</p>` : '')).join('') + '<hr/>';
+  // Blank caption lines keep the requested spacing between the meal blocks.
+  return PET_FOOD_CAPTION
+    .map((line) => `<p>${line ? style(line) : ' '}</p>`)
+    .join('') + '<hr/>';
 }
 
 /** Price buttons for the Ramen Shop panel (`map_pet_food_buy:{key}:{petId?}:{uid}`). */
@@ -530,6 +545,26 @@ export async function performPetStart(userId, petId, type, options = {}) {
   return { ...result, pet: result.pet || pet };
 }
 
+/** Activity key currently running on a pet (null when it is not busy). */
+function currentActivityKey(pet) {
+  const status = String(pet?.status || '');
+  if (status === PET_STATUS.PLAYING) return 'play';
+  if (status === PET_STATUS.TRAINING) return 'train';
+  if (status === PET_STATUS.RESTING) return 'rest';
+  return null;
+}
+
+/**
+ * Refusal text that always names the running activity + time left and the
+ * action that was refused (requested: never a vague "activity running").
+ */
+export function busyActivityText(result, type) {
+  const pet = result?.pet || null;
+  const current = result?.activity || currentActivityKey(pet);
+  const until = Number(result?.until || pet?.statusEndsAt || 0);
+  return petCurrentActivityText(pet?.name || 'ʏᴏᴜʀ ᴘᴇᴛ', current, type, until);
+}
+
 export function startResultText(result, type) {
   const cfg = PET_ACTIVITIES[type] || {};
   const petName = result.pet?.name || 'ʏᴏᴜʀ ᴘᴇᴛ';
@@ -538,7 +573,8 @@ export function startResultText(result, type) {
     if (type === 'train') return trainStartedText(petName, Math.round(cfg.durationMinutes / 60));
     return playStartedText(petName, result.shinobi || '—', cfg.durationMinutes);
   }
-  if (result.code === 'busy' || result.code === 'duplicate_session') return DUPLICATE_SESSION_TEXT;
+  // Busy: spell out the current activity instead of a generic sentence.
+  if (result.code === 'busy' || result.code === 'duplicate_session') return busyActivityText(result, type);
   if (result.code === 'rest_required') return restRequiredText(petName);
   if (result.code === 'not_exhausted') return alreadyReadyText(petName);
   if (result.code === 'shinobi_busy') {
@@ -598,10 +634,11 @@ export async function petStatsHtml(userId, pet = null) {
   const target = pet || await getEquippedPet(userId);
   if (!target) return `<b>🐾 PETS</b><br>${safe(EQUIP_ONE_TEXT)}`;
   const stats = await getPetStats(userId);
-  const head = petStatsLines(target, stats.xpEarned).map((line) => `<p>${line}</p>`).join('');
+  const { heading, lines } = statsHeadingAndLines(target, stats.xpEarned);
+  const quoted = `<blockquote>${lines.map((line) => `<p>${line}</p>`).join('')}</blockquote>`;
   const ability = [abilityTitle(target), ...abilityStatLines(target)]
     .map((line) => `<p>${line}</p>`).join('');
-  return `${head}<hr/>${ability}`;
+  return `<p>${heading}</p>${quoted}<hr/>${ability}`;
 }
 
 export async function petDetailHtml(userId, petId) {
@@ -670,6 +707,11 @@ function blocksToClassic(blocks) {
       }
     } else if (block?.type === 'paragraph' && block.text != null) {
       lines.push(typeof block.text === 'string' ? block.text : JSON.stringify(block.text));
+    } else if (block?.type === 'blockquote' && Array.isArray(block.blocks)) {
+      // Classic has no quote mark: keep the quoted lines 1:1, never the raw tag.
+      for (const inner of block.blocks) {
+        if (inner?.text != null) lines.push(typeof inner.text === 'string' ? inner.text : JSON.stringify(inner.text));
+      }
     } else if (block?.type === 'divider') {
       // Classic fallback for `{ type: 'divider' }` — never the raw marker.
       lines.push('──────────');
@@ -770,6 +812,26 @@ export async function handlePetCallback(cb) {
       return true;
     }
 
+    // Switch pet: no picker — auto-equip the other owned pet and open its card.
+    if (action === 'pet_switch') {
+      const pets = await listPets(userId);
+      if (!pets.length) { await answer(cb, NO_PETS_TEXT, true); return true; }
+      const currentId = String(parts[2] || '').toLowerCase();
+      const current = pets.find((p) => p.petId === currentId)
+        || pets.find((p) => p.equipped)
+        || pets[0];
+      const other = pets.find((p) => p.petId !== current.petId);
+      if (!other) { await answer(cb, ONE_PET_ONLY_TEXT, true); return true; }
+      const r = await equipPet(userId, other.petId);
+      if (r.code !== 'ok' && r.code !== 'already_equipped') {
+        await answer(cb, notOwnedText(other.name), true);
+        return true;
+      }
+      await answer(cb, petSwitchedText(other.name, other.def.name));
+      await renderPetCard(msg, cb.from, await getPet(userId, other.petId));
+      return true;
+    }
+
     const petId = parts[2];
     if (['pet_me', 'pet_stats', 'pet_feed_menu', 'pet_play', 'pet_train', 'pet_rest',
       'pet_wake', 'pet_equip', 'pet_food', 'pet_name'].includes(action)) {
@@ -800,8 +862,12 @@ export async function handlePetCallback(cb) {
       }
       if (action === 'pet_feed_menu') {
         if (!pet.equipped) { await answer(cb, EQUIP_PET_FIRST_TEXT, true); return true; }
+        if (pet.status === PET_STATUS.EXHAUSTED) {
+          await answer(cb, restRequiredText(pet.name), true);
+          return true;
+        }
         if (pet.status !== PET_STATUS.READY) {
-          await answer(cb, petCannotEatText(pet.name, pet.status), true);
+          await answer(cb, busyActivityText({ pet }, 'feed'), true);
           return true;
         }
         // Rule: a pet can only be fed while it is hungry (energy not full).
@@ -823,7 +889,7 @@ export async function handlePetCallback(cb) {
         } else if (r.code === 'full_energy') {
           await answer(cb, petNotHungryText(pet.name), true);
         } else if (r.code === 'busy') {
-          await answer(cb, petCannotEatText(pet.name, r.status), true);
+          await answer(cb, busyActivityText({ pet, activity: r.activity }, 'feed'), true);
         } else if (r.code !== 'duplicate') {
           await answer(cb, SESSION_CANNOT_START_TEXT, true);
         }
@@ -837,7 +903,7 @@ export async function handlePetCallback(cb) {
           return true;
         }
         if (pet.status !== PET_STATUS.READY) {
-          await answer(cb, startResultText({ code: 'busy', pet }, 'play'), true);
+          await answer(cb, busyActivityText({ pet }, 'play'), true);
           return true;
         }
         await answer(cb);
@@ -1063,14 +1129,15 @@ export async function handlePetCommand(message) {
     }
     if (sub === 'feed') {
       if (!pet.equipped) return sendText(message, EQUIP_PET_FIRST_TEXT);
-      if (pet.status !== PET_STATUS.READY) return sendText(message, petCannotEatText(pet.name, pet.status));
+      if (pet.status === PET_STATUS.EXHAUSTED) return sendText(message, restRequiredText(pet.name));
+      if (pet.status !== PET_STATUS.READY) return sendText(message, busyActivityText({ pet }, 'feed'));
       await sendBlocks(message, await petFoodContent(user, pet.petId));
       return true;
     }
     if (sub === 'play') {
       if (!pet.equipped) return sendText(message, EQUIP_PET_FIRST_TEXT);
       if (pet.status === PET_STATUS.EXHAUSTED) return sendText(message, restRequiredText(pet.name));
-      if (pet.status !== PET_STATUS.READY) return sendText(message, startResultText({ code: 'busy', pet }, 'play'));
+      if (pet.status !== PET_STATUS.READY) return sendText(message, busyActivityText({ pet }, 'play'));
       await sendBlocks(message, await playPickerContent(user, pet));
       return true;
     }

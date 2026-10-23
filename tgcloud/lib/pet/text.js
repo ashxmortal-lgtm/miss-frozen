@@ -77,18 +77,25 @@ export function petNotHungryText(petName) {
 
 // ---- pet food menu (Ramen Shop / /pet food) ----
 // Verbatim captions requested for the three meals; buttons carry only the price.
+// Each meal is a 3-line block (`➤` title, effect, price) separated by a blank line.
 export const PET_FOOD_CAPTION = [
-  '🍱 𝐍𝐈𝐍𝐉𝐀 𝐏𝐄𝐓 𝐌𝐄𝐀𝐋',
-  '✨ ᴇꜰꜰᴇᴄᴛ: +100 xᴘ · +10 ⚡',
-  '💰 ᴘʀɪᴄᴇ: 500 🍥',
+  '➤ 🍱 𝐍𝐈𝐍𝐉𝐀 𝐏𝐄𝐓 𝐌𝐄𝐀𝐋',
   '',
-  '🍬 𝐂ʜᴀᴋʀᴀ 𝐓ʀᴇᴀᴛ',
-  '✨ ᴇꜰꜰᴇᴄᴛ: +250 xᴘ · +25 ⚡',
-  '💰 ᴘʀɪᴄᴇ: 1,000 🍥',
+  '✨ +100 xᴘ · +10 ⚡',
   '',
-  '🍜 𝐈ᴄʜɪʀᴀᴋᴜ 𝐅ᴇᴀꜱᴛ',
-  '✨ ᴇꜰꜰᴇᴄᴛ: +500 xᴘ · +50 ⚡',
-  '💰 ᴘʀɪᴄᴇ: 2,000 🍥',
+  '💰 500 🍥',
+  '',
+  '➤ 🍬 𝐂ʜᴀᴋʀᴀ 𝐓ʀᴇᴀᴛ',
+  '',
+  '✨ +250 xᴘ · +25 ⚡',
+  '',
+  '💰 1,000 🍥',
+  '',
+  '➤ 🍜 𝐈ᴄʜɪʀᴀᴋᴜ 𝐅ᴇᴀꜱᴛ',
+  '',
+  '✨ +500 xᴘ · +50 ⚡',
+  '',
+  '💰 2,000 🍥',
 ];
 
 export const PET_FOOD_PRICE_LABEL = {
@@ -96,6 +103,44 @@ export const PET_FOOD_PRICE_LABEL = {
   chakra_treat: '1,000 🍥',
   feast: '2,000 🍥',
 };
+
+// ---- "busy with something else" ----
+const ACTIVITY_NOW = {
+  play: { emoji: '🎾', label: 'ᴘʟᴀʏɪɴɢ' },
+  train: { emoji: '🏋️', label: 'ᴛʀᴀɪɴɪɴɢ' },
+  rest: { emoji: '😴', label: 'ʀᴇꜱᴛɪɴɢ' },
+  feed: { emoji: '🍖', label: 'ꜰᴇᴇᴅɪɴɢ' },
+};
+
+const ACTIVITY_ATTEMPT = {
+  play: 'ᴘʟᴀʏ', train: 'ᴛʀᴀɪɴ', rest: 'ʀᴇꜱᴛ', feed: 'ꜰᴇᴇᴅ',
+};
+
+/**
+ * Refusal for a second activity while one is running: always names the
+ * CURRENT activity, its remaining time and the action that was refused.
+ */
+export function petCurrentActivityText(
+  petName, current, attempted, endsAt, nowSec = Math.floor(Date.now() / 1000),
+) {
+  const cur = ACTIVITY_NOW[String(current || '').toLowerCase()]
+    || { emoji: '⏳', label: 'ʙᴜꜱʏ' };
+  const left = endsAt ? ` · ${timeLeftText(endsAt - nowSec)}` : '';
+  const tried = ACTIVITY_ATTEMPT[String(attempted || '').toLowerCase()] || 'ᴛʜɪꜱ ᴀᴄᴛɪᴏɴ';
+  return `⏳ ${petName} ɪꜱ ʙᴜꜱʏ\n`
+    + `${cur.emoji} ᴄᴜʀʀᴇɴᴛ ᴀᴄᴛɪᴠɪᴛʏ: ${cur.label}${left}\n`
+    + `❌ ${tried} ᴄᴀɴ'ᴛ ꜱᴛᴀʀᴛ ᴜɴᴛɪʟ ᴛʜɪꜱ ᴇɴᴅꜱ.`;
+}
+
+// ---- switch pet (auto-equip the other owned pet) ----
+
+export const ONE_PET_ONLY_TEXT = '🐾 ʏᴏᴜ ᴏɴʟʏ ᴏᴡɴ ᴏɴᴇ ᴘᴇᴛ. ʙᴜʏ ᴀɴᴏᴛʜᴇʀ ᴀᴛ /pet_store.';
+
+export function petSwitchedText(petName, petDefName) {
+  // A renamed pet shows `Custom Name · Axofly`; the default name only once.
+  const label = petDefName && petName !== petDefName ? `${petName} · ${petDefName}` : petName;
+  return `🔄 ꜱᴡɪᴛᴄʜᴇᴅ ᴛᴏ ${label}.`;
+}
 
 // ---- legacy pet restoration (first interaction) ----
 // Sent once, right after the economy.db pets are restored for a user.
