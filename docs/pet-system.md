@@ -16,6 +16,11 @@ settled lazily by the next interaction or by the message sweep.
 | `/buy <pet name>` · `/buy <shinobi name>` | One command for pets and shinobi; the catalogue decides the type; multi-word names work (`/buy pet name`, `/buy Starter Shinobi`) |
 | `/equip <pet name>` · `/equip <shinobi name>` | Equips the pet (single active companion) or the shinobi (max 3) |
 | `/pet_rename [PetName] NewName` | Renames using one Pet Nametag |
+
+Pet commands live behind the **PETS** button of `/help` (the main help message no
+longer lists them). `/help` itself shows the profile block, the PvP block and
+`/start` · `/help` · `/owner`, with `PETS · JUTSU · FUN` and
+`MORE ❄️ GAMES · BACK` rows.
 | `/pet food`, `/pet stats`, `/pet ability`, `/pet help` | Sub-screens |
 
 Store instruction line (the bot's small-caps style renders the placeholders

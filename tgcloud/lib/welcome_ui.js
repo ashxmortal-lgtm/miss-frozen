@@ -34,7 +34,8 @@ async function botUsername() {
   }
 }
 
-const blockquote = (...lines) => ({ type: 'blockquote', blocks: lines.map((l) => para(l)) });
+/** Quoted block of already-built paragraph blocks. */
+const blockquote = (...blocks) => ({ type: 'blockquote', blocks });
 const urlText = (text, url) => ({ type: 'url', text, url });
 const BOT_NAME = '𝑴𝒊𝒔𝒔 𝑭𝒓❄️𝒛𝒆𝒏';
 
@@ -81,23 +82,74 @@ export async function buildWelcomeBlocks(user) {
   }
 
   // Normal welcome: retain the existing primary button rows.
+  const botLink = `https://t.me/${uname}`;
   return [
     para(mention(user), ' ᴡᴇʟᴄᴏᴍᴇ! ❄️'),
-    para(`${BOT_NAME} ɪꜱ ᴀ ɴᴀʀᴜᴛᴏ-ɪɴꜱᴘɪʀᴇᴅ ɢᴀᴍᴇ ʙᴏᴛ ꜰᴏʀ ɢʀᴏᴜᴘꜱ ᴀɴᴅ ᴀɴɪᴍᴇ ꜰᴀɴꜱ.`),
-    para('🎮 ᴇxᴘʟᴏʀᴇ /help ꜰᴏʀ ɢᴀᴍᴇꜱ, ᴛʜᴇ ꜱᴛᴏʀᴇ & ᴋᴏɴᴏʜᴀ /map!'),
+    // The bot name is linked to the bot itself.
+    para(urlText(BOT_NAME, botLink), ' ɪꜱ ᴀ ɴᴀʀᴜᴛᴏ-ɪɴꜱᴘɪʀᴇᴅ ɢᴀᴍᴇ ʙᴏᴛ ꜰᴏʀ ɢʀᴏᴜᴘꜱ ᴀɴᴅ ᴀɴɪᴍᴇ ꜰᴀɴꜱ.'),
+    para('🎮 ᴛᴀᴘ ᴛʜᴇ 𝐇𝐄𝐋𝐏 ʙᴜᴛᴛᴏɴ ᴛᴏ ᴇxᴘʟᴏʀᴇ ɢᴀᴍᴇꜱ, ᴄᴏᴍᴍᴀɴᴅꜱ & ʀᴇᴡᴀʀᴅꜱ! ❄️'),
     para('❓ ᴡᴀɴɴᴀ ʟᴇᴀʀɴ ʜᴏᴡ ᴛᴏ ᴘʟᴀʏ?'),
     para('➜ ', urlText('ᴄʜᴇᴄᴋ ᴛʜɪꜱ', 'https://t.me/frozenblooded/22'), ' ᴏᴜᴛ!'),
-    para(`➕ ᴀᴅᴅ ${BOT_NAME} ᴛᴏ ᴜʀ ɢʀᴏᴜᴘ ᴀꜱ ᴀɴ ᴀᴅᴍɪɴ ᴛᴏ ʙᴇɢɪɴ ᴜʀ ꜱʜɪɴᴏʙɪ ᴊᴏᴜʀɴᴇʏ! 🗡️`),
+    para('➕ ᴀᴅᴅ ', urlText(BOT_NAME, botLink),
+      ' ᴛᴏ ᴜʀ ɢʀᴏᴜᴘ ᴀꜱ ᴀɴ ᴀᴅᴍɪɴ ᴛᴏ ʙᴇɢɪɴ ᴜʀ ꜱʜɪɴᴏʙɪ ᴊᴏᴜʀɴᴇʏ! 🗡️'),
     ...buttons,
   ];
 }
 
 // ---- /help: gaming commands directly ----
 // Callback data: hp:<screen>[:w]. The ":w" suffix means the menu was opened
-// from the welcome message, so the top-level Back returns there.
+// from the welcome message, so Back returns there (instead of the help home).
+//
+// Layout (requested): quoted combat/profile block → divider → quoted PvP block
+// → divider → /start /help /owner, then [PETS][JUTSU][FUN] and
+// [MORE ❄️ GAMES][BACK]. Commands stay plain text (never code) so Telegram
+// keeps them tappable.
 
-const backBtn = (data) => row(cb('← Back', data, 'danger'));
+const backBtn = (data) => row(cb('⬅️ Back', data, 'danger'));
 const sfx = (fromWelcome) => (fromWelcome ? ':w' : '');
+
+const HELP_BLOCK_ONE = [
+  '/claim', '/balance', '/profile', '/inventory', '/shinobi_store', '/gift_store',
+  '/buy', '/mission', '/patrol', '/map', '/ability',
+];
+const HELP_BLOCK_TWO = [
+  '/kill', '/rob', '/protect', '/transfer', '/leaderboard', '/equip', '/unequip', '/redeem',
+];
+const HELP_FOOTER = ['/start', '/help', '/owner'];
+
+// Jutsu / shinobi arts live behind their own button.
+const JUTSU_COMMANDS = ['/mt', '/byakugan', '/search_tsuna'];
+const FUN_COMMANDS = ['/gift', '/hug', '/slap', '/punch', '/pat'];
+const MORE_GAMES_COMMANDS = [
+  '/games', '/xoxo', '/xoxo_cancel', '/xoxo_stats', '/rps', '/rps_cancel', '/rps_stats',
+];
+
+function commandDesc(cmd) {
+  const entry = listCommands('user').find((c) => c.cmd === cmd);
+  return entry ? entry.desc : '';
+}
+
+/** One tappable command line (`/cmd — description`). */
+function commandPara(cmd) {
+  const desc = commandDesc(cmd);
+  return desc ? cmdLine(cmd, desc) : para(cmd);
+}
+
+const quoteOf = (cmds) => blockquote(...cmds.map(commandPara));
+
+function helpNav(w) {
+  return [
+    row(
+      cb('PETS', `hp:pets${sfx(w)}`, 'primary'),
+      cb('JUTSU', `hp:jutsu${sfx(w)}`, 'primary'),
+      cb('FUN', `hp:fun${sfx(w)}`, 'primary'),
+    ),
+    row(
+      cb('MORE ❄️ GAMES', `hp:more${sfx(w)}`, 'primary'),
+      cb('BACK', w ? 'wel:back' : `hp:main${sfx(w)}`, 'danger'),
+    ),
+  ];
+}
 
 export async function buildUserHelpBlocks(_user, fromWelcome = false) {
   // Gaming help directly — no mode chooser.
@@ -106,44 +158,46 @@ export async function buildUserHelpBlocks(_user, fromWelcome = false) {
 
 function gameBlocks(w) {
   return [
-    head('Game ❄️ mode', 6),
-    ...listCommands('user')
-      .filter(({ cmd }) => !PET_COMMANDS.includes(cmd))
-      .filter(({ cmd }) => !['/gift', '/hug', '/slap', '/punch', '/pat', '/games', '/xoxo', '/xoxo_stats', '/rps', '/rps_stats', '/xoxo_cancel', '/rps_cancel'].includes(cmd))
-      .map(({ cmd, desc }) => cmdLine(cmd, desc)),
+    head('🎮 𝐆𝐀𝐌𝐄 𝐂𝐎𝐌𝐌𝐀𝐍𝐃𝐒', 6),
+    quoteOf(HELP_BLOCK_ONE),
     divider,
-    head('🐾 Pets', 6),
-    ...listCommands('user')
-      .filter(({ cmd }) => PET_COMMANDS.includes(cmd))
-      .map(({ cmd, desc }) => cmdLine(cmd, desc)),
-    row(cb('Extras', `hp:extras${sfx(w)}`, 'primary'), cb('more ❄️ games', `hp:more${sfx(w)}`, 'primary')),
-    ...(w ? [backBtn('wel:back')] : []),
+    quoteOf(HELP_BLOCK_TWO),
+    divider,
+    ...HELP_FOOTER.map(commandPara),
+    ...helpNav(w),
   ];
 }
 
-function extrasBlocks(w) {
+function petsBlocks(w) {
   return [
-    head('Extras', 6),
-    cmdLine('/gift', 'Send a gift'),
-    cmdLine('/hug', 'Hug a user'),
-    cmdLine('/slap', 'Slap a user'),
-    cmdLine('/punch', 'Punch a user'),
-    cmdLine('/pat', 'Pat a user'),
-    backBtn(`hp:game${sfx(w)}`),
+    head('🐾 𝐏𝐄𝐓 𝐂𝐎𝐌𝐌𝐀𝐍𝐃𝐒', 6),
+    quoteOf(PET_COMMANDS),
+    para('Buy with /buy, equip with /equip — food & abilities live in /pet_store.'),
+    backBtn(`hp:main${sfx(w)}`),
+  ];
+}
+
+function jutsuBlocks(w) {
+  return [
+    head('🌀 𝐉𝐔𝐓𝐒𝐔 & 𝐒𝐇𝐈𝐍𝐎𝐁𝐈 𝐀𝐑𝐓𝐒', 6),
+    quoteOf(JUTSU_COMMANDS),
+    backBtn(`hp:main${sfx(w)}`),
+  ];
+}
+
+function funBlocks(w) {
+  return [
+    head('🎉 𝐅𝐔𝐍', 6),
+    quoteOf(FUN_COMMANDS),
+    backBtn(`hp:main${sfx(w)}`),
   ];
 }
 
 function moreGamesBlocks(w) {
   return [
-    head('more ❄️ games', 6),
-    cmdLine('/games', 'Open games menu (non naruto themed)'),
-    cmdLine('/xoxo', 'Play XOXO'),
-    cmdLine('/xoxo_cancel', 'Cancel XOXO lobby (alias /cancel_xoxo)'),
-    cmdLine('/xoxo_stats', 'View XOXO stats'),
-    cmdLine('/rps', 'Play Rock Paper Scissors'),
-    cmdLine('/rps_stats', 'View RPS stats'),
-    cmdLine('/rps_cancel', 'Cancel RPS lobby (alias /cancel_rps)'),
-    backBtn(`hp:game${sfx(w)}`),
+    head('🎲 𝐌𝐎𝐑𝐄 ❄️ 𝐆𝐀𝐌𝐄𝐒', 6),
+    quoteOf(MORE_GAMES_COMMANDS),
+    backBtn(`hp:main${sfx(w)}`),
   ];
 }
 
@@ -153,13 +207,16 @@ export async function sendWelcome(chatId, user) {
     return await api.sendRichMessage({ chat_id: chatId, rich_message: rich(blocks) });
   } catch (e) {
     console.error('sendWelcome failed:', e?.description || e);
+    const uname = await botUsername();
+    const botLink = `https://t.me/${uname}`;
     return api.sendMessage({
       chat_id: chatId,
+      parse_mode: 'HTML',
       text: `${user.first_name || 'User'} ᴡᴇʟᴄᴏᴍᴇ! ❄️\n\n` +
-        `${BOT_NAME} ɪꜱ ᴀ ɴᴀʀᴜᴛᴏ-ɪɴꜱᴘɪʀᴇᴅ ɢᴀᴍᴇ ʙᴏᴛ ꜰᴏʀ ɢʀᴏᴜᴘꜱ ᴀɴᴅ ᴀɴɪᴍᴇ ꜰᴀɴꜱ.\n\n` +
-        '🎮 ᴇxᴘʟᴏʀᴇ /help ꜰᴏʀ ɢᴀᴍᴇꜱ, ᴛʜᴇ ꜱᴛᴏʀᴇ & ᴋᴏɴᴏʜᴀ /map!\n\n' +
+        `<a href="${botLink}">${BOT_NAME}</a> ɪꜱ ᴀ ɴᴀʀᴜᴛᴏ-ɪɴꜱᴘɪʀᴇᴅ ɢᴀᴍᴇ ʙᴏᴛ ꜰᴏʀ ɢʀᴏᴜᴘꜱ ᴀɴᴅ ᴀɴɪᴍᴇ ꜰᴀɴꜱ.\n\n` +
+        '🎮 ᴛᴀᴘ ᴛʜᴇ 𝐇𝐄𝐋𝐏 ʙᴜᴛᴛᴏɴ ᴛᴏ ᴇxᴘʟᴏʀᴇ ɢᴀᴍᴇꜱ, ᴄᴏᴍᴍᴀɴᴅꜱ & ʀᴇᴡᴀʀᴅꜱ! ❄️\n\n' +
         '❓ ᴡᴀɴɴᴀ ʟᴇᴀʀɴ ʜᴏᴡ ᴛᴏ ᴘʟᴀʏ?\n➜ ᴄʜᴇᴄᴋ ᴛʜɪꜱ ᴏᴜᴛ! https://t.me/frozenblooded/22\n\n' +
-        `➕ ᴀᴅᴅ ${BOT_NAME} ᴛᴏ ᴜʀ ɢʀᴏᴜᴘ ᴀꜱ ᴀɴ ᴀᴅᴍɪɴ ᴛᴏ ʙᴇɢɪɴ ᴜʀ ꜱʜɪɴᴏʙɪ ᴊᴏᴜʀɴᴇʏ! 🗡️`,
+        `➕ ᴀᴅᴅ <a href="${botLink}">${BOT_NAME}</a> ᴛᴏ ᴜʀ ɢʀᴏᴜᴘ ᴀꜱ ᴀɴ ᴀᴅᴍɪɴ ᴛᴏ ʙᴇɢɪɴ ᴜʀ ꜱʜɪɴᴏʙɪ ᴊᴏᴜʀɴᴇʏ! 🗡️`,
       reply_markup: await primaryKeyboard(user.id),
     });
   }
@@ -176,16 +233,33 @@ async function editTo(cq, blocks, detectEntities = false) {
     });
   } catch (e) {
     if (Array.isArray(blocks)) {
+      // Classic fallback: keep every quoted command and the navigation buttons.
       const text = plainBlocksText(blocks);
+      const keyboard = plainKeyboard(blocks);
       await api.editMessageText({
         chat_id: cq.message.chat.id,
         message_id: cq.message.message_id,
         text,
+        ...(keyboard ? { reply_markup: keyboard } : {}),
       });
       return;
     }
     throw e;
   }
+}
+
+function plainKeyboard(blocks) {
+  const rows = (blocks || [])
+    .filter((block) => block?.type === 'buttons')
+    .map((block) => (block.buttons || [])
+      .filter((button) => button.callback_data || button.url)
+      .map((button) => ({
+        text: button.text,
+        ...(button.callback_data ? { callback_data: button.callback_data } : {}),
+        ...(button.url ? { url: button.url } : {}),
+      })))
+    .filter((row) => row.length);
+  return rows.length ? { inline_keyboard: rows } : null;
 }
 
 function plainRichText(value) {
@@ -200,6 +274,7 @@ function plainBlocksText(blocks) {
   return (blocks || []).map((block) => {
     if (!block || typeof block !== 'object') return '';
     if (block.type === 'divider') return '────────────';
+    if (block.type === 'blockquote') return plainBlocksText(block.blocks);
     if (block.type === 'heading' || block.type === 'paragraph') return plainRichText(block.text);
     return '';
   }).filter(Boolean).join('\n');
@@ -229,11 +304,14 @@ export async function handleWelcomeCallback(cq) {
     const [, screen, flag] = data.split(':');
     const w = flag === 'w';
     await api.answerCallbackQuery({ callback_query_id: cq.id });
-    const blocks = screen === 'game' ? gameBlocks(w)
-      : screen === 'extras' ? extrasBlocks(w)
-        : screen === 'more' ? moreGamesBlocks(w)
-          : await buildUserHelpBlocks(cq.from, w);
-    await editTo(cq, blocks, screen === 'game' || screen === 'extras' || screen === 'more');
+    // Old codes (game / extras) are kept so buttons sent before this update
+    // still land on a working screen.
+    const blocks = (screen === 'pets') ? petsBlocks(w)
+      : (screen === 'jutsu') ? jutsuBlocks(w)
+        : (screen === 'fun' || screen === 'extras') ? funBlocks(w)
+          : (screen === 'more') ? moreGamesBlocks(w)
+            : gameBlocks(w);
+    await editTo(cq, blocks, ['game', 'main', 'pets', 'jutsu', 'fun', 'extras', 'more'].includes(screen));
   } catch (e) {
     console.error('welcome callback failed:', e?.description || e);
     try { await api.answerCallbackQuery({ callback_query_id: cq.id }); } catch (_) {}

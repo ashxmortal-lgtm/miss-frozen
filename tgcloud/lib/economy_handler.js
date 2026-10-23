@@ -24,7 +24,7 @@ import { abilityText, abilityKeyboard, backKeyboard } from './ability.js';
 import { levelsText, levelsContent } from './levels.js';
 import { economyLocked, ECO_LOCKED_TEXT } from './groupadmin.js';
 import { richOr, editRichOr, storeContent, abilityContent, groupOnlyContent, table } from './rich.js';
-import { helpText } from './help.js';
+import { helpText, helpKeyboard } from './help.js';
 import { profileText } from './profile.js';
 import { sendWelcome, buildUserHelpBlocks } from './welcome_ui.js';
 import {
@@ -175,7 +175,7 @@ export async function handleEconomyCommand(message, ctx) {
         });
       } catch (e) {
         console.error('help rich failed:', e?.description || e);
-        await reply(message, helpText(user));
+        await reply(message, helpText(user), { reply_markup: helpKeyboard() });
       }
     } else if (
       cmd === 'pet' || cmd === 'pet_store' || cmd === 'pet_rename'
