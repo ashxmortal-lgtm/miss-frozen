@@ -14,6 +14,8 @@ export const PETS = {
     abilityKey: 'flutter_fortune',
     abilityName: 'Flutter Fortune',
     abilityDesc: 'Chance to boost /kill /rob /claim /patrol /mission rewards + mild Shinobi XP.',
+    // Per-pet ability guide (the /pet "Pet abilities" button opens this one).
+    abilityUrl: 'https://t.me/frozenblooded/26',
     // t.me/c/3889508991/540 — resolved through the storage-channel file_id cache.
     imageMessageId: 540,
     // level -> [trigger chance, base-reward bonus fraction]
@@ -35,6 +37,7 @@ export const PETS = {
     abilityKey: 'royal_pace',
     abilityName: 'Royal Pace',
     abilityDesc: 'Reduces Mission & Patrol duration and cooldown.',
+    abilityUrl: 'https://t.me/frozenblooded/27',
     // t.me/c/3889508991/541 — resolved through the storage-channel file_id cache.
     imageMessageId: 541,
     // level -> [duration reduction, cooldown reduction]
@@ -47,6 +50,12 @@ export const PETS = {
     },
   },
 };
+
+/** Ability guide URL for one pet id; falls back to the shared guide. */
+export function petAbilityUrl(petId, fallback = 'https://t.me/frozenblooded/23') {
+  const def = PETS[String(petId || '').toLowerCase()];
+  return (def && def.abilityUrl) || fallback;
+}
 
 export const PET_IDS = Object.keys(PETS);
 export const PET_BY_NAME = Object.fromEntries(

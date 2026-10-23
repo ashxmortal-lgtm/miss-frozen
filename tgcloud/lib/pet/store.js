@@ -597,7 +597,9 @@ export async function startPetActivity(userId, petId, type, options = {}) {
   } else if (state.status === 'EXHAUSTED') {
     return { code: 'rest_required', pet };
   }
-  if (await isBusy(userId, pet.petId)) return { code: 'busy', activity: liveActivity?.activityType || null, pet };
+  if (await isBusy(userId, pet.petId)) {
+    return { code: 'busy', activity: liveActivity?.activityType || null, until: liveActivity?.endsAt || 0, pet };
+  }
 
   const cdUntil = Number(pet.cooldowns?.[cfg.key] || 0);
   if (cdUntil > t) {
@@ -824,7 +826,15 @@ export async function feedPet(userId, foodKey, idempotencyKey, chatId = 0, petId
   const liveActivity = await getPetActivity(userId, pet.petId);
   const state = petStateOf(pet, liveActivity);
   if (state.status !== 'READY') {
-    return { code: 'busy', status: state.status, activity: liveActivity?.activityType || null, pet };
+    // `until`/`petName` let the map food buttons name the running activity.
+    return {
+      code: 'busy',
+      status: state.status,
+      activity: liveActivity?.activityType || null,
+      until: state.endsAt,
+      petName: pet.name,
+      pet,
+    };
   }
   if (pet.energy >= PET_MAX_ENERGY) return { code: 'full_energy', pet };
   if (idempotencyKey && !(await once(`pet_food:${userId}:${pet.petId}:${idempotencyKey}`))) {

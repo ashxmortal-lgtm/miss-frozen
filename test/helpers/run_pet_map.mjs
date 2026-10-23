@@ -85,12 +85,14 @@ assert.ok(HOTSPRINGS_CAPTION.some((line) => line.includes('ʀᴇʟᴀx ᴜʀ ꜱ
 assert.deepEqual(PET_FOOD_PRICE_LABEL, {
   ninja_meal: '500 🍥', chakra_treat: '1,000 🍥', feast: '2,000 🍥',
 });
-assert.deepEqual(PET_FOOD_CAPTION.filter(Boolean).length, 9, 'three meals × three lines');
-assert.ok(PET_FOOD_CAPTION.includes('🍱 𝐍𝐈𝐍𝐉𝐀 𝐏𝐄𝐓 𝐌𝐄𝐀𝐋'));
-assert.ok(PET_FOOD_CAPTION.includes('🍬 𝐂ʜᴀᴋʀᴀ 𝐓ʀᴇᴀᴛ'));
-assert.ok(PET_FOOD_CAPTION.includes('🍜 𝐈ᴄʜɪʀᴀᴋᴜ 𝐅ᴇᴀꜱᴛ'));
-assert.ok(PET_FOOD_CAPTION.includes('✨ ᴇꜰꜰᴇᴄᴛ: +100 xᴘ · +10 ⚡'));
-assert.ok(PET_FOOD_CAPTION.includes('💰 ᴘʀɪᴄᴇ: 2,000 🍥'));
+// Requested caption: `➤` title · blank · effect · blank · price per meal.
+assert.deepEqual(PET_FOOD_CAPTION, [
+  '➤ 🍱 𝐍𝐈𝐍𝐉𝐀 𝐏𝐄𝐓 𝐌𝐄𝐀𝐋', '', '✨ +100 xᴘ · +10 ⚡', '', '💰 500 🍥', '',
+  '➤ 🍬 𝐂ʜᴀᴋʀᴀ 𝐓ʀᴇᴀᴛ', '', '✨ +250 xᴘ · +25 ⚡', '', '💰 1,000 🍥', '',
+  '➤ 🍜 𝐈ᴄʜɪʀᴀᴋᴜ 𝐅ᴇᴀꜱᴛ', '', '✨ +500 xᴘ · +50 ⚡', '', '💰 2,000 🍥',
+]);
+assert.equal(PET_FOOD_CAPTION.filter((line) => line.startsWith('➤ ')).length, 3, 'three meals');
+assert.equal(PET_FOOD_CAPTION.filter(Boolean).length, 9, 'three meals × three lines');
 
 // ---- pet card lines ----
 assert.deepEqual(petCardLines({

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { db, sql } from './sdk_db_stub.mjs';
 import { api } from 'sdk';
 import {
-  buyPet, equipPet, ensurePetSchema, feedPet, startPetActivity,
+  buyPet, equipPet, getEquippedPet, ensurePetSchema, feedPet, buyPetFood, startPetActivity,
 } from '../../tgcloud/lib/pet/store.js';
 import {
   petStoreContent, petDetailContent, petStatsContent, petFoodContent, petListContent,
@@ -17,7 +17,7 @@ import {
   playStartedText, playCompleteText, trainStartedText, trainCompleteText,
   restStartedText, restCompleteText, restRequiredText, alreadyReadyText,
   progressDots, timeLeftText, DUPLICATE_SESSION_TEXT, PET_FOOD_CAPTION,
-  petNotHungryText,
+  petNotHungryText, petCurrentActivityText, ONE_PET_ONLY_TEXT, petSwitchedText,
 } from '../../tgcloud/lib/pet/text.js';
 import { PET_XP_THRESHOLDS } from '../../tgcloud/lib/pet/defs.js';
 import { style, escapeHtml } from '../../tgcloud/lib/texts.js';
@@ -94,9 +94,12 @@ for (const label of [
   assert.ok(detailLabels.includes(style(label)), `${label} missing from the pet menu`);
 }
 const detailRows = detail.filter((b) => b?.type === 'buttons').map((b) => b.buttons);
-assert.deepEqual(detailRows.map((r) => r.length), [4, 3, 2], 'exactly three rows: 4 · 3 · 2');
+assert.deepEqual(detailRows.map((r) => r.length), [4, 2, 3], 'exactly three rows: 4 · 2 · 3');
+assert.deepEqual(detailRows[1].map((b) => b.text), ['📊 Pet stats', '🕸️ Pet abilities'].map(style));
+assert.deepEqual(detailRows[2].map((b) => b.text),
+  ['🔄 Switch pet', '✏️ Rename pet', '❌ Close'].map(style), 'row 3: switch · rename · close');
 const detailUrls = buttonsOf(detail).filter((b) => b.url).map((b) => b.url);
-assert.deepEqual(detailUrls, [PET_ABILITY_URL]);
+assert.deepEqual(detailUrls, ['https://t.me/frozenblooded/26'], 'Axofly opens its own ability guide');
 for (const b of buttonsOf(detail)) {
   if (!b.callback_data) continue;
   assert.match(b.callback_data, new RegExp(`:${U}(:|$)`), 'every callback carries the opener id');
@@ -165,6 +168,16 @@ for (const needle of [
   assert.ok(statsText.includes(needle), `stats missing ${needle}`);
 }
 assert.ok(stats.some((b) => b?.type === 'divider'), 'stats uses the rich divider block');
+// Requested: every stat line sits inside a quote; the heading stays outside.
+assert.equal(stats[0].type, 'paragraph');
+assert.ok(stats[0].text.includes('𝐏𝐄𝐓 𝐒𝐓𝐀𝐓𝐒'), 'heading is the first, unquoted block');
+const quoteBlock = stats.find((b) => b?.type === 'blockquote');
+assert.ok(quoteBlock, 'stats lines are quoted');
+const quotedText = quoteBlock.blocks.map((b) => b.text).join('\n');
+for (const needle of ['⭐ ʟᴇᴠᴇʟ:', '⚡ ᴇɴᴇʀɢʏ:', 'ꜱᴛᴀᴛᴜꜱ', 'ᴛᴏᴛᴀʟ xᴘ ᴇᴀʀɴᴇᴅ']) {
+  assert.ok(quotedText.includes(needle), `quote missing ${needle}`);
+}
+assert.ok(!quotedText.includes('𝐏𝐄𝐓 𝐒𝐓𝐀𝐓𝐒'), 'heading is never inside the quote');
 assert.ok(!statsText.includes('𝐑𝐎𝐘𝐀𝐋 𝐏𝐀𝐂𝐄'), "Axofly never shows Capycorn's ability");
 
 await buyPet(U, 'capycorn', 'ui-buy-2');
@@ -186,8 +199,8 @@ for (const needle of PET_FOOD_CAPTION.filter(Boolean)) {
 assert.deepEqual(labels(food), ['500 🍥', '1,000 🍥', '2,000 🍥', style('⬅️ Back')]);
 const foodRows = food.filter((b) => b?.type === 'buttons').map((b) => b.buttons);
 assert.deepEqual(foodRows.map((r) => r.length), [3, 1], 'the three prices share one row, Back on its own');
-assert.equal(food.filter((b) => b?.type === 'paragraph' && b.text === '').length, 2,
-  'one blank line between the three meal blocks');
+assert.equal(food.filter((b) => b?.type === 'paragraph' && b.text === '').length, 8,
+  'a blank line between every line of the three meal blocks');
 for (const foodKey of ['ninja_meal', 'chakra_treat', 'feast']) {
   assert.ok(buttonsOf(food).some((b) => b.callback_data === `pet_food:${U}:axofly:${foodKey}`), foodKey);
 }
@@ -284,7 +297,7 @@ for (const blocks of [store, detail, exhausted, playing, resting, food]) {
 const mapDetail = await petDetailKeyboard(U, 'axofly', { pet: { ...pet, equipped: true, status: 'RESTING' } });
 assert.ok(mapDetail.inline_keyboard.flat().some((b) => b.callback_data === `pet_rest:${U}:axofly`),
   'map detail uses the same fixed card rows');
-assert.deepEqual(mapDetail.inline_keyboard.map((r) => r.length), [4, 3, 2]);
+assert.deepEqual(mapDetail.inline_keyboard.map((r) => r.length), [4, 2, 3]);
 
 const picker = await shinobiPickerKeyboard(U, 'play', { petId: 'axofly' });
 const starts = picker.inline_keyboard.flat().filter((b) => b.callback_data?.startsWith('map_pet_start:'));
@@ -357,5 +370,115 @@ const exhaustedReply = await command('/pet play');
 assert.equal(exhaustedReply.text, style(restRequiredText('Axofly')),
   'exhausted pet is told to rest');
 await db.run(sql`UPDATE user_pets SET exhausted = 0 WHERE telegram_id = ${U} AND pet_id = 'axofly'`);
+
+// ---- switch pet: one tap, auto-equips the other pet, opens its card --------
+const edited = [];
+api.editMessageText = async (payload) => { edited.push(payload); return {}; };
+api.editRichMessage = async (payload) => { edited.push(payload); return {}; };
+const sw = async (petId) => {
+  answers.length = 0;
+  const before = edited.length;
+  await handlePetCallback({
+    id: `cb-sw-${petId}`, from: { id: U }, data: `pet_switch:${U}:${petId}`,
+    message: { chat: { id: 1 }, message_id: 2 },
+  });
+  return { answer: answers.at(-1), editedCount: edited.length - before };
+};
+assert.ok((await listPets(U)).length >= 2, 'two pets owned for the switch test');
+await equipPet(U, 'axofly');
+const toCapy = await sw('axofly');
+assert.equal(toCapy.answer.text, style(petSwitchedText('Capycorn', 'Capycorn')), 'confirms the switch');
+assert.ok(toCapy.editedCount > 0, 'renders the switched pet card in place');
+assert.equal((await getEquippedPet(U)).petId, 'capycorn', 'Capycorn is auto-equipped');
+assert.equal((await listPets(U)).find((p) => p.petId === 'axofly').equipped, false);
+const backToAxo = await sw('capycorn');
+assert.equal((await getEquippedPet(U)).petId, 'axofly', 'switching back works');
+assert.equal(backToAxo.answer.text, style(petSwitchedText('Axofly', 'Axofly')));
+// No picker: the answer never asks the user to choose a pet.
+assert.ok(!/ᴄʜᴏᴏꜱᴇ/i.test(backToAxo.answer.text || ''), 'no pet picker is opened');
+// A renamed pet shows its custom name once, then the species.
+assert.equal(petSwitchedText('Fluffy', 'Axofly'), '🔄 ꜱᴡɪᴛᴄʜᴇᴅ ᴛᴏ Fluffy · Axofly.');
+assert.equal(petSwitchedText('Axofly', 'Axofly'), '🔄 ꜱᴡɪᴛᴄʜᴇᴅ ᴛᴏ Axofly.');
+
+// A user who owns a single pet cannot switch.
+await db.run(sql`DELETE FROM user_pets WHERE telegram_id = ${OTHER}`);
+await db.run(sql`DELETE FROM equipped_pet WHERE telegram_id = ${OTHER}`);
+await buyPet(OTHER, 'axofly', 'single-pet');
+await equipPet(OTHER, 'axofly');
+answers.length = 0;
+await handlePetCallback({
+  id: 'cb-sw-one', from: { id: OTHER }, data: `pet_switch:${OTHER}:axofly`,
+  message: { chat: { id: 1 }, message_id: 2 },
+});
+assert.equal(answers.at(-1).text, style(ONE_PET_ONLY_TEXT));
+assert.equal(answers.at(-1).show_alert, true);
+assert.equal((await getEquippedPet(OTHER)).petId, 'axofly', 'equip unchanged');
+
+// ---- a second activity names the running one -------------------------------
+await db.run(sql`DELETE FROM pet_activity WHERE telegram_id = ${U}`);
+await equipPet(U, 'axofly');
+await db.run(sql`UPDATE user_pets SET energy = 100, exhausted = 0 WHERE telegram_id = ${U} AND pet_id = 'axofly'`);
+const trainStart = await startPetActivity(U, 'axofly', 'train', { chatId: 1 });
+assert.equal(trainStart.code, 'ok');
+const busyPet = (await listPets(U)).find((p) => p.petId === 'axofly');
+assert.equal(busyPet.status, 'TRAINING');
+
+for (const [action, attempt] of [
+  ['pet_play', 'play'],
+  ['pet_train', 'train'],
+  ['pet_rest', 'rest'],
+  ['pet_feed_menu', 'feed'],
+]) {
+  answers.length = 0;
+  await handlePetCallback({
+    id: `cb-busy-${attempt}`, from: { id: U }, data: `${action}:${U}:axofly`,
+    message: { chat: { id: 1 }, message_id: 2 },
+  });
+  const message = answers.at(-1);
+  assert.equal(message.show_alert, true, `${attempt} refusal is an alert`);
+  assert.ok(message.text.includes('ᴄᴜʀʀᴇɴᴛ ᴀᴄᴛɪᴠɪᴛʏ'), `${attempt} names the activity: ${message.text}`);
+  assert.ok(message.text.includes('ᴄᴜʀʀᴇɴᴛ ᴀᴄᴛɪᴠɪᴛʏ: ᴛʀᴀɪɴɪɴɢ'), `${attempt} says TRAINING: ${message.text}`);
+  assert.ok(/· \S*\d/.test(message.text), `${attempt} shows the time left: ${message.text}`);
+  assert.notEqual(message.text, DUPLICATE_SESSION_TEXT, `${attempt} is specific, not generic`);
+}
+// The store answers food purchases while busy with the data the map popup
+// needs (pet name + when the running activity ends).
+const busyBuy = await buyPetFood(U, 'ninja_meal', 'busy-food', 1, 'axofly');
+assert.equal(busyBuy.code, 'busy');
+assert.equal(busyBuy.petName, 'Axofly');
+assert.ok(busyBuy.until > now(), 'store reports the end of the running activity');
+const busyFoodText = petCurrentActivityText(busyBuy.petName, busyBuy.activity, 'feed', busyBuy.until);
+assert.ok(busyFoodText.includes('ᴄᴜʀʀᴇɴᴛ ᴀᴄᴛɪᴠɪᴛʏ: ᴛʀᴀɪɴɪɴɢ · '), busyFoodText);
+assert.ok(busyFoodText.includes('❌ ꜰᴇᴇᴅ ᴄᴀɴ\'ᴛ ꜱᴛᴀʀᴛ'), 'names the refused action');
+
+// The same text is produced for the optimistic play guard before any lookup.
+assert.ok(startResultText({ code: 'busy', pet: busyPet }, 'play').includes('ᴄᴜʀʀᴇɴᴛ ᴀᴄᴛɪᴠɪᴛʏ: '));
+assert.ok(startResultText({ code: 'busy', pet: busyPet }, 'play').includes('ᴄᴜʀʀᴇɴᴛ ᴀᴄᴛɪᴠɪᴛʏ: ᴛʀᴀɪɴɪɴɢ'));
+assert.equal(
+  petCurrentActivityText('Simmi', 'train', 'play', now() + 6900),
+  "⏳ Simmi ɪꜱ ʙᴜꜱʏ\n🏋️ ᴄᴜʀʀᴇɴᴛ ᴀᴄᴛɪᴠɪᴛʏ: ᴛʀᴀɪɴɪɴɢ · 1h 55m\n❌ ᴘʟᴀʏ ᴄᴀɴ'ᴛ ꜱᴛᴀʀᴛ ᴜɴᴛɪʟ ᴛʜɪꜱ ᴇɴᴅꜱ.",
+);
+await db.run(sql`DELETE FROM pet_activity WHERE telegram_id = ${U}`);
+
+// ---- stats: HTML variant quotes every line except the heading --------------
+const { petStatsHtml } = await import('../../tgcloud/lib/pet/ui.js');
+const freshPet = (await listPets(U)).find((p) => p.petId === 'axofly');
+const statsHtml = await petStatsHtml(U, freshPet);
+assert.ok(statsHtml.startsWith(`<p>📊 𝐏𝐄𝐓 𝐒𝐓𝐀𝐓𝐒</p><blockquote>`), 'heading outside, stats inside the quote');
+assert.ok(statsHtml.includes('</blockquote><hr/>'), 'quote closes before the divider');
+assert.ok(!statsHtml.slice(0, statsHtml.indexOf('</blockquote>')).includes('𝐅𝐋𝐔𝐓ᴛᴇʀ'), 'ability is outside the quote');
+
+// ---- ability buttons open the pet's own guide ------------------------------
+const axoCard = petDetailKeyboard(U, 'axofly', { pet: freshPet });
+assert.equal(axoCard.inline_keyboard.flat().find((b) => b.url).url, 'https://t.me/frozenblooded/26');
+const capyPet = (await listPets(U)).find((p) => p.petId === 'capycorn');
+const capyCard = petDetailKeyboard(U, 'capycorn', { pet: capyPet });
+assert.equal(capyCard.inline_keyboard.flat().find((b) => b.url).url, 'https://t.me/frozenblooded/27');
+const capyStatsContent = await petStatsContent({ id: U }, capyPet);
+assert.equal(
+  buttonsOf(capyStatsContent).find((b) => b.url).url,
+  'https://t.me/frozenblooded/27',
+  'stats screen uses the same per-pet guide',
+);
 
 console.log('pet ui integration: OK');
