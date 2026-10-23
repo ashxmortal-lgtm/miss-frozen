@@ -15,6 +15,9 @@
 </head>
 <body>
   <div class="winter-scenery" aria-hidden="true">
+    <span class="scene-emoji scene-flake-a">❄️</span>
+    <span class="scene-emoji scene-flake-b">❄️</span>
+    <span class="scene-emoji scene-cloud">🌨️</span>
     <svg class="scenery" viewBox="0 0 390 300" preserveAspectRatio="xMidYMax slice" focusable="false" aria-hidden="true">
       <path d="M-10 262 L36 214 L74 244 L116 190 L160 238 L206 196 L246 232 L288 186 L330 230 L366 210 L400 250 V312 H-10Z" fill="#dfeefb"/>
       <path d="M116 190l12 16-7 1-5-7-6 5-5-8z" fill="#ffffff" opacity=".9"/>
@@ -58,18 +61,13 @@
 
   <main id="profile-app" class="shell profile-shell">
     <header class="app-header profile-top">
-      <div class="brand-mark" aria-hidden="true">
-        <svg class="ico" viewBox="0 0 24 24" focusable="false"><path d="M12 2.4v19.2M3.7 7.2l16.6 9.6M20.3 7.2 3.7 16.8"/><circle cx="12" cy="12" r="3.2"/><circle cx="12" cy="12" r="1.1" fill="currentColor" stroke="none"/></svg>
-      </div>
+      <div class="brand-mark" aria-hidden="true"><span class="ico emoji-icon">❄️</span></div>
       <div>
         <div class="brand-name">Miss Frozen</div>
         <div class="brand-sub">Konoha · Profile</div>
       </div>
       <span class="header-spacer"></span>
-      <span class="sync-pill">
-        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M19.6 12a7.6 7.6 0 1 1-2.2-5.4"/><path d="M19.6 3.8v4.8h-4.8"/></svg>
-        Live
-      </span>
+      <span class="sync-pill"><span class="ico emoji-icon" aria-hidden="true">🔄</span>Live</span>
     </header>
 
     <div id="profile-state" class="notice" role="status">
@@ -78,7 +76,10 @@
     <button id="profile-retry" class="btn btn-ghost profile-retry" type="button" hidden>Try again</button>
     <section id="profile-content" class="profile-content" aria-label="Your bot profile"></section>
 
-    <p class="credit">created by <a href="https://t.me/frozenblooded">𝑭𝒓<span class="credit-snowflake"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 2.4v19.2M3.7 7.2l16.6 9.6M20.3 7.2 3.7 16.8"/><circle cx="12" cy="12" r="3.2"/></svg></span>𝒛𝒆𝒏 𝑩𝒍𝒐𝒐𝒅𝒆𝒅</a></p>
+    <footer class="app-footer">
+      <p class="credit">created by <a href="https://t.me/frozenblooded">𝑭𝒓<span class="credit-snowflake" aria-hidden="true">❄️</span>𝒛𝒆𝒏 𝑩𝒍𝒐𝒐𝒅𝒆𝒅</a></p>
+      <p class="version-line">MINI APP V2.0 · SYNCED WITH @MISSFROZEN_BOT</p>
+    </footer>
   </main>
   <script src="/js/icons.js"></script>
   <script src="/js/game.js"></script>

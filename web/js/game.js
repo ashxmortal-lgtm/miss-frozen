@@ -16,8 +16,6 @@
     [10000, 'Kage'],
   ];
 
-  const EMOJI = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0E}\u{FE0F}\u{200D}\u{20E3}\u{E0020}-\u{E007F}]/gu;
-
   function fmt(value) {
     if (value == null || value === '') return '—';
     const n = Number(value);
@@ -56,9 +54,12 @@
     };
   }
 
-  /** Keep bot-provided emoji and text intact for the Mini App UI. */
-  function stripEmoji(value) {
-    return String(value == null ? '' : value).trim();
+  /** Case-insensitive label match. Emojis are left untouched: a bot label such
+      as "👁️ Itachi" still matches the stored roster name "Itachi". */
+  function matches(label, name) {
+    const a = String(label == null ? '' : label).toLowerCase();
+    const b = String(name == null ? '' : name).toLowerCase();
+    return !!a && !!b && (a.indexOf(b) >= 0 || b.indexOf(a) >= 0);
   }
 
   /** Commands referenced inside an ability description ("" when none). */
@@ -83,5 +84,5 @@
     return s ? s.charAt(0).toUpperCase() : 'S';
   }
 
-  return { RANKS, fmt, clamp, rankProgress, stripEmoji, commandsIn, abilityKind, cooldownIn, initial, EMOJI };
+  return { RANKS, fmt, clamp, rankProgress, matches, commandsIn, abilityKind, cooldownIn, initial };
 });

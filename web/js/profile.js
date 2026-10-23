@@ -13,7 +13,7 @@
   const G = window.FBGame || {
     fmt: (v) => (v == null || v === '' ? '—' : String(v)),
     rankProgress: () => ({ tier: 1, tiers: 6, rank: 'Academy Student', pct: 0, maxed: false, label: '—' }),
-    stripEmoji: (v) => String(v == null ? '' : v),
+    matches: (a, b) => String(a).toLowerCase().indexOf(String(b).toLowerCase()) >= 0,
     initial: (v) => String(v || 'S').charAt(0).toUpperCase(),
   };
 
@@ -39,12 +39,35 @@
     return node;
   }
 
+  /** Every icon on this page is a native colour emoji. */
   function iconNode(name) {
-    if (I && typeof I.svgNode === 'function') {
-      const node = I.svgNode(name);
+    if (I && typeof I.iconNode === 'function') {
+      const node = I.iconNode(name);
       if (node) return node;
     }
-    return element('span', 'ico-fallback');
+    return element('span', 'ico emoji-icon', '✨');
+  }
+
+  /** The bot sends a per-shinobi emoji with /profile; keep it on screen. */
+  function emojiNode(value) {
+    if (!value) return null;
+    if (I && typeof I.emojiNode === 'function') return I.emojiNode(value);
+    return element('span', 'ico emoji-icon', value);
+  }
+
+  function rosterEmoji(profile, name) {
+    if (!name) return '';
+    const list = Array.isArray(profile.roster) ? profile.roster : [];
+    const hit = list.find((item) => G.matches(name, item.name));
+    return hit && hit.emoji ? String(hit.emoji) : '';
+  }
+
+  function artNode(profile, item, name, fallback) {
+    const fromBot = item && item.emoji ? emojiNode(item.emoji) : null;
+    if (fromBot) return fromBot;
+    const known = rosterEmoji(profile, name || (item && item.name));
+    const node = known ? emojiNode(known) : null;
+    return node || iconNode(fallback);
   }
 
   function setState(message, isError) {
@@ -139,7 +162,7 @@
 
     const xpRow = element('div', 'xp-row');
     xpRow.append(element('span', 'xp-label', 'Rank progress'));
-    xpRow.append(element('span', 'xp-value', G.stripEmoji(profile.xpText || info.label)));
+    xpRow.append(element('span', 'xp-value', profile.xpText || info.label));
     card.append(xpRow);
     card.append(progressBar(info.pct));
     return card;
@@ -170,7 +193,7 @@
     for (let i = 0; i < 3; i += 1) {
       const name = list[i];
       const slot = element('div', 'slot ' + (name ? 'filled' : 'empty'));
-      slot.append(iconNode(name ? 'profile' : 'plus'));
+      slot.append(name ? artNode(profile, null, name, 'shinobi') : iconNode('plus'));
       slot.append(element('strong', null, name || 'Empty slot'));
       slot.append(element('small', null, 'Slot ' + (i + 1)));
       row.append(slot);
@@ -191,7 +214,7 @@
     for (const item of list) {
       const row = element('div', 'row static');
       const art = element('span', 'row-art');
-      art.append(iconNode('profile'));
+      art.append(artNode(profile, item, item.name, 'shinobi'));
       row.append(art);
       const body = element('span', 'row-body');
       body.append(element('strong', null, item.name || 'Shinobi'));
@@ -211,13 +234,13 @@
   function jutsuCard(profile) {
     const list = Array.isArray(profile.jutsu) ? profile.jutsu : [];
     const card = element('section', 'card');
-    addSectionTitle(card, 'Jutsu', 'ability', list.length ? list.length + ' unlocked' : 'Nothing unlocked yet');
+    addSectionTitle(card, 'Jutsu', 'jutsu', list.length ? list.length + ' unlocked' : 'Nothing unlocked yet');
     if (!list.length) {
       card.append(element('p', 'profile-empty', 'No jutsu unlocked yet. Mind Transmission Jutsu is in the Shinobi Store.'));
       return card;
     }
     const wrap = element('div', 'wrap');
-    for (const name of list) wrap.append(chip(String(name), 'spark', 'violet'));
+    for (const name of list) wrap.append(chip(String(name), 'jutsu', 'violet'));
     card.append(wrap);
     return card;
   }

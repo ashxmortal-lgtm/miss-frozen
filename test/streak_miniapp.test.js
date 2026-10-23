@@ -124,18 +124,57 @@ test('the Mini App renders streak and claim state from the server, never locally
   }
 });
 
-test('Mini App UI uses only custom SVG icons, no emoji', () => {
-  const emoji = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}]/u;
-  for (const file of ['app.js', 'icons.js', 'streak.js', 'game.js']) {
-    const source = read('web', 'js', file);
-    // Strip comments so documentation may still use a pictograph.
-    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-    const found = code.match(emoji);
-    assert.equal(found, null, file + ' contains an emoji: ' + (found && found[0]));
+test('Mini App UI uses native colour emoji icons, never SVG glyphs', () => {
+  const icons = read('web', 'js', 'icons.js');
+  assert.doesNotMatch(icons, /<svg|<path|currentColor|viewBox/i, 'icon library ships no SVG glyphs');
+  assert.match(icons, /Noto Color Emoji/, 'the Android emoji font is in the stack');
+
+  // Every emoji the design relies on is defined once, centrally.
+  for (const glyph of ['🏠', '🎒', '🏪', '✨', '🗺️', '📱', '🪙', '🔮', '🔥',
+    '🎁', '❄️', '🌨️', '👤', '🐾', '🎯', '🏆', '🥷', '🌀', '🔒', '🎉', '💬']) {
+    assert.ok(icons.includes(glyph), 'icon library defines ' + glyph);
   }
+
+  for (const file of ['index.html', 'profile.html']) {
+    const html = read('web', file);
+    assert.doesNotMatch(html, /<svg[^>]*class="ico/, file + ' has no inline SVG icon');
+    assert.match(html, /❄️/, file + ' keeps the snowflake emoji');
+    if (file === 'profile.html') {
+      assert.match(html, /class="ico emoji-icon"/, 'profile.html renders emoji icons statically');
+    }
+  }
+
+  const app = read('web', 'js', 'app.js');
+  const profile = read('web', 'js', 'profile.js');
+  assert.doesNotMatch(app, /<svg|currentColor/, 'app.js draws no SVG');
+  assert.doesNotMatch(profile, /<svg|currentColor/, 'profile.js draws no SVG');
+  assert.doesNotMatch(profile, /svgNode/, 'profile.js uses the emoji node builder');
+
   const html = read('web', 'index.html');
   assert.match(html, /js\/icons\.js/, 'icon library is loaded');
   assert.match(html, /js\/streak\.js/, 'streak model is loaded');
   assert.match(html, /js\/contract\.js[\s\S]*js\/icons\.js[\s\S]*js\/streak\.js[\s\S]*js\/app\.js/,
     'scripts load in dependency order');
+});
+
+test('footer keeps the creator credit, snowflake emoji and bot sync line', () => {
+  const app = read('web', 'js', 'app.js');
+  assert.match(app, /class="app-footer"/, 'app.js renders a footer element');
+  assert.match(app, /created by/, 'creator credit is present');
+  assert.match(app, /credit-snowflake[^>]*>❄️</, 'the credit keeps the snowflake emoji');
+  assert.match(app, /MINI APP V[' + "'\" + '] \+ VERSION/, 'app version line is rendered');
+  assert.match(app, /SYNCED WITH @/, 'bot sync line is rendered');
+  assert.match(app, /BOT_USERNAME\)\.toUpperCase\(\)/, 'sync line uses the bot username');
+  // Footer is emitted after </main> and before the bottom navigation.
+  assert.match(app, /<\/main>'\s*\+ footerHtml\(\) \+ '<\/div>' \+ navHtml\(\)/,
+    'footer sits above the bottom navigation');
+
+  const profile = read('web', 'profile.html');
+  assert.match(profile, /class="app-footer"/);
+  assert.match(profile, /credit-snowflake[^>]*>❄️</);
+  assert.match(profile, /MINI APP V2\.0 · SYNCED WITH @MISSFROZEN_BOT/);
+  const css = read('web', 'css', 'app.css');
+  assert.match(css, /--nav-h/, 'shell reserves the nav height');
+  assert.match(css, /padding: 14px 14px calc\(var\(--nav-h\) \+ 46px \+ env\(safe-area-inset-bottom\)\)/,
+    'shell padding clears the nav and the safe area');
 });
