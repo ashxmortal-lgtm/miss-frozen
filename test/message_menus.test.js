@@ -229,8 +229,14 @@ test('claim routes to Mini App rather than claiming in chat; group link is handl
   const source = read('tgcloud/lib/economy_handler.js');
   const branch = source.slice(source.indexOf("} else if (cmd === 'claim'"), source.indexOf("} else if (cmd === 'balance'"));
   assert.doesNotMatch(branch, /claimDaily\(/);
-  assert.match(branch, /web_app: \{ url: MINI_APP_URL \}/);
-  assert.match(branch, /start=mini_claim/);
+  assert.match(branch, /replyClaimPrompt\(message, cmd\)/);
+
+  // DM: Mini App button · group: link that opens the bot DM (the text asks for it).
+  const prompt = source.slice(source.indexOf('async function replyClaimPrompt'), source.indexOf('// Everything that touches coins'));
+  assert.match(prompt, /web_app: \{ url: MINI_APP_URL \}/);
+  assert.match(prompt, /start=mini_claim/);
+  assert.match(prompt, /message\.chat\.type === 'private'/);
+  assert.match(prompt, /CLAIM_ALREADY_TEXT/);
   assert.match(read('tgcloud/handlers/message.js'), /if \(key === 'mini_claim'\)/);
 });
 
