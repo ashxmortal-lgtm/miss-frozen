@@ -59,8 +59,10 @@ export async function getAllShinobiState(telegramId) {
   return Object.fromEntries((rows || []).map((r) => [r.shinobi, r]));
 }
 
+// A kill targets the ACCOUNT, not a shinobi: the Starter Shinobi dies like any
+// other companion, and users who own no shinobi at all are still killable
+// (their fallback starter is the target). There is no beginner protection.
 export function isDead(state, t = now()) {
-  if (state?.shinobi === 'Starter Shinobi') return false;
   return !!state && (state.deadUntil || 0) > t;
 }
 export function isExhausted(state, t = now()) {
@@ -204,9 +206,10 @@ export async function getEquippedList(telegramId) {
 
 /**
  * Primary equipped shinobi — used by kill/rob targeting & life status.
- * The Starter Shinobi is the protected beginner companion, so a real equipped
- * shinobi always wins even when a legacy Starter row still sits in slot 0
- * (that row used to shadow the real target and made every /kill refuse).
+ * A real equipped shinobi always wins over a legacy Starter row in slot 0
+ * (that row used to shadow the real target and made every /kill refuse), but
+ * the starter itself is a normal, killable target for users who own no other
+ * shinobi.
  */
 export async function getEquipped(telegramId) {
   const list = await getEquippedList(telegramId);

@@ -477,7 +477,7 @@ async function getEligibleStatus(telegramId, kind) {
     const act = actMap[name];
     const st = states[name] || {};
 
-    if (name !== 'Starter Shinobi' && isDead(st, t)) {
+    if (isDead(st, t)) {
       busyNotes.push(`• ${EMO[name] || '🥷'} ${name}: dead (revives at ${dueText(st.deadUntil, t)})`);
       continue;
     }

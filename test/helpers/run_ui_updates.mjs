@@ -75,15 +75,16 @@ const card = formatBalanceText({
 assert.equal(
   card,
   '<a href="tg://user?id=7">Tester</a>\'ꜱ ʙᴀʟᴀɴᴄᴇ\n\n<blockquote>' +
-  '🍥 ᴄᴏɪɴꜱ: 101,556\n\n🔪 ᴋɪʟʟꜱ: 1\n\n🥷🏻 ꜱʜɪɴᴏʙɪ ʀᴀɴᴋ: Academy Student\n\n⚡ ᴄʜᴀᴋʀᴀ: 300' +
+  '🍥 ᴄᴏɪɴꜱ: 101,556\n🔪 ᴋɪʟʟꜱ: 1\n🥷🏻 ꜱʜɪɴᴏʙɪ ʀᴀɴᴋ: Academy Student\n⚡ ᴄʜᴀᴋʀᴀ: 300' +
   '</blockquote>',
 );
 const ranked = formatBalanceText({
   mentionHtml: 'T', balance: 5, kills: 0, rankName: 'Genin', chakra: 0, rank: '#2', pending: 40,
 });
 assert.match(ranked, /🍥 ᴄᴏɪɴꜱ: 5 {2}#2\n/);
-assert.match(ranked, /⏳ ᴘᴇɴᴅɪɴɢ ʀᴇᴡᴀʀᴅꜱ: 40 🍥/);
-assert.match(ranked, /→ ᴄʟᴀɪᴍ ᴀᴛ ʜᴏᴋᴀɢᴇ ᴏꜰꜰɪᴄᴇ: \/map/);
+assert.match(ranked, /\n⏳ ᴘᴇɴᴅɪɴɢ ʀᴇᴡᴀʀᴅꜱ: 40 🍥\n→ ᴄʟᴀɪᴍ ᴀᴛ ʜᴏᴋᴀɢᴇ ᴏꜰꜰɪᴄᴇ: \/map/);
+const quoteBody = ranked.slice(ranked.indexOf('<blockquote>') + 12, ranked.indexOf('</blockquote>'));
+assert.ok(!quoteBody.includes('\n\n'), 'one row per line, no blank spacer rows');
 assert.match(ranked, /^T'ꜱ ʙᴀʟᴀɴᴄᴇ\n\n<blockquote>[\s\S]*<\/blockquote>$/);
 
 // ---------- /gift_store rich table ----------

@@ -144,7 +144,8 @@ async function isOwner(id, shinobi) {
  * duplicate callbacks resolve at most once; kills/coins follow the winner.
  */
 export async function killTarget(attackerId, targetId, targetShinobi) {
-  if (targetShinobi === 'Starter Shinobi') return { code: 'already_dead', reviveAt: 0 };
+  // No shinobi-level protection: the kill lands on the account's target
+  // shinobi, and the Starter Shinobi is a normal (killable) target.
   await db.run(sql`INSERT OR IGNORE INTO users (telegram_id, balance) VALUES (${attackerId}, 0)`);
   await db.run(sql`INSERT OR IGNORE INTO users (telegram_id, balance) VALUES (${targetId}, 0)`);
   await ensureShinobiState(targetId, targetShinobi);
@@ -378,11 +379,8 @@ export async function handleKill(message) {
   const eqList = await getEquippedList(target.id);
   const hasNaruto = eqList.some((s) => isNarutoName(s)) || isNarutoName(shinobi);
 
-  if (shinobi === 'Starter Shinobi' && !hasNaruto) {
-    await replyText(message, '🛡️ Starter Shinobi cannot be killed.');
-    return true;
-  }
-
+  // The Starter Shinobi is no longer protected: a user with no shinobi is
+  // still a valid target and the starter is the account's killable companion.
   if (hasNaruto) {
     const pendingRow = await db.get(sql`
       SELECT id FROM clone_pending

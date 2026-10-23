@@ -46,8 +46,16 @@ test('successful kill pays according to pre-kill level and increments kills with
   }
 });
 
-test('starter, already-dead targets, and lost death races receive no reward', async () => {
-  for (const [options, target] of [[{}, 'Starter Shinobi'], [{ dead: true }, 'Sasuke'], [{ wins: false }, 'Sasuke']]) {
+test('the Starter Shinobi is a normal target and pays the bounty', async () => {
+  const { killTarget, updates } = combat({});
+  const result = await killTarget(1, 2, 'Starter Shinobi');
+  assert.equal(result.code, 'ok', 'no shinobi-level protection is left in the kill path');
+  assert.equal(result.coins, 100);
+  assert.deepEqual(updates, [[100, 1]]);
+});
+
+test('already-dead targets and lost death races receive no reward', async () => {
+  for (const [options, target] of [[{ dead: true }, 'Sasuke'], [{ wins: false }, 'Sasuke']]) {
     const { killTarget, updates } = combat(options);
     assert.equal((await killTarget(1, 2, target)).code, 'already_dead');
     assert.equal(updates.length, 0);

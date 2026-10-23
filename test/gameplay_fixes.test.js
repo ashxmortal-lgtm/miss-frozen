@@ -19,3 +19,8 @@ test('/kill targets the equipped shinobi, not a shadowing starter row', () => {
 test('claim prompts and the leaderboard switch follow the requested flow', () => {
   assert.match(run('test/helpers/run_claim_lb.mjs'), /claim & leaderboard: OK/);
 });
+
+// Patrol/mission return card: user mention, coin icons, ⭐ XP, boost names.
+test('the patrol return card mentions the user and names every active boost', () => {
+  assert.match(run('test/helpers/run_activity_reward.mjs'), /activity reward: OK/);
+});

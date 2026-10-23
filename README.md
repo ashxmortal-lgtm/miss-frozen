@@ -65,9 +65,16 @@ DM). The `Global leaderboard` button edits the same message, and the global boar
 opened from a group keeps a `Group leaderboard` button to switch back — no new
 message is ever sent.
 
-**`/kill` / `/rob` targeting** — the target's equipped shinobi is used, and a
-real shinobi always beats the protected `Starter Shinobi` even when a legacy
-starter row still sits in slot 0. Members with only the starter stay protected.
+**Patrol/mission return** — the card mentions the returning user, pays each line
+in coins with the 🍥 icon (`→ +N 🍥`), shows XP on a `⭐` row, names active
+boosters with what they added (Sakura/Axofly in coins, Capycorn only when it
+actually shortened the activity), then the pending total and the Hokage Office
+claim hint. `/balance` prints one stat per line with no blank spacer rows.
+
+**`/kill` / `/rob` targeting** — the kill lands on the account: the target's
+equipped shinobi is used, and a real shinobi always beats a legacy `Starter
+Shinobi` row in slot 0. Nobody is protected — members who own no shinobi at all
+are still valid targets and their starter becomes the killable companion.
 
 ## Layout
 

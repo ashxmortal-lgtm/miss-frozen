@@ -1,6 +1,7 @@
 // /kill & /rob targeting: a real equipped shinobi must win over a legacy
-// `Starter Shinobi` row that still sits in slot 0 (that row used to shadow the
-// target and made every kill answer "Starter Shinobi cannot be killed").
+// `Starter Shinobi` row that still sits in slot 0, and nobody is protected:
+// a user who owns no shinobi at all is still a valid target (the account is
+// killed, not a shinobi).
 import assert from 'node:assert/strict';
 import { api } from 'sdk';
 import { db } from './sdk_db_stub.mjs';
@@ -120,16 +121,27 @@ const starterState = await db.get({
   text: `SELECT dead_until FROM shinobi_state WHERE telegram_id = ? AND shinobi = 'Starter Shinobi'`,
   params: [TARGET],
 });
-assert.ok(!starterState, 'the protected starter is never touched');
+assert.ok(!starterState, 'a real equipped shinobi shadows the starter row');
 const attacker = await db.get({
   text: `SELECT kills FROM users WHERE telegram_id = ?`, params: [ATTACKER],
 });
 assert.equal(attacker.kills, 1, 'the kill is credited');
 
-// Starter-only targets keep their beginner protection.
+// A target with no shinobi at all is killable — the account dies, not a shinobi.
 sent.length = 0;
 await handleKill(message(ATTACKER, STARTER_ONLY, '/kill'));
-assert.match(sent.map(textOf).join('\n'), /ꜱᴛᴀʀᴛᴇʀ ꜱʜɪɴᴏʙɪ ᴄᴀɴɴᴏᴛ ʙᴇ ᴋɪʟʟᴇᴅ/);
+const newbieText = sent.map(textOf).join('\n');
+assert.match(newbieText, /ᴋɪʟʟᴇᴅ/);
+assert.doesNotMatch(newbieText, /ᴄᴀɴɴᴏᴛ ʙᴇ ᴋɪʟʟᴇᴅ/);
+const newbieState = await db.get({
+  text: `SELECT dead_until FROM shinobi_state WHERE telegram_id = ? AND shinobi = 'Starter Shinobi'`,
+  params: [STARTER_ONLY],
+});
+assert.ok(Number(newbieState.dead_until) > now(), 'the starter of a shinobi-less account dies');
+const afterTwo = await db.get({
+  text: `SELECT kills FROM users WHERE telegram_id = ?`, params: [ATTACKER],
+});
+assert.equal(afterTwo.kills, 2, 'the second kill is credited');
 
 // ---- /rob uses the same target ------------------------------------------------
 sent.length = 0;
