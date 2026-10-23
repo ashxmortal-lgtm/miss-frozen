@@ -29,8 +29,8 @@
     try { tg.ready(); } catch (_) {}
     try { tg.expand(); } catch (_) {}
     try {
-      tg.setHeaderColor('#04080f');
-      tg.setBackgroundColor('#04080f');
+      tg.setHeaderColor('#eef8ff');
+      tg.setBackgroundColor('#eef8ff');
     } catch (_) {}
   }
 
@@ -179,7 +179,7 @@
       : '<span class="sync-pill">' + ico('refresh') + 'Connecting</span>';
     return '<header class="app-header">'
       + '<div class="brand-mark">' + ico('logo') + '</div>'
-      + '<div><div class="brand-name">Frozen Blooded</div><div class="brand-sub">Konoha · Mini App</div></div>'
+      + '<div><div class="brand-name">Miss Frozen</div><div class="brand-sub">Konoha · Mini App</div></div>'
       + '<span class="header-spacer"></span>' + sync
       + '</header>';
   }

@@ -3,16 +3,68 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#04080f">
-  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#eef8ff">
+  <meta name="color-scheme" content="light">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="description" content="Frozen Blooded — your Konoha coins, chakra, streak, shinobi and store, synced with the MissFrozen bot.">
-  <title>Frozen Blooded · Konoha Mini App</title>
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="description" content="Miss Frozen — your Konoha coins, chakra, streak, shinobi and store, synced with the MissFrozen bot.">
+  <title>Miss Frozen · Konoha Mini App</title>
   <link rel="stylesheet" href="css/app.css">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
+  <div class="winter-scenery" aria-hidden="true">
+    <svg class="scenery" viewBox="0 0 390 300" preserveAspectRatio="xMidYMax slice" focusable="false" aria-hidden="true">
+      <!-- distant snowy peaks -->
+      <path d="M-10 262 L36 214 L74 244 L116 190 L160 238 L206 196 L246 232 L288 186 L330 230 L366 210 L400 250 V312 H-10Z" fill="#dfeefb"/>
+      <path d="M116 190l12 16-7 1-5-7-6 5-5-8z" fill="#ffffff" opacity=".9"/>
+      <path d="M288 186l13 17-8 1-5-8-6 6-5-9z" fill="#ffffff" opacity=".9"/>
+      <path d="M36 214l10 14-6 1-4-6-5 4-4-7z" fill="#ffffff" opacity=".7"/>
+      <path d="M206 196l10 13-6 1-4-6-4 4-4-6z" fill="#ffffff" opacity=".7"/>
+      <!-- soft near hills -->
+      <path d="M-10 286C54 258 100 264 152 286c54 22 98-24 162-10 38 8 66 18 86 12v28H-10Z" fill="#cbe4f7"/>
+      <!-- left pine cluster -->
+      <g opacity=".92">
+        <g transform="translate(2 182)">
+          <path d="M26 94V64" stroke="#9fc4de" stroke-width="5" stroke-linecap="round"/>
+          <path d="M26 0 49 48H3Z" fill="#b7d6ec"/>
+          <path d="M26 28 53 82H-1Z" fill="#accfe8"/>
+          <path d="M26 6 34 21H18Z" fill="#ffffff" opacity=".92"/>
+          <path d="M26 38 37 60H15Z" fill="#ffffff" opacity=".62"/>
+        </g>
+        <g transform="translate(50 214) scale(.72)">
+          <path d="M26 94V64" stroke="#9fc4de" stroke-width="6" stroke-linecap="round"/>
+          <path d="M26 0 49 48H3Z" fill="#b8d7ec"/>
+          <path d="M26 28 53 82H-1Z" fill="#b8d7ec"/>
+          <path d="M26 6 34 21H18Z" fill="#ffffff" opacity=".95"/>
+        </g>
+      </g>
+      <!-- right pine cluster -->
+      <g opacity=".92">
+        <g transform="translate(318 190)">
+          <path d="M26 94V64" stroke="#9fc4de" stroke-width="5" stroke-linecap="round"/>
+          <path d="M26 0 49 48H3Z" fill="#b7d6ec"/>
+          <path d="M26 28 53 82H-1Z" fill="#accfe8"/>
+          <path d="M26 6 34 21H18Z" fill="#ffffff" opacity=".92"/>
+          <path d="M26 38 37 60H15Z" fill="#ffffff" opacity=".62"/>
+        </g>
+        <g transform="translate(356 216) scale(.68)">
+          <path d="M26 94V64" stroke="#9fc4de" stroke-width="6" stroke-linecap="round"/>
+          <path d="M26 0 49 48H3Z" fill="#b8d7ec"/>
+          <path d="M26 28 53 82H-1Z" fill="#b8d7ec"/>
+          <path d="M26 6 34 21H18Z" fill="#ffffff" opacity=".95"/>
+        </g>
+        <g transform="translate(284 240) scale(.46)">
+          <path d="M26 94V64" stroke="#aacbe2" stroke-width="7" stroke-linecap="round"/>
+          <path d="M26 0 49 48H3Z" fill="#cfe6f5"/>
+          <path d="M26 28 53 82H-1Z" fill="#c5dff1"/>
+        </g>
+      </g>
+      <!-- snowy foreground bank -->
+      <path d="M-10 304c70-14 130 2 200 4 62 2 124-10 200-4v18H-10Z" fill="#f7fcff" opacity=".85"/>
+    </svg>
+  </div>
+
   <main id="app" class="shell-root">
     <div class="shell">
       <div class="skeleton" aria-hidden="true">
