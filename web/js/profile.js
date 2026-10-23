@@ -300,6 +300,21 @@
     }
   }
 
+  /** t.me links (the footer credit) open inside Telegram, like the main app. */
+  function openTelegramLinks() {
+    if (typeof document.addEventListener !== 'function') return;
+    document.addEventListener('click', (event) => {
+      const target = event.target;
+      const link = target && typeof target.closest === 'function' ? target.closest('a[href^="https://t.me/"]') : null;
+      if (!link || typeof link.getAttribute !== 'function') return;
+      event.preventDefault();
+      const url = link.getAttribute('href');
+      if (tg && typeof tg.openTelegramLink === 'function') tg.openTelegramLink(url);
+      else if (tg && typeof tg.openLink === 'function') tg.openLink(url);
+    });
+  }
+
   retry.addEventListener('click', loadProfile);
+  openTelegramLinks();
   loadProfile();
 })();
