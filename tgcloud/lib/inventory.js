@@ -12,7 +12,10 @@ import { style, escapeHtml } from './texts.js';
 import { fmt } from './store.js';
 import { table } from './rich.js';
 import { collectStatus, statusParts } from './rpg/status.js';
-import { sakuraHeal, katsuyuHeal, restorableTimers, katsuyuRestore } from './rpg/training.js';
+import {
+  sakuraHeal, katsuyuHeal, restorableTimers, katsuyuRestore, healUnlockState,
+} from './rpg/training.js';
+import { descOf } from './command_registry.js';
 import { dueText } from './rpg/time.js';
 import { getEquippedList } from './rpg/state.js';
 import { listPets } from './pet/store.js';
@@ -22,7 +25,8 @@ const para = (...t) => ({ type: 'paragraph', text: t.length === 1 ? t[0] : t });
 const head = (text, size = 2) => ({ type: 'heading', text, size });
 const row = (...buttons) => ({ type: 'buttons', buttons, align: 'center' });
 const cb = (text, data, style) => (style ? { text, callback_data: data, style } : { text, callback_data: data });
-const rich = (blocks) => ({ blocks });
+// Commands inside the quoted lines stay tappable.
+const rich = (blocks) => ({ blocks, skip_entity_detection: false });
 const mention = (u) => ({
   type: 'text_mention',
   text: (u && (u.first_name || u.firstName)) || 'User',
@@ -124,10 +128,6 @@ export async function buildInventoryBlocks(user) {
     blocks.push(para('👤 EQUIPPED: —'));
   }
   blocks.push(row(
-    cb("🌸 Sakura's Healing", 'inv:sakura', 'success'),
-    cb("🐌 Katsuyu's Healing", 'inv:katsuyu', 'success'),
-  ));
-  blocks.push(row(
     cb('🌀 Jutsu', 'inv:jutsu', 'transparent'),
     cb('owned ❄️ gifts', 'inv:gifts', 'transparent'),
   ));
@@ -151,22 +151,59 @@ export async function buildOwnedGiftsBlocks(user) {
   ];
 }
 
-export async function buildJutsuBlocks(user) {
-  const uid = user.id || user.telegramId;
-  const items = await db.select().from(inventory).where(eq(inventory.telegramId, uid)).all();
-  const jutsu = items.filter(isJutsu);
+/**
+ * Jutsu commands the owner can actually use right now:
+ * /mt needs Mind Transmission Jutsu, /byakugan needs Hinata on the roster.
+ */
+export function jutsuCommandLines(items) {
+  const list = items || [];
+  const owned = (name, type) => list.some((i) => {
+    const itemName = String(i.itemName || '').toLowerCase();
+    if (type && String(i.itemType || '').toLowerCase() !== type) return false;
+    return itemName === name || itemName.includes(name);
+  });
+  const lines = [];
+  if (owned('mind transmission')) lines.push(`/mt  —  ${descOf('/mt')}`);
+  if (owned('hinata', 'shinobi')) lines.push(`/byakugan  —  ${descOf('/byakugan')}`);
+  return lines;
+}
+
+/**
+ * JUTSU screen of /inventory — owned jutsu, the commands they unlock, and the
+ * two healing skills (red while locked, green once unlocked).
+ */
+export function jutsuScreenBlocks(items, unlocks = {}) {
+  const jutsu = (items || []).filter(isJutsu);
   const lines = jutsu.length
     ? jutsu.map((j) => {
         const q = j.qty && j.qty > 1 ? ` x ${j.qty}` : '';
         return `❯ ${escapeHtml(j.itemName)}${q}`;
       })
     : ['❯ No jutsu unlocked yet'];
+  const commands = jutsuCommandLines(items);
 
   return [
-    para('JUTSU'),
+    para('🌀 JUTSU'),
     quoteLines(lines),
+    ...(commands.length ? [para('⚡ COMMANDS'), quoteLines(commands)] : []),
+    row(
+      cb("🌸 Sakura's Healing", 'inv:sakura', unlocks.sakura ? 'success' : 'danger'),
+      cb("🐌 Katsuyu's Healing", 'inv:katsuyu', unlocks.katsuyu ? 'success' : 'danger'),
+    ),
     row(cb('← Back', 'inv:home', 'transparent')),
   ];
+}
+
+export async function buildJutsuBlocks(user) {
+  const uid = user.id || user.telegramId;
+  const items = await db.select().from(inventory).where(eq(inventory.telegramId, uid)).all();
+  let unlocks = { sakura: false, katsuyu: false };
+  try {
+    unlocks = await healUnlockState(uid);
+  } catch (e) {
+    console.error('[inventory heals]', e);
+  }
+  return jutsuScreenBlocks(items, unlocks);
 }
 
 /** Plain text fallback (old inventoryText API) */
@@ -243,7 +280,7 @@ async function buildRestoreBlocks(user, result, timers) {
     head("🐌 KATSUYU'S HEALING", 6),
     quoteLines(lines),
     ...rows,
-    row(cb('← Back', 'inv:home', 'danger')),
+    row(cb('← Back', 'inv:jutsu', 'danger')),
   ];
 }
 
@@ -261,7 +298,7 @@ export async function handleInventoryCallback(cq) {
       await api.answerCallbackQuery({
         callback_query_id: cq.id, text: sakuraAlert(r), show_alert: true,
       });
-      const blocks = await buildInventoryBlocks(cq.from);
+      const blocks = await buildJutsuBlocks(cq.from);
       await api.editMessageText({
         chat_id: cq.message.chat.id,
         message_id: cq.message.message_id,
@@ -284,7 +321,7 @@ export async function handleInventoryCallback(cq) {
       });
       const blocks = timers.length
         ? await buildRestoreBlocks(cq.from, r, timers)
-        : await buildInventoryBlocks(cq.from);
+        : await buildJutsuBlocks(cq.from);
       await api.editMessageText({
         chat_id: cq.message.chat.id,
         message_id: cq.message.message_id,
@@ -302,7 +339,7 @@ export async function handleInventoryCallback(cq) {
           ? 'This heal already restored a timer.'
           : 'That timer is already gone.';
       await api.answerCallbackQuery({ callback_query_id: cq.id, text, show_alert: true });
-      const blocks = await buildInventoryBlocks(cq.from);
+      const blocks = await buildJutsuBlocks(cq.from);
       await api.editMessageText({
         chat_id: cq.message.chat.id,
         message_id: cq.message.message_id,

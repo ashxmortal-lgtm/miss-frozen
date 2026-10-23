@@ -1,6 +1,7 @@
 import { api as telegramApi } from 'sdk';
 import { styleOutgoingPayload } from './message_style.js';
 import { isFrozenBloodedLabel } from './universal_buttons.js';
+import { replyParametersFor } from './reply_target.js';
 
 const esc = (value) => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const escAttr = (value) => esc(value).replace(/"/g, '&quot;');
@@ -123,6 +124,22 @@ function richCall(methodName, payload) {
   };
 }
 
+// Sends that answer a command reply to it; `disable_reply_target: true` opts
+// a background send out. The flag is stripped before the Bot API sees it.
+const REPLY_METHODS = new Set(['sendMessage', 'sendRichMessage']);
+
+function withReplyTarget(method, payload) {
+  if (!payload || typeof payload !== 'object') return { payload, injected: false };
+  const { disable_reply_target: disabled, ...rest } = payload;
+  if (disabled || !REPLY_METHODS.has(method) || 'reply_parameters' in rest) {
+    return { payload: rest, injected: false };
+  }
+  // Ephemeral /mt messages cannot be replies.
+  if (rest.ephemeral_message_parameters) return { payload: rest, injected: false };
+  const reply = replyParametersFor(rest.chat_id);
+  return reply ? { payload: { ...rest, reply_parameters: reply }, injected: true } : { payload: rest, injected: false };
+}
+
 // Convert the common Bot API inline-keyboard methods at the API boundary. Rich
 // keyboard rows retain callback/URL/Web App/copy actions. Unsupported methods
 // or button actions remain on the original Bot API path without losing behavior.
@@ -131,7 +148,12 @@ export const api = new Proxy(telegramApi, {
     const method = Reflect.get(target, property, target);
     if (typeof method !== 'function') return method;
     return async (...args) => {
-      if (args.length > 0) args[0] = styleOutgoingPayload(args[0]);
+      let injected = false;
+      if (args.length > 0) {
+        const prepared = withReplyTarget(String(property), styleOutgoingPayload(args[0]));
+        args[0] = prepared.payload;
+        injected = prepared.injected;
+      }
       const payload = args[0];
       const converted = payload && typeof payload === 'object' ? richCall(String(property), payload) : null;
       if (converted && typeof target[converted.method] === 'function') {
@@ -143,7 +165,16 @@ export const api = new Proxy(telegramApi, {
           if (Number(error?.code) !== 400) throw error;
         }
       }
-      return Reflect.apply(method, target, args);
+      try {
+        return await Reflect.apply(method, target, args);
+      } catch (error) {
+        // A rejected reply target must never swallow the answer: retry bare once.
+        if (injected && Number(error?.code) === 400) {
+          const { reply_parameters: _reply, ...bare } = payload;
+          return Reflect.apply(method, target, [bare, ...args.slice(1)]);
+        }
+        throw error;
+      }
     };
   },
 });

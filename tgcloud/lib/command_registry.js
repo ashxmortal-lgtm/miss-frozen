@@ -76,3 +76,9 @@ export function listCommands(accessFilter) {
 export function formatCommandList(cmds) {
   return cmds.map((c) => `${c.cmd} — ${c.desc}`).join('\n');
 }
+
+/** One-line description for a command ('' when the command is unknown). */
+export function descOf(cmd) {
+  const entry = COMMANDS.find((c) => c.cmd === cmd);
+  return entry ? entry.desc : '';
+}

@@ -88,6 +88,7 @@ async function announceDone() {
           text: render(who, r.reminder),
           parse_mode: 'HTML',
           reply_markup: claimKb,
+          disable_reply_target: true,
         });
       } catch (e) { console.error(e); }
     }
@@ -96,6 +97,7 @@ async function announceDone() {
         text: render(who, r.dm),
         parse_mode: 'HTML',
         reply_markup: claimKb,
+        disable_reply_target: true,
       });
     } catch (e) { /* user never started the bot in DM */ }
   }
@@ -250,9 +252,11 @@ export async function handleEconomyCommand(message, ctx) {
         reply_markup: { inline_keyboard: [[claimButton]] },
       });
     } else if (cmd === 'balance') {
+      // Classic HTML keeps the <blockquote> stats and the tg:// mention intact.
       await send(message.chat.id, {
         text: style(await balanceText(message)),
         parse_mode: 'HTML',
+        classic: true,
       });
     } else if (cmd === 'profile') {
       await reply(message, await profileText(user, message));

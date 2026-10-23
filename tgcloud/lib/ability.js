@@ -12,7 +12,7 @@ export const ROWS = [
   ['👤 Profile', '/profile → rank, XP, roster & stats'],
 ];
 
-const ABILITY_URL = 'https://t.me/frozenblooded/27';
+export const ABILITY_URL = 'https://t.me/frozenblooded/8';
 
 export function abilityHtml(user) {
   const who = '';
