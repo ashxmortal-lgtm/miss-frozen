@@ -68,14 +68,16 @@ export function hokageKeyboard(userId) {
   };
 }
 
-/** Gate — roster + dispatch entry */
-export function gateKeyboard(userId) {
-  return {
-    inline_keyboard: [
-      [btn('🚀 Send Available on Patrol', guard('map_patrol_pick', userId))],
-      backToMapRow(userId),
-    ],
-  };
+/**
+ * Gate — roster + dispatch entry.
+ * `exhausted > 0` adds the BBQ shortcut, which opens the recovery selection
+ * window (and, once paid, the patrol picker) without leaving the map.
+ */
+export function gateKeyboard(userId, { exhausted = 0 } = {}) {
+  const rows = [[btn('🚀 Send Available on Patrol', guard('map_patrol_pick', userId))]];
+  if (exhausted > 0) rows.push([btn('🍖 Visit BBQ and recover', guard('map_bbq_heal', userId))]);
+  rows.push(backToMapRow(userId));
+  return { inline_keyboard: rows };
 }
 
 export function ichirakuKeyboard(userId) {

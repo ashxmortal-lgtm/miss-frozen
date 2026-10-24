@@ -251,6 +251,55 @@ async function gateBody(telegramId) {
   }
 }
 
+/**
+ * Patrol picker opened from the BBQ right after a recovery: the freshly healed
+ * units are preselected and the toggles keep re-rendering this screen, so the
+ * whole "recover → send on patrol" loop happens without leaving the BBQ.
+ */
+async function bbqPatrolPick(chatId, messageId, user, result = null) {
+  const { available } = await getEligibleStatus(user.id, 'patrol');
+  const selected = await listGateSelection(user.id);
+  const healedNames = result ? result.healed : [...selected];
+  const readyLines = healedNames.length
+    ? healedNames.map((n) => `${EMO[n] || '🥷'} ${escapeHtml(n)} is ready again.`)
+    : [];
+  if (result) readyLines.push(`−${fmt(result.cost)} 🍥 total.`);
+  if (!available.length) {
+    await showScreen(
+      chatId, messageId, user,
+      locBody('🍖 RECOVERED', [...readyLines, 'No patrol-eligible shinobi is free right now.']),
+      bbqKeyboard(user.id),
+      'bbq',
+    );
+    return;
+  }
+  await showScreen(
+    chatId, messageId, user,
+    locBody('🍖 RECOVERED — SEND ON PATROL', [
+      ...readyLines,
+      ...(readyLines.length ? [''] : []),
+      'Tap to toggle, then Send on Patrol.',
+    ]),
+    patrolPickKeyboard(user.id, available, selected, {
+      togglePrefix: 'map_btog',
+      selectAllAction: 'map_ball',
+      cancel: { text: '🍖 Back to BBQ', callback_data: guard('map_loc_bbq', user.id) },
+    }),
+    'bbq',
+  );
+}
+
+/** Gate controls: the BBQ recovery shortcut appears only while someone is exhausted. */
+async function gateKb(telegramId) {
+  let exhausted = 0;
+  try {
+    exhausted = (await listExhausted(telegramId)).length;
+  } catch (e) {
+    console.error('[gate exhausted]', e);
+  }
+  return gateKeyboard(telegramId, { exhausted });
+}
+
 // --- Training Ground / healing panel helpers ---
 
 function trainResultBody(r) {
@@ -499,13 +548,14 @@ async function getEligibleStatus(telegramId, kind) {
   return { available, busyNotes };
 }
 
-function patrolPickKeyboard(userId, available, selected) {
+function patrolPickKeyboard(userId, available, selected, opts = {}) {
   const rows = [];
+  const togglePrefix = opts.togglePrefix || 'map_ptog';
   const pickButtons = available.map((name) => {
     const mark = selected.has(name) ? '✅' : '❌';
     return {
       text: `${mark} ${EMO[name] || '🥷'} ${name}`,
-      callback_data: `map_ptog:${name}:${userId}`,
+      callback_data: `${togglePrefix}:${name}:${userId}`,
     };
   });
   for (let i = 0; i < pickButtons.length; i += 2) {
@@ -513,11 +563,11 @@ function patrolPickKeyboard(userId, available, selected) {
   }
   const allSelected = available.length > 0 && available.every((n) => selected.has(n));
   rows.push([
-    { text: allSelected ? '⬜ Deselect All' : '🔘 Select All', callback_data: guard('map_pall', userId) },
+    { text: allSelected ? '⬜ Deselect All' : '🔘 Select All', callback_data: guard(opts.selectAllAction || 'map_pall', userId) },
   ]);
   rows.push([
     { text: '🚀 Send on Patrol', callback_data: guard('map_psend', userId) },
-    { text: '✖️ Cancel', callback_data: guard('map_loc_gate', userId) },
+    opts.cancel || { text: '✖️ Cancel', callback_data: guard('map_loc_gate', userId) },
   ]);
   rows.push(backToMapRow(userId));
   return { inline_keyboard: rows };
@@ -720,6 +770,7 @@ export async function handleMapCallback(cb) {
       let kb = kbFor(loc, user.id);
       if (loc === 'gate') {
         body = await gateBody(user.id);
+        kb = await gateKb(user.id);
       }
       await showScreen(chatId, messageId, user, body, kb, loc);
       return true;
@@ -1313,7 +1364,7 @@ export async function handleMapCallback(cb) {
             'No patrol-eligible shinobi available right now.',
             ...(busyNotes.length ? ['', '<b>Status:</b>', ...busyNotes] : []),
           ]),
-          gateKeyboard(user.id),
+          await gateKb(user.id),
           'gate',
         );
         return true;
@@ -1408,7 +1459,7 @@ export async function handleMapCallback(cb) {
       const body = locBody('🚪 PATROL DISPATCHED', results);
       // Return to gate roster with updated statuses
       const roster = await gateBody(user.id);
-      await showScreen(chatId, messageId, user, roster, gateKeyboard(user.id), 'gate');
+      await showScreen(chatId, messageId, user, roster, await gateKb(user.id), 'gate');
       return true;
     }
 
@@ -1422,7 +1473,7 @@ export async function handleMapCallback(cb) {
         messageId,
         user,
         p(style(r.body).replace(/\n/g, '<br>')),
-        gateKeyboard(user.id),
+        await gateKb(user.id),
         'gate',
       );
       return true;
@@ -1772,13 +1823,31 @@ export async function handleMapCallback(cb) {
       return true;
     }
 
+    if (action === 'map_btog' && parts.length >= 3) {
+      await toggleGateSelection(user.id, parts[1]);
+      await answer(cb);
+      await bbqPatrolPick(chatId, messageId, user);
+      return true;
+    }
+
+    if (action === 'map_ball') {
+      await answer(cb);
+      const { available } = await getEligibleStatus(user.id, 'patrol');
+      const selected = await listGateSelection(user.id);
+      const allSelected = available.length > 0 && available.every((n) => selected.has(n));
+      if (allSelected) await clearGateSelection(user.id);
+      else await selectAllGate(user.id, available);
+      await bbqPatrolPick(chatId, messageId, user);
+      return true;
+    }
+
     if (action === 'map_bbq_hpay') {
       const selected = [...(await listGateSelection(user.id))];
       const result = await healExhaustedAtBbq(user.id, selected);
       await clearGateSelection(user.id);
       if (result.code === 'none') {
         await answer(cb, 'No selected shinobi needs recovery (already ready).', true);
-        await showScreen(chatId, messageId, user, await gateBody(user.id), gateKeyboard(user.id), 'gate');
+        await showScreen(chatId, messageId, user, await gateBody(user.id), await gateKb(user.id), 'gate');
         return true;
       }
       if (result.code === 'no_coins') {
@@ -1786,14 +1855,12 @@ export async function handleMapCallback(cb) {
         return true;
       }
       await answer(cb, `Recovered ${result.healed.length} shinobi (−${fmt(result.cost)} 🍥)`, true);
-      await showScreen(
-        chatId,
-        messageId,
-        user,
-        locBody('🍖 RECOVERED', result.healed.map((n) => `${EMO[n] || '🥷'} ${escapeHtml(n)} is ready again — −${fmt(result.cost)} 🍥`)),
-        bbqKeyboard(user.id),
-        'bbq',
-      );
+      // Straight from the BBQ: the recovered units stay selected, so patrol can
+      // be sent without walking back to the Gate.
+      const { available } = await getEligibleStatus(user.id, 'patrol');
+      const healed = new Set(result.healed);
+      await selectAllGate(user.id, available.filter((n) => healed.has(n)));
+      await bbqPatrolPick(chatId, messageId, user, result);
       return true;
     }
 

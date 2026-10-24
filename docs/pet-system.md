@@ -187,7 +187,14 @@ map_pet_*:…  (owner id first for uid-first shapes, last for pet-first shapes)
 map_hot_relax|map_hot_recall:{uid} · map_hot_go|map_hot_stop:{shinobi}:{uid}
 map_bbq_select|map_bbq_recall|map_bbq_heal|map_bbq_hpay:{uid}
 map_bbq_go|map_bbq_stop:{shinobi}:{uid}
+map_btog|map_ptog:{shinobi}:{uid} · map_ball|map_pall|map_psend:{uid}
 ```
+
+The Gate (`map_loc_gate`) adds `🍖 Visit BBQ and recover` → `map_bbq_heal` as soon as one
+roster member is exhausted; that window is the BBQ recovery selection. After the
+200 🍥-each recovery the same message turns into the patrol picker with the healed
+units preselected (`map_btog` keeps re-rendering it), so a shinobi can be recovered
+and sent on patrol without walking back to the Gate.
 
 The owner id must equal `cb.from.id` (`🔒 ᴛʜɪꜱ ᴍᴇɴᴜ ɪꜱɴ'ᴛ ʏᴏᴜʀꜱ.`), and every
 pet id is re-read from the caller's own `user_pets` rows — a tampered callback

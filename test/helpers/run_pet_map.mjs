@@ -58,6 +58,16 @@ assert.deepEqual(labels(gateKeyboard(U)), [
   ['🚀 Send Available on Patrol'],
   ['⬅️ Back'],
 ]);
+// Exhausted roster → the Gate adds the BBQ recovery shortcut (opens the
+// recovery selection window, which then leads straight into patrol dispatch).
+assert.deepEqual(labels(gateKeyboard(U, { exhausted: 1 })), [
+  ['🚀 Send Available on Patrol'],
+  ['🍖 Visit BBQ and recover'],
+  ['⬅️ Back'],
+]);
+assert.deepEqual(flat(gateKeyboard(U, { exhausted: 2 })).map((b) => b.callback_data), [
+  `map_patrol_pick:${U}`, `map_bbq_heal:${U}`, `map_home:${U}`,
+]);
 assert.deepEqual(labels(storeKeyboard(U)), [
   ['🥷 Shinobi Store', '🎁 Gift Store'],
   ['🐾 Pet Store', '🏠 Property'],
