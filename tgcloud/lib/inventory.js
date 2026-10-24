@@ -17,7 +17,7 @@ import {
 } from './rpg/training.js';
 import { descOf } from './command_registry.js';
 import { dueText } from './rpg/time.js';
-import { getEquippedList } from './rpg/state.js';
+import { getEquippedList, getUserSkills, isAccountDead } from './rpg/state.js';
 import { listPets } from './pet/store.js';
 import { statusInline } from './pet/text.js';
 
@@ -81,11 +81,10 @@ export async function buildInventoryBlocks(user) {
   if (shinobi.length) {
     const status = await collectStatus(uid);
     const byName = Object.fromEntries(status.rows.map((r) => [r.name, r]));
-    const deadRows = status.rows.filter((r) => r.primary?.key === 'dead');
-    // Overall player status above the table
-    if (deadRows.length) {
-      const reviveAt = Math.max(...deadRows.map((r) => Number(r.primary.dueAt) || 0));
-      blocks.push(para(`Status: ☠️ dead (${dueText(reviveAt, status.now)})`));
+    // Overall PLAYER status above the table — death belongs to the account.
+    const skills = await getUserSkills(uid);
+    if (isAccountDead(skills, status.now)) {
+      blocks.push(para(`Status: ☠️ dead (revives ${dueText(Number(skills.deadUntil) || 0, status.now)})`));
     } else {
       blocks.push(para('Status: ✅ alive'));
     }
@@ -241,7 +240,7 @@ export async function sendInventory(chatId, user) {
 function sakuraAlert(r) {
   if (r.code === 'ok') {
     const parts = [];
-    if (r.revived && r.revived.length) parts.push(`Revived: ${r.revived.join(', ')}.`);
+    if (r.revivedAccount) parts.push('Account revived.');
     if (r.exhaustedCleared && r.exhaustedCleared.length) parts.push(`Exhaustion cleared: ${r.exhaustedCleared.join(', ')}.`);
     if (r.cooldownsCleared && r.cooldownsCleared.length) parts.push(`Mission cooldown reset: ${r.cooldownsCleared.join(', ')}.`);
     if (r.katsuyuUnlocked) parts.push("Katsuyu's Healing is unlocked.");
@@ -249,14 +248,14 @@ function sakuraAlert(r) {
   }
   if (r.code === 'locked') return `Sakura's Healing unlocks at Lv. 4 (now Lv. ${r.level}).`;
   if (r.code === 'cooldown') return `On cooldown until ${dueText(r.until)}.`;
-  if (r.code === 'nothing') return 'Nothing to heal — no dead or exhausted shinobi and no mission cooldown.';
+  if (r.code === 'nothing') return 'Nothing to heal — your account is alive, no shinobi is exhausted and no mission cooldown is running.';
   if (r.code === 'not_owned') return 'Sakura is not on your roster.';
   return 'Could not use Sakura\'s Healing.';
 }
 
 function katsuyuAlert(r) {
   if (r.code === 'ok') {
-    const revived = r.revived ? ` Revived ${r.revived}.` : '';
+    const revived = r.revived ? ' Account revived.' : '';
     return `+${r.chakra} chakra.${revived}`;
   }
   if (r.code === 'locked') return "Katsuyu's Healing unlocks after 3 Sakura heals.";
@@ -266,7 +265,7 @@ function katsuyuAlert(r) {
 
 async function buildRestoreBlocks(user, result, timers) {
   const lines = [`+${result.chakra} chakra added.`];
-  if (result.revived) lines.push(`${result.revived} revived with 24h protection.`);
+  if (result.revived) lines.push('Account revived with 24h protection.');
   lines.push('Choose one timer to restore:');
   const buttons = timers.map((t) => cb(
     `${t.kind === 'exhaustion' ? '🔥' : '⏳'} ${t.shinobi}`,

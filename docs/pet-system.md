@@ -233,9 +233,13 @@ Rules enforced in `startPetActivity` (re-read immediately before the claim):
 
 - only the equipped pet acts; only `STARTABLE_ACTIVITIES` can start;
 - one active session per pet — a second tap returns `busy` (no duplicate row);
-- Play needs an owned, alive, non-exhausted shinobi that is not on patrol,
-  mission, training or another pet session; that shinobi cannot start patrol,
-  mission or shinobi training until the session settles;
+- Play needs an owned, non-exhausted shinobi that is not on patrol, mission,
+  training or another pet session; that shinobi cannot start patrol, mission or
+  shinobi training until the session settles. Death is account-level and never
+  blocks Play — a dead account's shinobi are available like any other;
+- a stale lock (a finished patrol nobody settled, or a pet session row that no
+  longer exists) is repaired before the availability check, so Play can never be
+  blocked by a shinobi that is not actually busy;
 - Train is rejected while the pet is exhausted (`rest_required`); Rest is
   rejected while the pet is ready (`not_exhausted`);
 - energy is checked and deducted with a guarded `UPDATE … AND energy >= cost`.

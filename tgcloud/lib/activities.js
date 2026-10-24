@@ -4,7 +4,7 @@ import { fmt } from './store.js';
 import { escapeHtml, mention } from './texts.js';
 import { dueText } from './rpg/time.js';
 import {
-  getShinobiState, isDead, isExhausted, recordPatrolCompletion, resetPatrolStreak,
+  getShinobiState, isExhausted, recordPatrolCompletion, resetPatrolStreak,
 } from './rpg/state.js';
 import { addPendingReward, pendingRewardTotal } from './map/pending.js';
 import { jiraiyaFound, sakuraActivityBonus } from './rpg/levels.js';
@@ -271,11 +271,29 @@ function dmText(r) {
 // Also exported so opening the Gate/Inventory refreshes statuses first.
 export async function settleOwn(user) {
   const t = now();
-  const due = await db.all(sql`SELECT telegram_id, shinobi, kind, started_at, ends_at, base_roll, cooldown_sec, chat_id FROM activities WHERE telegram_id = ${user.id} AND status = 'active' AND kind <> 'pet' AND ends_at <= ${t}`);
+  const due = await db.all(sql`
+    SELECT telegram_id, shinobi, kind, started_at, ends_at, base_roll, cooldown_sec, chat_id
+    FROM activities
+    WHERE telegram_id = ${user.id} AND status = 'active' AND kind <> 'pet' AND ends_at <= ${t}
+    ORDER BY ends_at ASC
+  `);
   const blocks = [];
   const dms = [];
   for (const a of due) {
-    const r = await finish(a);
+    let r = null;
+    try {
+      r = await finish(a);
+    } catch (e) {
+      // One broken row must never hide the other returns.
+      console.error('[settle own]', e);
+      try {
+        await db.run(sql`
+          UPDATE activities SET status = 'idle'
+          WHERE telegram_id = ${a.telegram_id} AND shinobi = ${a.shinobi}
+            AND status = 'active' AND ends_at <= ${t}
+        `);
+      } catch (e2) { console.error('[settle own repair]', e2); }
+    }
     if (!r) continue;
     blocks.push(fullText(r));
     if (r.found) blocks.push(FOUND);
@@ -289,10 +307,28 @@ export async function settleOwn(user) {
 export async function sweepActivities() {
   try { await ensurePetSchema(); } catch (_) {}
   const t = now();
-  const due = await db.all(sql`SELECT telegram_id, shinobi, kind, started_at, ends_at, base_roll, cooldown_sec, chat_id FROM activities WHERE status = 'active' AND kind <> 'pet' AND ends_at <= ${t} LIMIT 10`);
+  // Oldest first: a busy bot can never starve an old return behind newer rows.
+  const due = await db.all(sql`
+    SELECT telegram_id, shinobi, kind, started_at, ends_at, base_roll, cooldown_sec, chat_id
+    FROM activities
+    WHERE status = 'active' AND kind <> 'pet' AND ends_at <= ${t}
+    ORDER BY ends_at ASC LIMIT 10
+  `);
   const out = [];
   for (const a of due) {
-    const r = await finish(a);
+    let r = null;
+    try {
+      r = await finish(a);
+    } catch (e) {
+      console.error('[sweep activities]', e);
+      try {
+        await db.run(sql`
+          UPDATE activities SET status = 'idle'
+          WHERE telegram_id = ${a.telegram_id} AND shinobi = ${a.shinobi}
+            AND status = 'active' AND ends_at <= ${t}
+        `);
+      } catch (e2) { console.error('[sweep repair]', e2); }
+    }
     if (!r) continue;
     out.push({ id: r.id, name: r.name, chatId: r.chatId, kind: r.kind, reminder: remindText(r), dm: dmText(r) });
   }
@@ -327,6 +363,34 @@ export async function sweepActivities() {
   return out;
 }
 
+/**
+ * Settle ONE shinobi's expired activity. Used as a self-repair before a new
+ * dispatch so a row that was never settled cannot keep a shinobi busy forever.
+ * The guarded UPDATE inside finish() still pays exactly once.
+ */
+async function settleRow(telegramId, shinobi) {
+  const t = now();
+  const a = await db.get(sql`
+    SELECT telegram_id, shinobi, kind, started_at, ends_at, base_roll, cooldown_sec, chat_id
+    FROM activities
+    WHERE telegram_id = ${telegramId} AND shinobi = ${shinobi}
+      AND status = 'active' AND kind <> 'pet' AND ends_at <= ${t}
+  `);
+  if (!a) return null;
+  try {
+    return await finish(a);
+  } catch (e) {
+    console.error('[activity settle]', e);
+    // Last resort: never leave a shinobi locked on a payout that keeps failing.
+    await db.run(sql`
+      UPDATE activities SET status = 'idle'
+      WHERE telegram_id = ${telegramId} AND shinobi = ${shinobi}
+        AND status = 'active' AND ends_at <= ${t}
+    `);
+    return null;
+  }
+}
+
 async function dispatch(user, kind, rawName, chatId) {
   const c = KINDS[kind];
   const id = user.id;
@@ -338,8 +402,9 @@ async function dispatch(user, kind, rawName, chatId) {
   if (!own.has(shinobi)) return { status: 'not_owned', shinobi };
 
   // Physical state guards — persisted timestamps, not memory timers.
+  // Death is ACCOUNT-level: it never blocks a shinobi, so it is not checked
+  // here. Only exhaustion (and the other busy states below) stop a dispatch.
   const st = await getShinobiState(id, shinobi);
-  if (isDead(st, t)) return { status: 'dead', shinobi, until: st.deadUntil };
   if (isExhausted(st, t)) return { status: 'exhausted', shinobi, until: st.exhaustedUntil };
   // Naruto & Jiraiya are busy while a Tsunade search session is running.
   if (shinobi === 'Naruto' || shinobi === 'Jiraiya') {
@@ -354,13 +419,23 @@ async function dispatch(user, kind, rawName, chatId) {
   } catch (e) { console.error('[rest busy]', e); }
 
   await db.run(sql`INSERT OR IGNORE INTO activities (telegram_id, shinobi, kind) VALUES (${id}, ${shinobi}, ${kind})`);
-  const row = await db.get(sql`SELECT kind, status, ends_at, cooldown_until FROM activities WHERE telegram_id = ${id} AND shinobi = ${shinobi}`);
+  let row = await db.get(sql`SELECT kind, status, ends_at, cooldown_until FROM activities WHERE telegram_id = ${id} AND shinobi = ${shinobi}`);
+
+  // A finished activity nobody settled yet (for example one that was left
+  // behind by the retired shinobi-death system) must never lock the shinobi.
+  // Settle it here, then re-read the row instead of reporting a stale busy state.
+  if (row.status === 'active' && row.kind !== 'pet' && Number(row.ends_at || 0) <= t) {
+    await settleRow(id, shinobi);
+    const fresh = await db.get(sql`SELECT kind, status, ends_at, cooldown_until FROM activities WHERE telegram_id = ${id} AND shinobi = ${shinobi}`);
+    if (fresh) row = fresh;
+  }
 
   if (row.status === 'active') {
     if (row.kind === 'pet') return { status: 'busy_pet', shinobi, until: row.ends_at };
+    const left = Math.max(0, Number(row.ends_at || 0) - t);
     return row.kind === kind
-      ? { status: 'already_active', shinobi, left: row.ends_at - t, endsAt: row.ends_at }
-      : { status: 'busy', shinobi, other: row.kind, left: row.ends_at - t, endsAt: row.ends_at };
+      ? { status: 'already_active', shinobi, left, endsAt: row.ends_at }
+      : { status: 'busy', shinobi, other: row.kind, left, endsAt: row.ends_at };
   }
   if (kind === 'mission' && row.cooldown_until > t) {
     return { status: 'cooldown', shinobi, left: row.cooldown_until - t, until: row.cooldown_until };
@@ -423,8 +498,6 @@ function notice(kind, r, user) {
       return kind === 'mission'
         ? { own: true, text: `🚪${m}, ${bold(`${sh} is on patrol.`)}\n\n🏃 returns at ${dueText(r.endsAt)}. can't mission until patrol ends.` }
         : { own: true, text: `🚪${m}, ${bold(`${sh} is on mission.`)}\n\n🎯 completes at ${dueText(r.endsAt)}. can't patrol until mission ends.` };
-    case 'dead':
-      return { own: true, text: `☠️ ${m}, ${bold(`${sh} is dead.`)}\n\n🕊️ revives automatically at ${dueText(r.until)}.` };
     case 'exhausted':
       return { own: true, text: `🔥 ${m}, ${bold(`${sh} is exhausted.`)}\n\n✅ ready again at ${dueText(r.until)}.\n» Instant recovery is available at /map → BBQ (200 🍥).` };
     case 'searching':

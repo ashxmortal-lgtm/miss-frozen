@@ -21,6 +21,7 @@ test('robbery percentages remain unchanged', () => {
   assert.deepEqual([0, 25, 75, 150, 300].map(itachiRobPct), [20, 30, 40, 55, 70]);
 });
 
+// /kill flips the ACCOUNT dead (user_skills.dead_until), never a shinobi.
 function combat({ kills = 24, dead = false, wins = true } = {}) {
   const source = fs.readFileSync(new URL('../tgcloud/lib/rpg/combat.js', import.meta.url), 'utf8');
   const fn = source.slice(source.indexOf('export async function killTarget'), source.indexOf('function killResultText')).replace('export ', '');
@@ -30,10 +31,11 @@ function combat({ kills = 24, dead = false, wins = true } = {}) {
     get: async () => ({ kills }),
   };
   const sql = (strings, ...values) => ({ text: strings.join('?'), values });
-  const killTarget = new Function('db', 'sql', 'ensureShinobiState', 'getShinobiState', 'isDead', 'now', 'markDead', 'itachiKillReward',
-    `${fn}; return killTarget;`)(db, sql, async () => {}, async () => ({ deadUntil: 123 }), () => dead,
-    () => 1, async () => ({ ok: wins, until: 123 }), (count) => itachiKillReward(count, 0));
-  return { killTarget, updates };
+  const killTarget = new Function('db', 'sql', 'getUserSkills', 'isAccountDead', 'now', 'markAccountDead', 'itachiKillReward',
+    `${fn}; return killTarget;`)(db, sql, async () => ({ deadUntil: dead ? 123 : 0 }),
+    (skills) => Number(skills.deadUntil || 0) > 1, () => 1,
+    async () => ({ ok: wins, until: 123 }), (count) => itachiKillReward(count, 0));
+  return { killTarget, updates, source: fn };
 }
 
 test('successful kill pays according to pre-kill level and increments kills with coins', async () => {
@@ -54,10 +56,18 @@ test('the Starter Shinobi is a normal target and pays the bounty', async () => {
   assert.deepEqual(updates, [[100, 1]]);
 });
 
-test('already-dead targets and lost death races receive no reward', async () => {
+test('already-dead accounts and lost death races receive no reward', async () => {
   for (const [options, target] of [[{ dead: true }, 'Sasuke'], [{ wins: false }, 'Sasuke']]) {
     const { killTarget, updates } = combat(options);
     assert.equal((await killTarget(1, 2, target)).code, 'already_dead');
     assert.equal(updates.length, 0);
   }
+});
+
+test('killTarget never reads or writes a shinobi death timer', () => {
+  const { source } = combat({});
+  assert.doesNotMatch(source, /shinobi_state/);
+  assert.doesNotMatch(source, /dead_until/);
+  assert.doesNotMatch(source, /markDead\b/);
+  assert.match(source, /markAccountDead/, 'the death flip is account-level');
 });

@@ -2,6 +2,11 @@
  * Persistent shinobi/user RPG state — the only place that touches
  * shinobi_state, user_skills, rpg_tx and users.equipped.
  * Everything is timestamp-based (restart-safe); no in-memory timers.
+ *
+ * Death is ACCOUNT-level: /kill marks the Telegram account dead for 24h and
+ * stores it on user_skills.dead_until. Shinobi never carry a death timer, so
+ * two kills can never leave two "dead shinobi" behind and a death can never
+ * block patrol, mission, training or pet activity.
  */
 
 import { db } from 'sdk';
@@ -42,7 +47,6 @@ export async function getShinobiState(telegramId, shinobi) {
   await ensureShinobiState(telegramId, shinobi);
   return db.get(sql`
     SELECT level, patrol_streak AS patrolStreak, exhausted_until AS exhaustedUntil,
-           dead_until AS deadUntil, last_robbed_at AS lastRobbedAt,
            train_sessions AS trainSessions, next_train_at AS nextTrainAt
     FROM shinobi_state
     WHERE telegram_id = ${telegramId} AND shinobi = ${shinobi}
@@ -52,40 +56,46 @@ export async function getShinobiState(telegramId, shinobi) {
 export async function getAllShinobiState(telegramId) {
   const rows = await db.all(sql`
     SELECT shinobi, level, patrol_streak AS patrolStreak, exhausted_until AS exhaustedUntil,
-           dead_until AS deadUntil, last_robbed_at AS lastRobbedAt,
            train_sessions AS trainSessions, next_train_at AS nextTrainAt
     FROM shinobi_state WHERE telegram_id = ${telegramId}
   `);
   return Object.fromEntries((rows || []).map((r) => [r.shinobi, r]));
 }
 
-// A kill targets the ACCOUNT, not a shinobi: the Starter Shinobi dies like any
-// other companion, and users who own no shinobi at all are still killable
-// (their fallback starter is the target). There is no beginner protection.
-export function isDead(state, t = now()) {
-  return !!state && (state.deadUntil || 0) > t;
-}
+// ---- account-level death ----
+// One death per ACCOUNT: the Telegram id is dead for 24h. Shinobi are never
+// marked dead, so every roster member keeps working normally.
+
 export function isExhausted(state, t = now()) {
   return !!state && (state.exhaustedUntil || 0) > t;
 }
 
-/** Mark dead for a 24h death cycle. Returns { ok, until }; ok=false when
- * the shinobi was already marked dead by a concurrent kill. */
-export async function markDead(telegramId, shinobi) {
+/** True while the account (not a shinobi) is serving its 24h death timer. */
+export function isAccountDead(state, t = now()) {
+  return !!state && (state.deadUntil || 0) > t;
+}
+
+/** Mark the ACCOUNT dead for 24h. Returns { ok, until }; ok=false when a
+ * concurrent kill already owns this death window. */
+export async function markAccountDead(telegramId) {
+  await getUserSkills(telegramId); // guarantees the row exists
   const until = now() + DEATH_DURATION_SEC;
-  await ensureShinobiState(telegramId, shinobi);
+  const t = now();
   const r = await db.run(sql`
-    UPDATE shinobi_state SET dead_until = ${until}
-    WHERE telegram_id = ${telegramId} AND shinobi = ${shinobi} AND dead_until <= ${now()}
+    UPDATE user_skills SET dead_until = ${until}
+    WHERE telegram_id = ${telegramId} AND dead_until <= ${t}
   `);
   return { ok: r.rowsAffected > 0, until };
 }
 
-export async function revive(telegramId, shinobi) {
-  await db.run(sql`
-    UPDATE shinobi_state SET dead_until = 0
-    WHERE telegram_id = ${telegramId} AND shinobi = ${shinobi}
+/** End the account death timer early (Sakura / Katsuyu healing). */
+export async function reviveAccount(telegramId) {
+  await getUserSkills(telegramId);
+  const r = await db.run(sql`
+    UPDATE user_skills SET dead_until = 0
+    WHERE telegram_id = ${telegramId} AND dead_until > 0
   `);
+  return { ok: r.rowsAffected > 0 };
 }
 
 /**
@@ -131,14 +141,89 @@ export async function clearExhaustion(telegramId, shinobi) {
   `);
 }
 
+// ---- account schema (runtime safety net) ----
+
+let accountSchema = null;
+
+/**
+ * `tgcloud migrate` creates user_skills from schema.js; this keeps an older
+ * live database in sync at runtime (same pattern as the pet schema) and folds
+ * any leftover shinobi-level death rows into ONE account death.
+ *
+ * The fold runs once per deployment: after it, shinobi_state.dead_until stays
+ * 0 because nothing writes it any more.
+ */
+export function ensureAccountSchema() {
+  if (accountSchema) return accountSchema;
+  accountSchema = (async () => {
+    try {
+      await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS user_skills (
+        telegram_id INTEGER PRIMARY KEY,
+        protected_until INTEGER NOT NULL DEFAULT 0,
+        sakura_heal_at INTEGER NOT NULL DEFAULT 0,
+        sakura_heal_uses INTEGER NOT NULL DEFAULT 0,
+        katsuyu_heal_at INTEGER NOT NULL DEFAULT 0,
+        byakugan_at INTEGER NOT NULL DEFAULT 0,
+        dead_until INTEGER NOT NULL DEFAULT 0,
+        last_robbed_at INTEGER NOT NULL DEFAULT 0
+      )`));
+    } catch (e) {
+      console.error('[account schema]', e?.message || e);
+    }
+    for (const statement of [
+      'ALTER TABLE user_skills ADD COLUMN dead_until INTEGER NOT NULL DEFAULT 0',
+      'ALTER TABLE user_skills ADD COLUMN last_robbed_at INTEGER NOT NULL DEFAULT 0',
+    ]) {
+      try { await db.run(sql.raw(statement)); } catch (_) { /* column exists */ }
+    }
+    try {
+      const deaths = await db.all(sql`
+        SELECT telegram_id AS id, MAX(dead_until) AS until
+        FROM shinobi_state WHERE dead_until > 0 GROUP BY telegram_id
+      `);
+      for (const row of deaths || []) {
+        const until = Number(row.until) || 0;
+        if (until <= 0) continue;
+        await db.run(sql`INSERT OR IGNORE INTO user_skills (telegram_id) VALUES (${row.id})`);
+        await db.run(sql`
+          UPDATE user_skills SET dead_until = ${until}
+          WHERE telegram_id = ${row.id} AND dead_until < ${until}
+        `);
+      }
+      const robbed = await db.all(sql`
+        SELECT telegram_id AS id, MAX(last_robbed_at) AS at
+        FROM shinobi_state WHERE last_robbed_at > 0 GROUP BY telegram_id
+      `);
+      for (const row of robbed || []) {
+        const at = Number(row.at) || 0;
+        if (at <= 0) continue;
+        await db.run(sql`INSERT OR IGNORE INTO user_skills (telegram_id) VALUES (${row.id})`);
+        await db.run(sql`
+          UPDATE user_skills SET last_robbed_at = ${at}
+          WHERE telegram_id = ${row.id} AND last_robbed_at < ${at}
+        `);
+      }
+      // The shinobi-level death system is retired: clear every legacy flag so
+      // shinobi that already looked dead come straight back to work.
+      await db.run(sql`UPDATE shinobi_state SET dead_until = 0 WHERE dead_until > 0`);
+      await db.run(sql`UPDATE shinobi_state SET last_robbed_at = 0 WHERE last_robbed_at > 0`);
+    } catch (e) {
+      console.error('[account death migration]', e?.message || e);
+    }
+  })();
+  return accountSchema;
+}
+
 // ---- user_skills ----
 
 export async function getUserSkills(telegramId) {
+  await ensureAccountSchema();
   await db.run(sql`INSERT OR IGNORE INTO user_skills (telegram_id) VALUES (${telegramId})`);
   return db.get(sql`
     SELECT protected_until AS protectedUntil,
            sakura_heal_at AS sakuraHealAt, sakura_heal_uses AS sakuraHealUses,
-           katsuyu_heal_at AS katsuyuHealAt, byakugan_at AS byakuganAt
+           katsuyu_heal_at AS katsuyuHealAt, byakugan_at AS byakuganAt,
+           dead_until AS deadUntil, last_robbed_at AS lastRobbedAt
     FROM user_skills WHERE telegram_id = ${telegramId}
   `);
 }
@@ -151,6 +236,8 @@ export async function setUserSkills(telegramId, fields) {
     sakuraHealUses: 'sakura_heal_uses',
     katsuyuHealAt: 'katsuyu_heal_at',
     byakuganAt: 'byakugan_at',
+    deadUntil: 'dead_until',
+    lastRobbedAt: 'last_robbed_at',
   };
   for (const [k, v] of Object.entries(fields)) {
     const col = map[k];

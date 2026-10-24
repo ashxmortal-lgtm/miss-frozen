@@ -1,4 +1,4 @@
-import { getAllShinobiState, isDead, isExhausted } from '../rpg/state.js';
+import { getAllShinobiState, isExhausted } from '../rpg/state.js';
 /**
  * Map command + callback router.
  * Map artwork remains a photo; all controls are Telegram Rich Message buttons.
@@ -262,7 +262,6 @@ function trainResultBody(r) {
   }
   if (r.code === 'not_owned') return locBody('🥷 TRAINING GROUND', [`You don't own ${escapeHtml(r.shinobi)} yet.`]);
   if (r.code === 'no_trainer') return locBody('🥷 TRAINING GROUND', [`Training requires ${escapeHtml(r.trainer)} on your roster.`]);
-  if (r.code === 'dead') return locBody('🥷 TRAINING GROUND', [`☠️ ${escapeHtml(r.shinobi)} is dead — revives at ${dueText(r.until)}.`]);
   if (r.code === 'exhausted') return locBody('🥷 TRAINING GROUND', [`🔥 ${escapeHtml(r.shinobi)} is exhausted — ready at ${dueText(r.until)}.`, '» Instant recovery at BBQ (200 🍥).']);
   if (r.code === 'cooldown') return locBody('🥷 TRAINING GROUND', [`🏋️ ${escapeHtml(r.shinobi)} already trained today.`, `Next session: ${dueText(r.until)}.`]);
   if (r.code === 'searching') return locBody('🥷 TRAINING GROUND', [`🔎 ${escapeHtml(r.shinobi)} is away searching for Lady Tsunade.`, `Search completes: ${dueText(r.until)}.`]);
@@ -285,7 +284,7 @@ function trainResultBody(r) {
 
 function sakuraHealSummary(r) {
   const parts = [];
-  if (r.revived && r.revived.length) parts.push(`Revived: ${r.revived.join(', ')}`);
+  if (r.revivedAccount) parts.push('Account revived');
   if (r.exhaustedCleared && r.exhaustedCleared.length) parts.push(`Exhaustion cleared: ${r.exhaustedCleared.join(', ')}`);
   if (r.cooldownsCleared && r.cooldownsCleared.length) parts.push(`Mission cooldown reset: ${r.cooldownsCleared.join(', ')}`);
   return `🌸 Sakura's Healing used.\n${parts.join('\n')}`;
@@ -296,7 +295,7 @@ async function sakuraHealBody(telegramId) {
   const info = sakuraHealInfoText(s);
   const lines = [info];
   if (s.unlocked) {
-    lines.push('Once per 24h: revives your dead shinobi, clears exhaustion and resets mission cooldowns.');
+    lines.push('Once per 24h: revives your account if it is dead, clears exhaustion and resets mission cooldowns.');
   }
   if (s.uses >= 3) lines.push("🐌 Katsuyu's Healing is unlocked.");
   else if (s.unlocked) lines.push(`🐌 Katsuyu's Healing unlocks after ${3 - s.uses} more healing use(s).`);
@@ -320,7 +319,7 @@ async function katsuyuBody(telegramId) {
   } else {
     lines.push('+200 ⚡ chakra on use.');
     lines.push('Restores one eligible timer (mission cooldown or exhaustion).');
-    lines.push('Revives a dead shinobi — with 24h of Katsuyu protection.');
+    lines.push('Revives your account if it is dead — with 24h of Katsuyu protection.');
     if (s.cooldownUntil > s.now) lines.push(`Ready at ${dueText(s.cooldownUntil, s.now)}.`);
     else lines.push('Ready now.');
   }
@@ -343,7 +342,7 @@ async function katsuyuRestoreBody(telegramId, result) {
   const lines = [
     `+${result.chakra} ⚡ chakra added.`,
   ];
-  if (result.revived) lines.push(`🕊️ ${escapeHtml(result.revived)} revived with 24h of Katsuyu protection 🛡️`);
+  if (result.revived) lines.push('🕊️ Your account was revived with 24h of Katsuyu protection 🛡️');
   lines.push('Choose ONE timer to restore:');
   return locBody("🐌 KATSUYU'S HEALING USED", lines);
 }
@@ -477,10 +476,7 @@ async function getEligibleStatus(telegramId, kind) {
     const act = actMap[name];
     const st = states[name] || {};
 
-    if (isDead(st, t)) {
-      busyNotes.push(`• ${EMO[name] || '🥷'} ${name}: dead (revives at ${dueText(st.deadUntil, t)})`);
-      continue;
-    }
+    // Death is account-level: no shinobi is ever unavailable because of it.
     if (act && act.status === 'active' && act.ends_at > t) {
       const actWord = act.kind === 'mission' ? 'mission' : act.kind === 'pet' ? 'pet activity' : 'patrol';
       busyNotes.push(`• ${EMO[name] || '🥷'} ${name}: on ${actWord} (returns at ${dueText(act.ends_at, t)})`);
@@ -1199,7 +1195,7 @@ export async function handleMapCallback(cb) {
                   ? 'exhausted — skipped'
                   : r.status === 'no_chakra'
                     ? 'not enough chakra'
-                    : r.status === 'dead' ? 'dead — skipped' : 'not dispatched';
+                    : 'not dispatched';
         results.push(`${EMO[shinobi] || '🥷'} ${escapeHtml(shinobi)}: ${label}`);
       }
       await clearMissionSelection(user.id);
@@ -1405,7 +1401,7 @@ export async function handleMapCallback(cb) {
             ? 'already on patrol'
             : r.status === 'exhausted'
               ? 'exhausted — skipped'
-              : r.status === 'dead' ? 'dead — skipped' : 'not dispatched';
+              : 'not dispatched';
         results.push(`${EMO[shinobi] || '🥷'} ${escapeHtml(shinobi)}: ${label}`);
       }
       await clearGateSelection(user.id);
@@ -1860,7 +1856,7 @@ export async function handleMapCallback(cb) {
         return true;
       }
       if (r.code === 'nothing') {
-        await answer(cb, 'Nothing to heal — no dead or exhausted shinobi and no mission cooldown.', true);
+        await answer(cb, 'Nothing to heal — your account is alive and no shinobi is exhausted with a mission cooldown.', true);
         return true;
       }
       if (r.code === 'not_owned') {
