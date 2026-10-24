@@ -85,9 +85,12 @@ export async function buildWelcomeBlocks(user) {
   const botLink = `https://t.me/${uname}`;
   return [
     para(mention(user), ' ᴡᴇʟᴄᴏᴍᴇ! ❄️'),
-    // The bot name is linked to the bot itself.
-    para(urlText(BOT_NAME, botLink), ' ɪꜱ ᴀ ɴᴀʀᴜᴛᴏ-ɪɴꜱᴘɪʀᴇᴅ ɢᴀᴍᴇ ʙᴏᴛ ꜰᴏʀ ɢʀᴏᴜᴘꜱ ᴀɴᴅ ᴀɴɪᴍᴇ ꜰᴀɴꜱ.'),
-    para('🎮 ᴛᴀᴘ ᴛʜᴇ 𝐇𝐄𝐋𝐏 ʙᴜᴛᴛᴏɴ ᴛᴏ ᴇxᴘʟᴏʀᴇ ɢᴀᴍᴇꜱ, ᴄᴏᴍᴍᴀɴᴅꜱ & ʀᴇᴡᴀʀᴅꜱ! ❄️'),
+    // Requested: the intro + HELP line are quoted together.
+    blockquote(
+      // The bot name is linked to the bot itself.
+      para(urlText(BOT_NAME, botLink), ' ɪꜱ ᴀ ɴᴀʀᴜᴛᴏ-ɪɴꜱᴘɪʀᴇᴅ ɢᴀᴍᴇ ʙᴏᴛ ꜰᴏʀ ɢʀᴏᴜᴘꜱ ᴀɴᴅ ᴀɴɪᴍᴇ ꜰᴀɴꜱ.'),
+      para('🎮 ᴛᴀᴘ ᴛʜᴇ 𝐇𝐄𝐋𝐏 ʙᴜᴛᴛᴏɴ ᴛᴏ ᴇxᴘʟᴏʀᴇ ɢᴀᴍᴇꜱ, ᴄᴏᴍᴍᴀɴᴅꜱ & ʀᴇᴡᴀʀᴅꜱ! ❄️'),
+    ),
     para('❓ ᴡᴀɴɴᴀ ʟᴇᴀʀɴ ʜᴏᴡ ᴛᴏ ᴘʟᴀʏ?'),
     para('➜ ', urlText('ᴄʜᴇᴄᴋ ᴛʜɪꜱ', 'https://t.me/frozenblooded/22'), ' ᴏᴜᴛ!'),
     para('➕ ᴀᴅᴅ ', urlText(BOT_NAME, botLink),
@@ -118,7 +121,7 @@ const HELP_BLOCK_TWO = [
 const HELP_FOOTER = ['/start', '/help', '/owner'];
 
 // Jutsu / shinobi arts live behind their own button.
-const JUTSU_COMMANDS = ['/mt', '/byakugan', '/search_tsuna'];
+const JUTSU_COMMANDS = ['/mt', '/byakugan'];
 const FUN_COMMANDS = ['/gift', '/hug', '/slap', '/punch', '/pat'];
 const MORE_GAMES_COMMANDS = [
   '/games', '/xoxo', '/xoxo_cancel', '/xoxo_stats', '/rps', '/rps_cancel', '/rps_stats',
@@ -213,8 +216,8 @@ export async function sendWelcome(chatId, user) {
       chat_id: chatId,
       parse_mode: 'HTML',
       text: `${user.first_name || 'User'} ᴡᴇʟᴄᴏᴍᴇ! ❄️\n\n` +
-        `<a href="${botLink}">${BOT_NAME}</a> ɪꜱ ᴀ ɴᴀʀᴜᴛᴏ-ɪɴꜱᴘɪʀᴇᴅ ɢᴀᴍᴇ ʙᴏᴛ ꜰᴏʀ ɢʀᴏᴜᴘꜱ ᴀɴᴅ ᴀɴɪᴍᴇ ꜰᴀɴꜱ.\n\n` +
-        '🎮 ᴛᴀᴘ ᴛʜᴇ 𝐇𝐄𝐋𝐏 ʙᴜᴛᴛᴏɴ ᴛᴏ ᴇxᴘʟᴏʀᴇ ɢᴀᴍᴇꜱ, ᴄᴏᴍᴍᴀɴᴅꜱ & ʀᴇᴡᴀʀᴅꜱ! ❄️\n\n' +
+        `<blockquote><a href="${botLink}">${BOT_NAME}</a> ɪꜱ ᴀ ɴᴀʀᴜᴛᴏ-ɪɴꜱᴘɪʀᴇᴅ ɢᴀᴍᴇ ʙᴏᴛ ꜰᴏʀ ɢʀᴏᴜᴘꜱ ᴀɴᴅ ᴀɴɪᴍᴇ ꜰᴀɴꜱ.\n\n` +
+        '🎮 ᴛᴀᴘ ᴛʜᴇ 𝐇𝐄𝐋𝐏 ʙᴜᴛᴛᴏɴ ᴛᴏ ᴇxᴘʟᴏʀᴇ ɢᴀᴍᴇꜱ, ᴄᴏᴍᴍᴀɴᴅꜱ & ʀᴇᴡᴀʀᴅꜱ! ❄️</blockquote>\n\n' +
         '❓ ᴡᴀɴɴᴀ ʟᴇᴀʀɴ ʜᴏᴡ ᴛᴏ ᴘʟᴀʏ?\n➜ ᴄʜᴇᴄᴋ ᴛʜɪꜱ ᴏᴜᴛ! https://t.me/frozenblooded/22\n\n' +
         `➕ ᴀᴅᴅ <a href="${botLink}">${BOT_NAME}</a> ᴛᴏ ᴜʀ ɢʀᴏᴜᴘ ᴀꜱ ᴀɴ ᴀᴅᴍɪɴ ᴛᴏ ʙᴇɢɪɴ ᴜʀ ꜱʜɪɴᴏʙɪ ᴊᴏᴜʀɴᴇʏ! 🗡️`,
       reply_markup: await primaryKeyboard(user.id),

@@ -29,7 +29,8 @@ export const COMMANDS = [
   { cmd: '/rob', desc: 'Rob a target', access: 'user' },
   { cmd: '/protect', desc: 'Activate protection', access: 'user' },
   { cmd: '/byakugan', desc: 'Check protection status', access: 'user' },
-  { cmd: '/search_tsuna', desc: 'Search for Tsunade', access: 'user' },
+  // Hidden discovery command: not listed in /help (removed from the JUTSU section).
+  { cmd: '/search_tsuna', desc: 'Search for Tsunade', access: 'user', hidden: true },
   { cmd: '/games', desc: 'Games hub', access: 'user' },
   { cmd: '/xoxo', desc: 'Tic-tac-toe lobby (group)', access: 'user' },
   { cmd: '/xoxo_stats', desc: 'Your XOXO stats', access: 'user' },

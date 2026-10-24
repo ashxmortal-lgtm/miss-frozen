@@ -37,6 +37,14 @@ test('welcome links the bot name, uses the Help hint and keeps primary actions',
   assert.deepEqual(buttons.map((b) => b.text), ['Add to grp', 'Help', 'Contact ❄️ owner']);
   assert.equal(buttons[1].callback_data, 'wel:help');
   assert.equal(buttons[2].callback_data, 'si:menu:42');
+
+  // Requested: the intro line and the HELP hint share one quote.
+  const intro = blocks.find((b) => b.type === 'blockquote'
+    && JSON.stringify(b).includes('ɴᴀʀᴜᴛᴏ-ɪɴꜱᴘɪʀᴇᴅ'));
+  assert.ok(intro, 'the intro lines are quoted');
+  assert.equal(intro.blocks.length, 2);
+  assert.match(JSON.stringify(intro), /ᴛᴀᴘ ᴛʜᴇ 𝐇𝐄𝐋𝐏 ʙᴜᴛᴛᴏɴ/);
+  assert.ok(!JSON.stringify(intro).includes('ᴄʜᴇᴄᴋ ᴛʜɪꜱ'), 'the learn-how-to-play line stays outside');
 });
 
 const HELP_BLOCK_ONE = [
@@ -110,7 +118,7 @@ test('help keeps every command exactly once and never repeats an alias', () => {
   };
   for (const blocks of Object.values(screens)) collect(blocks);
 
-  const expected = listCommands('user').map((c) => c.cmd);
+  const expected = listCommands('user').filter((c) => !c.hidden).map((c) => c.cmd);
   assert.deepEqual([...seen.keys()].sort(), [...expected].sort(), 'every registered command is listed');
   assert.deepEqual([...seen].filter(([, n]) => n > 1), [], 'no command is listed twice');
 
@@ -138,8 +146,9 @@ test('PETS, JUTSU and FUN screens list their own commands only', () => {
 
   const jutsu = built.jutsuBlocks(false).filter((b) => b.type === 'blockquote')
     .flatMap((b) => b.blocks.map(commandOf));
-  assert.deepEqual(jutsu.slice(0, 2), ['/mt', '/byakugan']);
-  assert.ok(jutsu.includes('/search_tsuna'), 'Tsunade search stays discoverable');
+  assert.deepEqual(jutsu, ['/mt', '/byakugan']);
+  assert.equal(jutsu.includes('/search_tsuna'), false,
+    '/search_tsuna is removed from the JUTSU section (it stays a hidden command)');
 
   const fun = built.funBlocks(false).filter((b) => b.type === 'blockquote')
     .flatMap((b) => b.blocks.map(commandOf));

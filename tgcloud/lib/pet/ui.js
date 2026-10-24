@@ -485,7 +485,20 @@ export function shinobiOptionsText(options) {
 }
 
 export async function playPickerContent(user, pet) {
-  const options = await shinobiOptions(user.id);
+  // The picker is the answer to the Play tap: build it defensively so a broken
+  // shinobi row can never leave the button without a screen.
+  let options = [];
+  try {
+    options = await shinobiOptions(user.id);
+  } catch (e) {
+    console.error('[play picker]', e?.message || e);
+    try {
+      options = (await ownedShinobi(user.id)).map((name) => ({ name, reason: null }));
+    } catch (e2) {
+      console.error('[play picker owned]', e2?.message || e2);
+      options = [];
+    }
+  }
   const available = options.filter((o) => !o.reason);
   if (!available.length) {
     return [
@@ -693,12 +706,33 @@ export async function shinobiPickerKeyboard(userId, type = 'play', pet = null) {
 
 // ---- rendering ----
 
+// Telegram accepts one answerCallbackQuery per tap; a second call is dropped.
+// Tracked here so a late error can never disappear behind the first ack.
+const answeredCallbacks = new WeakSet();
+
 async function answer(cb, text, alert = false) {
+  if (cb && typeof cb === 'object' && answeredCallbacks.has(cb)) return false;
+  if (cb && typeof cb === 'object') answeredCallbacks.add(cb);
   try {
     await api.answerCallbackQuery({
       callback_query_id: cb.id, ...(text ? { text, show_alert: alert } : {}),
     });
   } catch (_) {}
+  return true;
+}
+
+/**
+ * Show a refusal/error to the user even when the callback was already
+ * acknowledged: falls back to a normal chat message instead of silence.
+ */
+async function report(cb, text) {
+  if (!text) return;
+  if (await answer(cb, text, true)) return;
+  const chatId = cb?.message?.chat?.id;
+  if (!chatId) return;
+  try {
+    await api.sendMessage({ chat_id: chatId, text });
+  } catch (e) { console.error('[pet report]', e?.description || e); }
 }
 
 function blocksToClassic(blocks) {
@@ -908,19 +942,22 @@ export async function handlePetCallback(cb) {
       return true;
     }
     if (action === 'pet_menu') {
+      const list = await petListContent(cb.from);
       await answer(cb);
-      await render(msg, cb.from, await petListContent(cb.from), { pet: await safeEquippedPet(userId) });
+      await render(msg, cb.from, list, { pet: await safeEquippedPet(userId) });
       return true;
     }
     if (action === 'pet_store') {
+      const store = await petStoreContent(cb.from);
       await answer(cb);
-      await render(msg, cb.from, await petStoreContent(cb.from), { pet: await safeEquippedPet(userId) });
+      await render(msg, cb.from, store, { pet: await safeEquippedPet(userId) });
       return true;
     }
 
     if (action === 'pet_food_menu' && !parts[2]) {
+      const food = await petFoodContent(cb.from);
       await answer(cb);
-      await render(msg, cb.from, await petFoodContent(cb.from), { pet: await safeEquippedPet(userId) });
+      await render(msg, cb.from, food, { pet: await safeEquippedPet(userId) });
       return true;
     }
 
@@ -968,8 +1005,9 @@ export async function handlePetCallback(cb) {
         return true;
       }
       if (action === 'pet_stats') {
+        const stats = await petStatsContent(cb.from, pet);
         await answer(cb);
-        await render(msg, cb.from, await petStatsContent(cb.from, pet), { pet });
+        await render(msg, cb.from, stats, { pet });
         return true;
       }
       if (action === 'pet_feed_menu') {
@@ -987,8 +1025,9 @@ export async function handlePetCallback(cb) {
           await answer(cb, petNotHungryText(pet.name), true);
           return true;
         }
+        const menu = await petFoodContent(cb.from, pet.petId);
         await answer(cb);
-        await render(msg, cb.from, await petFoodContent(cb.from, pet.petId), { pet });
+        await render(msg, cb.from, menu, { pet });
         return true;
       }
       if (action === 'pet_food') {
@@ -1018,8 +1057,10 @@ export async function handlePetCallback(cb) {
           await answer(cb, busyActivityText({ pet }, 'play'), true);
           return true;
         }
+        // Build the picker first: if it fails we can still show the error.
+        const picker = await playPickerContent(cb.from, pet);
         await answer(cb);
-        await render(msg, cb.from, await playPickerContent(cb.from, pet), { pet });
+        await render(msg, cb.from, picker, { pet });
         return true;
       }
       if (action === 'pet_train') {
@@ -1048,8 +1089,9 @@ export async function handlePetCallback(cb) {
         return true;
       }
       if (action === 'pet_name') {
+        const nametag = await nametagContent(userId, `pet_me:${userId}:${pet.petId}`);
         await answer(cb);
-        await render(msg, cb.from, await nametagContent(userId, `pet_me:${userId}:${pet.petId}`), { pet });
+        await render(msg, cb.from, nametag, { pet });
         return true;
       }
       return true;
@@ -1087,7 +1129,7 @@ export async function handlePetCallback(cb) {
   } catch (e) {
     if (e instanceof BotApiError && e.code === 400) { await answer(cb); return true; }
     console.error('[pet callback]', e);
-    await answer(cb, UNEXPECTED_ERROR_TEXT, true);
+    await report(cb, UNEXPECTED_ERROR_TEXT);
     return true;
   }
 }
