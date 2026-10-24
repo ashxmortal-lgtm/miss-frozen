@@ -528,17 +528,54 @@ export async function ownedShinobi(userId) {
   });
 }
 
+/**
+ * Free a Shinobi whose activity row is stale: a pet session that no longer
+ * exists, or a patrol/mission that finished while the bot was not sweeping.
+ * Death never reaches this point (it is account-level), so a dead account can
+ * still play/train — this only repairs locks that would otherwise be permanent.
+ */
+async function repairShinobiLocks(userId, shinobi) {
+  const t = now();
+  const act = await db.get(sql`
+    SELECT kind, status, ends_at FROM activities
+    WHERE telegram_id = ${userId} AND shinobi = ${shinobi}
+  `);
+  if (!act || act.status !== 'active') return;
+  if (act.kind === 'pet') {
+    const live = await db.get(sql`
+      SELECT 1 AS ok FROM pet_activity
+      WHERE telegram_id = ${userId} AND shinobi_name = ${shinobi} AND status = 'active'
+    `);
+    if (live) return;
+    await db.run(sql`
+      UPDATE activities SET status = 'idle', partner_pet = NULL
+      WHERE telegram_id = ${userId} AND shinobi = ${shinobi}
+        AND kind = 'pet' AND status = 'active'
+    `);
+    return;
+  }
+  if (Number(act.ends_at || 0) > 0 && Number(act.ends_at) <= t) {
+    try {
+      // Dynamic import: activities.js imports this module statically.
+      const { settleOwn } = await import('../activities.js');
+      await settleOwn({ id: userId });
+    } catch (e) { console.error('[pet repair settle]', e); }
+  }
+}
+
 /** Null when the Shinobi can take a pet activity, else a short reason. */
 export async function shinobiAvailability(userId, shinobi) {
-  const { getShinobiState, isDead, isExhausted } = await import('../rpg/state.js');
+  const { getShinobiState, isExhausted } = await import('../rpg/state.js');
   const owned = await db.get(sql`
     SELECT 1 AS ok FROM inventory
     WHERE telegram_id = ${userId} AND item_name = ${shinobi} AND qty > 0
   `);
   if (!owned) return 'not_owned';
+  await repairShinobiLocks(userId, shinobi);
   const t = now();
+  // Death is account-level, so a Shinobi is always available for Play/Train;
+  // only exhaustion or another lock can block the session.
   const state = await getShinobiState(userId, shinobi);
-  if (isDead(state, t)) return 'dead';
   if (isExhausted(state, t)) return 'exhausted';
   if (shinobi === 'Naruto' || shinobi === 'Jiraiya') {
     try {
@@ -573,6 +610,7 @@ export async function startPetActivity(userId, petId, type, options = {}) {
   const chatId = Number(options.chatId || 0);
   const t = now();
   await settlePetActivities(userId);
+  if (options.shinobi) await repairShinobiLocks(userId, String(options.shinobi).trim());
   const pet = await getPet(userId, petId);
   if (!pet) return { code: 'no_pet' };
   if (!pet.equipped) return { code: 'not_equipped' };

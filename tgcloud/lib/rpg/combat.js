@@ -15,8 +15,8 @@ import { send } from '../chat.js';
 import { fmt } from '../store.js';
 import { dueText } from './time.js';
 import {
-  once, getShinobiState, ensureShinobiState, markDead, isDead,
-  getUserSkills, setUserSkills, getEquipped, getEquippedList, isEquipped, ownedSet, activateProtection,
+  getShinobiState, getUserSkills, getEquipped, getEquippedList,
+  isEquipped, ownedSet, activateProtection, isAccountDead, markAccountDead,
 } from './state.js';
 import {
   itachiRobPct, itachiKillReward, cloneWindowSec,
@@ -76,8 +76,9 @@ function killLine(attackerUser, targetUser) {
   return `${mention(attackerUser)} killed ${mention(targetUser)} using itachi`;
 }
 
-function alreadyDeadLine(targetUser) {
-  return `☠️ ${mention(targetUser)} is already dead.`;
+function alreadyDeadLine(targetUser, reviveAt = 0) {
+  const when = Number(reviveAt) > 0 ? `\n\n🕊️ revives at ${dueText(reviveAt)}.` : '';
+  return `☠️ ${mention(targetUser)} is already dead.${when}`;
 }
 
 async function dmKilled(targetUser, attackerUser, groupTitle) {
@@ -139,26 +140,24 @@ async function isOwner(id, shinobi) {
 // ---- core kill ----
 
 /**
- * Resolve a kill against `targetId`'s equipped shinobi.
- * The death flip is conditional (only when alive), so concurrent kills and
- * duplicate callbacks resolve at most once; kills/coins follow the winner.
+ * Resolve a kill against `targetId`'s ACCOUNT.
+ * Death belongs to the Telegram id, never to a shinobi: /kill marks the user
+ * dead for 24h, his roster keeps working, and a second kill in that window is
+ * refused. The guarded flip means concurrent kills resolve at most once.
  */
 export async function killTarget(attackerId, targetId, targetShinobi) {
-  // No shinobi-level protection: the kill lands on the account's target
-  // shinobi, and the Starter Shinobi is a normal (killable) target.
   await db.run(sql`INSERT OR IGNORE INTO users (telegram_id, balance) VALUES (${attackerId}, 0)`);
   await db.run(sql`INSERT OR IGNORE INTO users (telegram_id, balance) VALUES (${targetId}, 0)`);
-  await ensureShinobiState(targetId, targetShinobi);
-  const st = await getShinobiState(targetId, targetShinobi);
-  if (isDead(st, now())) {
-    return { code: 'already_dead', reviveAt: st.deadUntil };
+  const skills = await getUserSkills(targetId);
+  if (isAccountDead(skills, now())) {
+    return { code: 'already_dead', reviveAt: skills.deadUntil };
   }
 
-  // Guarded death flip: only the first concurrent kill wins.
-  const death = await markDead(targetId, targetShinobi);
+  // Guarded death flip: only the first concurrent kill wins the account.
+  const death = await markAccountDead(targetId);
   if (!death.ok) {
-    const st2 = await getShinobiState(targetId, targetShinobi);
-    return { code: 'already_dead', reviveAt: st2.deadUntil };
+    const fresh = await getUserSkills(targetId);
+    return { code: 'already_dead', reviveAt: fresh?.deadUntil || 0 };
   }
   const reviveAt = death.until;
 
@@ -194,7 +193,7 @@ async function applyKillPetBonus(attackerId, targetId, targetShinobi, r) {
 }
 
 function killResultText(attackerUser, targetUser, r) {
-  if (r.code === 'already_dead') return alreadyDeadLine(targetUser);
+  if (r.code === 'already_dead') return alreadyDeadLine(targetUser, r.reviveAt);
   return killLine(attackerUser, targetUser);
 }
 
@@ -369,10 +368,9 @@ export async function handleKill(message) {
       `🛡️ ${escapeHtml(target.first_name || 'The target')} is protected by Jiraiya.\n\n⏳ protection ends at ${dueText(skills.protectedUntil)}.`);
     return true;
   }
-
-  const st = await getShinobiState(target.id, shinobi);
-  if (isDead(st, now())) {
-    await replyHtml(message, alreadyDeadLine(target));
+  // One kill per account per 24h — a shinobi is never the death target.
+  if (isAccountDead(skills, now())) {
+    await replyHtml(message, alreadyDeadLine(target, skills.deadUntil));
     return true;
   }
 
@@ -542,18 +540,16 @@ export async function handleRob(message) {
     return true;
   }
 
-  const shinobi = await getEquipped(target.id);
-  await ensureShinobiState(target.id, shinobi);
-  const st = await getShinobiState(target.id, shinobi);
+  const skills = await getUserSkills(target.id);
   const t = now();
-  if (!isDead(st, t)) {
+  if (!isAccountDead(skills, t)) {
     await replyText(message,
-      `🚫 Only dead targets can be robbed.\n\n${escapeHtml(target.first_name || 'The target')}'s ${escapeHtml(shinobi)} is not dead.`);
+      `🚫 Only dead targets can be robbed.\n\n${escapeHtml(target.first_name || 'The target')} is not dead.`);
     return true;
   }
-  if ((st.lastRobbedAt || 0) > t - ROB_LOCKOUT_SEC) {
+  if ((skills.lastRobbedAt || 0) > t - ROB_LOCKOUT_SEC) {
     await replyText(message,
-      `⏳ ${escapeHtml(shinobi)} was robbed recently.\n\nrobbery possible again at ${dueText(st.lastRobbedAt + ROB_LOCKOUT_SEC, t)}.`);
+      `⏳ ${escapeHtml(target.first_name || 'This target')} was robbed recently.\n\nrobbery possible again at ${dueText(skills.lastRobbedAt + ROB_LOCKOUT_SEC, t)}.`);
     return true;
   }
 
@@ -569,11 +565,11 @@ export async function handleRob(message) {
 
   // Guarded lockout claim → transfer. Only the first robber wins.
   await db.run(sql`
-    UPDATE shinobi_state SET last_robbed_at = ${t}
-    WHERE telegram_id = ${target.id} AND shinobi = ${shinobi} AND last_robbed_at <= ${t - ROB_LOCKOUT_SEC}
+    UPDATE user_skills SET last_robbed_at = ${t}
+    WHERE telegram_id = ${target.id} AND last_robbed_at <= ${t - ROB_LOCKOUT_SEC}
   `);
-  const lock = await getShinobiState(target.id, shinobi);
-  if (lock.lastRobbedAt !== t) {
+  const lock = await getUserSkills(target.id);
+  if (Number(lock?.lastRobbedAt || 0) !== t) {
     await replyText(message, '⏳ This target was just robbed by someone else.');
     return true;
   }

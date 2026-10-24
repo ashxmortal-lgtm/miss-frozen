@@ -8,7 +8,7 @@ import { db } from 'sdk';
 import { sql } from 'sdk/db';
 import { dueText } from './time.js';
 import { escapeHtml } from '../texts.js';
-import { getAllShinobiState, getUserSkills, isDead, isExhausted } from './state.js';
+import { getAllShinobiState, getUserSkills, isExhausted } from './state.js';
 
 export const SHINOBI_EMO = {
   Sasuke: '⚔️', Sakura: '🌸', Naruto: '🍥', Itachi: '👁️',
@@ -87,10 +87,9 @@ export async function collectStatus(telegramId) {
     const extras = [];
     let primary;
 
-    if (isDead(state, t)) {
-      // Death is account-level: the starter dies like every other shinobi.
-      primary = { key: 'dead', icon: '☠️', label: 'Dead', due: dueText(state.deadUntil, t), dueAt: state.deadUntil };
-    } else if (name === 'Starter Shinobi') {
+    // Death is account-level: shinobi status never reports it, so every row
+    // shows the real activity (patrol/mission/pet/rest/training) again.
+    if (name === 'Starter Shinobi') {
       if (act && act.status === 'active' && act.ends_at > t) {
         const label = `${ACT_WORD[act.kind] || 'Activity'}`;
         primary = { key: act.kind, icon: act.kind === 'mission' ? '⚔️' : act.kind === 'pet' ? '🐾' : '🏃', label, due: dueText(act.ends_at, t), dueAt: act.ends_at };
@@ -160,7 +159,6 @@ export function statusParts(row) {
     bbq: 'chilling in BBQ',
     hotsprings: 'relaxing in hot springs',
     training: 'resting in Training Ground',
-    dead: 'dead',
     ready: 'ready',
   };
   return {
@@ -200,7 +198,6 @@ export function statusText(row) {
     case 'searching': return `🔎 Searching Tsunade — Completes ${p.due}`;
     case 'training': return `🏋️ Training — Next session ${p.due}`;
     case 'exhausted': return `🔥 Exhausted — ${p.due}`;
-    case 'dead': return `☠️ Dead — Revives ${p.due}`;
     case 'bbq': return '🍖 At BBQ (chakra recovery)';
     case 'hotsprings': return '♨️ At Hot Springs (chakra recovery)';
     default: return `🟢 ${p.label}`;

@@ -353,9 +353,11 @@ export const shinobiState = table('shinobi_state', {
   patrolStreak: integer('patrol_streak').notNull().default(0),
   // Shinobi is exhausted until this timestamp (0 = not exhausted).
   exhaustedUntil: integer('exhausted_until').notNull().default(0),
-  // Shinobi is dead until this timestamp (0 = alive). Revival is automatic.
+  // DEPRECATED: the shinobi death system is retired. Death is account-level
+  // (user_skills.dead_until); this column is only kept so old databases keep
+  // migrating, and every read/write of it was removed.
   deadUntil: integer('dead_until').notNull().default(0),
-  // Target's equipped shinobi was robbed at this timestamp (24h robbery lockout).
+  // DEPRECATED: robbery lockout moved to user_skills (account level).
   lastRobbedAt: integer('last_robbed_at').notNull().default(0),
   // Training Ground progress (sessions completed for this shinobi).
   trainSessions: integer('train_sessions').notNull().default(0),
@@ -378,6 +380,11 @@ export const userSkills = table('user_skills', {
   katsuyuHealAt: integer('katsuyu_heal_at').notNull().default(0),
   // Hinata /byakugan: last successful use (24h cooldown).
   byakuganAt: integer('byakugan_at').notNull().default(0),
+  // ACCOUNT death: one /kill marks the Telegram id dead for 24h. Shinobi are
+  // never marked dead, so the whole roster keeps working normally.
+  deadUntil: integer('dead_until').notNull().default(0),
+  // Robbery lockout for the account (24h, shared by every shinobi).
+  lastRobbedAt: integer('last_robbed_at').notNull().default(0),
 }, (t) => ({}));
 
 /** Hidden Tsunade search sessions (one active or outstanding row per user). */

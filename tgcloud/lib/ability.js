@@ -5,7 +5,7 @@ export const ROWS = [
   ['🌸 Sakura', 'booster · /claim and patrol/mission bonus grow with level · patrol only (no missions) · healing at Lv. 4'],
   ['🍥 Naruto', 'shadow clones · ×3 on /mission, /patrol only · may find Jiraiya (within 15 patrols) · clone window grows with level'],
   ['🐸 Jiraiya', 'protection · /protect → 24h immunity · found via Naruto /patrol (within 15) · trains Naruto'],
-  ['👁️ Itachi', 'kill & rob · /kill rewards by level: 100–120 / 120–180 / 150–200 / 200–250 / 250–300 🍥 · /rob needs a dead target · 5 levels by successful kills · cannot patrol/mission'],
+  ['👁️ Itachi', 'kill & rob · /kill rewards by level: 100–120 / 120–180 / 150–200 / 200–250 / 250–300 🍥 · /rob needs a dead account (24h) · 5 levels by successful kills · cannot patrol/mission'],
   ['👁️ Hinata', 'byakugan · /byakugan → reveals protection time · once per 24h, private'],
   ['🧠 Mind Transmission', '/mt → hidden message · jutsu owners only'],
   ['🍃 Rank', 'academy → genin → chūnin → jōnin → anbu → kage'],

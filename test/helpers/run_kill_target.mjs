@@ -1,7 +1,8 @@
 // /kill & /rob targeting: a real equipped shinobi must win over a legacy
 // `Starter Shinobi` row that still sits in slot 0, and nobody is protected:
-// a user who owns no shinobi at all is still a valid target (the account is
-// killed, not a shinobi).
+// a user who owns no shinobi at all is still a valid target.
+// Death is ACCOUNT-level: one user_skills.dead_until timer, 24h, never a
+// shinobi row — the roster keeps working while the account is dead.
 import assert from 'node:assert/strict';
 import { api } from 'sdk';
 import { db } from './sdk_db_stub.mjs';
@@ -112,16 +113,25 @@ const killText = sent.map(textOf).join('\n');
 assert.match(killText, /ᴋɪʟʟᴇᴅ/);
 assert.doesNotMatch(killText, /ᴄᴀɴɴᴏᴛ ʙᴇ ᴋɪʟʟᴇᴅ/, 'an equipped Itachi is killable');
 
-const targetState = await db.get({
-  text: `SELECT dead_until FROM shinobi_state WHERE telegram_id = ? AND shinobi = 'Itachi'`,
+// The ACCOUNT is dead for 24h and no shinobi carries a death timer.
+const targetAccount = await db.get({
+  text: `SELECT dead_until FROM user_skills WHERE telegram_id = ?`,
   params: [TARGET],
 });
-assert.ok(Number(targetState.dead_until) > now(), 'the target Itachi is dead');
-const starterState = await db.get({
-  text: `SELECT dead_until FROM shinobi_state WHERE telegram_id = ? AND shinobi = 'Starter Shinobi'`,
+assert.ok(Number(targetAccount.dead_until) > now() + 23 * 3600, 'the target ACCOUNT is dead for 24h');
+const deadShinobi = await db.get({
+  text: `SELECT COUNT(*) AS n FROM shinobi_state WHERE telegram_id = ? AND dead_until > 0`,
   params: [TARGET],
 });
-assert.ok(!starterState, 'a real equipped shinobi shadows the starter row');
+assert.equal(Number(deadShinobi.n), 0, 'no shinobi is marked dead');
+// Killing again inside the same 24h window is refused (one kill per account).
+sent.length = 0;
+await handleKill(message(ATTACKER, TARGET, '/kill'));
+assert.match(sent.map(textOf).join('\n'), /ᴀʟʀᴇᴀᴅʏ ᴅᴇᴀᴅ/, 'the account cannot be killed twice in 24h');
+const stillOne = await db.get({
+  text: `SELECT kills FROM users WHERE telegram_id = ?`, params: [ATTACKER],
+});
+assert.equal(stillOne.kills, 1, 'the refused kill pays nothing');
 const attacker = await db.get({
   text: `SELECT kills FROM users WHERE telegram_id = ?`, params: [ATTACKER],
 });
@@ -134,20 +144,58 @@ const newbieText = sent.map(textOf).join('\n');
 assert.match(newbieText, /ᴋɪʟʟᴇᴅ/);
 assert.doesNotMatch(newbieText, /ᴄᴀɴɴᴏᴛ ʙᴇ ᴋɪʟʟᴇᴅ/);
 const newbieState = await db.get({
-  text: `SELECT dead_until FROM shinobi_state WHERE telegram_id = ? AND shinobi = 'Starter Shinobi'`,
+  text: `SELECT dead_until FROM user_skills WHERE telegram_id = ?`,
   params: [STARTER_ONLY],
 });
-assert.ok(Number(newbieState.dead_until) > now(), 'the starter of a shinobi-less account dies');
+assert.ok(Number(newbieState.dead_until) > now(), 'a shinobi-less account still dies');
 const afterTwo = await db.get({
   text: `SELECT kills FROM users WHERE telegram_id = ?`, params: [ATTACKER],
 });
 assert.equal(afterTwo.kills, 2, 'the second kill is credited');
 
-// ---- /rob uses the same target ------------------------------------------------
+// ---- /rob needs a dead ACCOUNT and locks the account, not a shinobi --------
 sent.length = 0;
 await handleRob(message(ATTACKER, TARGET, '/rob'));
 const robText = sent.map(textOf).join('\n');
 assert.match(robText, /ʀᴏʙʙᴇʀʏ ʀᴀᴛᴇ: 20%/);
 assert.match(robText, /200/, '20% of the target balance at Itachi level 1');
+const robLock = await db.get({
+  text: `SELECT last_robbed_at FROM user_skills WHERE telegram_id = ?`,
+  params: [TARGET],
+});
+assert.ok(Number(robLock.last_robbed_at) > 0, 'the rob lockout lives on the account');
+const shinobiLock = await db.get({
+  text: `SELECT COUNT(*) AS n FROM shinobi_state WHERE telegram_id = ? AND last_robbed_at > 0`,
+  params: [TARGET],
+});
+assert.equal(Number(shinobiLock.n), 0, 'no shinobi row keeps a rob lockout');
+
+// Second /rob in the same 24h is refused.
+sent.length = 0;
+await handleRob(message(ATTACKER, TARGET, '/rob'));
+assert.match(sent.map(textOf).join('\n'), /ʀᴏʙʙᴇᴅ ʀᴇᴄᴇɴᴛʟʏ/);
+
+// ---- an ALIVE account cannot be robbed even when a shinobi row looks odd ----
+await db.run({
+  text: `UPDATE user_skills SET dead_until = 0 WHERE telegram_id = ?`,
+  params: [TARGET],
+});
+await db.run({
+  text: `UPDATE shinobi_state SET dead_until = 1 WHERE telegram_id = ?`,
+  params: [TARGET],
+});
+sent.length = 0;
+await handleRob(message(ATTACKER, TARGET, '/rob'));
+assert.match(sent.map(textOf).join('\n'), /ɴᴏᴛ ᴅᴇᴀᴅ/,
+  'leftover shinobi death rows never make a living account robbable');
+
+// ---- the retired shinobi-death rows are wiped on first use ----------------
+const { getUserSkills } = await import('../../tgcloud/lib/rpg/state.js');
+await getUserSkills(TARGET);
+const swept = await db.get({
+  text: `SELECT COUNT(*) AS n FROM shinobi_state WHERE dead_until > 0 OR last_robbed_at > 0`,
+  params: [],
+});
+assert.equal(Number(swept.n), 0, 'legacy shinobi death/lock rows are cleared');
 
 console.log('kill target: OK');
