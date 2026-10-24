@@ -13,3 +13,16 @@ test('pet ui integration: screens, buttons, dialogues and callback guards', () =
   );
   assert.match(output, /pet ui integration: OK/);
 });
+
+// Regression: the pet card is a rich message with a photo. Telegram refuses to
+// edit a media message into a text message, so the 🎾 Play screen (and every
+// other screen opened from the card) must be rendered WITH the pet photo —
+// otherwise the button answers the callback but nothing changes on screen.
+test('pet card screens keep the photo so button taps are never silent', () => {
+  const output = execFileSync(
+    process.execPath,
+    ['--experimental-loader', './test/helpers/sdk-loader.mjs', 'test/helpers/run_pet_play_button.mjs'],
+    { cwd: new URL('..', import.meta.url), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+  assert.match(output, /pet play button: OK/);
+});

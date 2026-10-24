@@ -20,7 +20,7 @@ import { db } from 'sdk';
 import { sql } from 'sdk/db';
 import { BotApiError } from 'sdk';
 import { api } from '../message_api.js';
-import { editRichOr, richOr, P, table, row, btn } from '../rich.js';
+import { richOr, P, table, row, btn } from '../rich.js';
 import { keyboardToRichRows } from '../map/rich.js';
 import { escapeHtml, style } from '../texts.js';
 import { fmt } from '../store.js';
@@ -341,7 +341,10 @@ async function renderPetCard(msg, user, pet) {
       reply_markup: keyboard,
     });
     return;
-  } catch (_) { /* not a photo message */ }
+  } catch (e) {
+    // Already showing this caption → done; anything else falls through.
+    if (isNotModified(e)) return;
+  }
   try {
     await api.editMessageText({
       chat_id: msg.chat.id,
@@ -733,34 +736,143 @@ function blocksToClassic(blocks) {
   };
 }
 
-async function render(msg, user, blocks) {
+// ---- rich screen rendering ----
+// A pet screen must stay reachable from the pet CARD, which is a rich message
+// carrying the pet photo. Telegram cannot turn a media message into a text
+// message (editMessageText on a photo message only answers 400), so screens
+// opened from a card are rendered WITH the same photo; otherwise Play/stats/
+// feed taps looked like dead buttons.
+
+const cellHtml = (cell) => {
+  if (cell && typeof cell === 'object') return String(cell.text ?? '');
+  return String(cell ?? '');
+};
+
+/** Convert pet rich blocks into rich HTML (+ `tg-button-row` controls). */
+function screenHtml(blocks, fileId = '') {
+  const body = [];
+  const buttonRows = [];
+  for (const block of blocks || []) {
+    if (!block) continue;
+    if (block.type === 'paragraph') {
+      body.push(`<p>${typeof block.text === 'string' ? block.text : ''}</p>`);
+    } else if (block.type === 'blockquote') {
+      const inner = (block.blocks || [])
+        .map((b) => (typeof b?.text === 'string' ? b.text : ''))
+        .filter(Boolean)
+        .join('<br>');
+      body.push(`<blockquote>${inner}</blockquote>`);
+    } else if (block.type === 'table' && Array.isArray(block.cells)) {
+      const rows = block.cells
+        .map((cells) => `<tr>${cells.map((c) => `<td>${cellHtml(c)}</td>`).join('')}</tr>`)
+        .join('');
+      body.push(`<table>${rows}</table>`);
+    } else if (block.type === 'divider') {
+      body.push('<hr/>');
+    } else if (block.type === 'buttons') {
+      buttonRows.push(block.buttons || []);
+    }
+  }
+  const figure = fileId
+    ? `<figure><img src="tg://photo?id=pet_screen"/></figure>`
+    : '';
+  return figure + body.join('') + keyboardToRichRows({ inline_keyboard: buttonRows });
+}
+
+function mediaOf(fileId) {
+  return fileId ? [{ id: 'pet_screen', media: { type: 'photo', media: fileId } }] : undefined;
+}
+
+/** Telegram's "same content" 400: the screen is already showing, not a failure. */
+function isNotModified(e) {
+  return e instanceof BotApiError
+    && /not modified/i.test(String(e.description || e.message || ''));
+}
+
+/** Edit in place with rich content; false when Telegram refuses this shape. */
+async function editRichScreen(msg, richMessage) {
+  try {
+    await api.editMessageText({
+      chat_id: msg.chat.id,
+      message_id: msg.message_id,
+      rich_message: richMessage,
+    });
+    return true;
+  } catch (e) {
+    if (isNotModified(e)) return true;
+    if (!(e instanceof BotApiError)) console.error('[pet screen edit]', e);
+    return false;
+  }
+}
+
+/**
+ * Render a pet screen in place.
+ * `options.pet` keeps the pet photo on screens opened from the pet card.
+ * The last resort is a fresh message: a tap must never end silently.
+ */
+async function render(msg, user, blocks, options = {}) {
   const classic = blocksToClassic(blocks);
-  await editRichOr(msg, user, blocks, async () => {
+  const pet = options.pet || null;
+  if (pet) {
+    let fileId = null;
+    try { fileId = await getPetPhotoFileId(msg.chat.id, pet.petId); } catch (_) {}
+    if (fileId) {
+      const rich = { html: screenHtml(blocks, fileId), media: mediaOf(fileId) };
+      if (await editRichScreen(msg, rich)) return;
+    }
+  }
+  if (await editRichScreen(msg, { blocks })) return;
+  try {
+    await api.editMessageText({
+      chat_id: msg.chat.id,
+      message_id: msg.message_id,
+      text: classic.text,
+      parse_mode: 'HTML',
+      ...(classic.keyboard ? { reply_markup: classic.keyboard } : {}),
+    });
+    return;
+  } catch (e) {
+    if (isNotModified(e)) return;
+    if (!(e instanceof BotApiError)) console.error('[pet screen text edit]', e);
+  }
+  try {
+    // A classic photo/caption message can still take the screen as its caption.
+    await api.editMessageCaption({
+      chat_id: msg.chat.id,
+      message_id: msg.message_id,
+      caption: classic.text,
+      parse_mode: 'HTML',
+      ...(classic.keyboard ? { reply_markup: classic.keyboard } : {}),
+    });
+    return;
+  } catch (_) { /* not a photo message */ }
+  // Never leave the tap unanswered: open the screen as a new message.
+  try {
+    await api.sendRichMessage({ chat_id: msg.chat.id, rich_message: { blocks } });
+  } catch (_) {
     try {
-      await api.editMessageText({
+      await api.sendMessage({
         chat_id: msg.chat.id,
-        message_id: msg.message_id,
         text: classic.text,
         parse_mode: 'HTML',
         ...(classic.keyboard ? { reply_markup: classic.keyboard } : {}),
       });
-    } catch (_) {
-      // A photo/caption message cannot be edited into text; edit the caption.
-      try {
-        await api.editMessageCaption({
-          chat_id: msg.chat.id,
-          message_id: msg.message_id,
-          caption: classic.text,
-          parse_mode: 'HTML',
-          ...(classic.keyboard ? { reply_markup: classic.keyboard } : {}),
-        });
-      } catch (_) { /* message is gone or unchanged */ }
-    }
-  });
+    } catch (e) { console.error('[pet screen send]', e); }
+  }
 }
 
 export function isPetCallback(data) {
   return String(data || '').startsWith('pet_');
+}
+
+/** Equipped pet for screens that keep the card photo; null when there is none. */
+async function safeEquippedPet(userId) {
+  try {
+    return await getEquippedPet(userId);
+  } catch (e) {
+    console.error('[pet equipped]', e);
+    return null;
+  }
 }
 
 /** Owned-pet guard: returns the pet row or null. */
@@ -797,18 +909,18 @@ export async function handlePetCallback(cb) {
     }
     if (action === 'pet_menu') {
       await answer(cb);
-      await render(msg, cb.from, await petListContent(cb.from));
+      await render(msg, cb.from, await petListContent(cb.from), { pet: await safeEquippedPet(userId) });
       return true;
     }
     if (action === 'pet_store') {
       await answer(cb);
-      await render(msg, cb.from, await petStoreContent(cb.from));
+      await render(msg, cb.from, await petStoreContent(cb.from), { pet: await safeEquippedPet(userId) });
       return true;
     }
 
     if (action === 'pet_food_menu' && !parts[2]) {
       await answer(cb);
-      await render(msg, cb.from, await petFoodContent(cb.from));
+      await render(msg, cb.from, await petFoodContent(cb.from), { pet: await safeEquippedPet(userId) });
       return true;
     }
 
@@ -857,7 +969,7 @@ export async function handlePetCallback(cb) {
       }
       if (action === 'pet_stats') {
         await answer(cb);
-        await render(msg, cb.from, await petStatsContent(cb.from, pet));
+        await render(msg, cb.from, await petStatsContent(cb.from, pet), { pet });
         return true;
       }
       if (action === 'pet_feed_menu') {
@@ -876,7 +988,7 @@ export async function handlePetCallback(cb) {
           return true;
         }
         await answer(cb);
-        await render(msg, cb.from, await petFoodContent(cb.from, pet.petId));
+        await render(msg, cb.from, await petFoodContent(cb.from, pet.petId), { pet });
         return true;
       }
       if (action === 'pet_food') {
@@ -893,7 +1005,7 @@ export async function handlePetCallback(cb) {
         } else if (r.code !== 'duplicate') {
           await answer(cb, SESSION_CANNOT_START_TEXT, true);
         }
-        await render(msg, cb.from, await petFoodContent(cb.from, pet.petId));
+        await render(msg, cb.from, await petFoodContent(cb.from, pet.petId), { pet });
         return true;
       }
       if (action === 'pet_play') {
@@ -907,7 +1019,7 @@ export async function handlePetCallback(cb) {
           return true;
         }
         await answer(cb);
-        await render(msg, cb.from, await playPickerContent(cb.from, pet));
+        await render(msg, cb.from, await playPickerContent(cb.from, pet), { pet });
         return true;
       }
       if (action === 'pet_train') {
@@ -937,7 +1049,7 @@ export async function handlePetCallback(cb) {
       }
       if (action === 'pet_name') {
         await answer(cb);
-        await render(msg, cb.from, await nametagContent(userId, `pet_me:${userId}:${pet.petId}`));
+        await render(msg, cb.from, await nametagContent(userId, `pet_me:${userId}:${pet.petId}`), { pet });
         return true;
       }
       return true;

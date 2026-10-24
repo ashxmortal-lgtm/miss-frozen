@@ -226,6 +226,12 @@ error, and technical details stay in the server log.
   links, not HTTP photo URLs, so they are resolved through the storage-channel
   forward → cached `file_id` path (`map_media_cache`) and embedded in the rich
   message; they are never passed to `sendPhoto` as a URL.
+- The card is a **media** rich message, so a screen opened from it (🎾 Play,
+  feed menu, stats, rename, list, store) is edited **with the same pet photo**:
+  Telegram refuses to convert a photo message into a text message (400), and an
+  in-place edit that fails silently made those buttons look dead. If every edit
+  is refused the screen is sent as a new message, so a tap is never silent.
+  "message is not modified" counts as success (no duplicate screens).
 
 ## State machine
 
