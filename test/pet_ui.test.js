@@ -26,3 +26,14 @@ test('pet card screens keep the photo so button taps are never silent', () => {
   );
   assert.match(output, /pet play button: OK/);
 });
+
+// Regression: a failing shinobi check or a refused edit used to swallow the
+// Play tap completely (the callback was acknowledged before the error).
+test('pet Play always answers visibly, even when the check or the edit fails', () => {
+  const output = execFileSync(
+    process.execPath,
+    ['--experimental-loader', './test/helpers/sdk-loader.mjs', 'test/helpers/run_pet_play_resilience.mjs'],
+    { cwd: new URL('..', import.meta.url), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+  assert.match(output, /pet play resilience: OK/);
+});

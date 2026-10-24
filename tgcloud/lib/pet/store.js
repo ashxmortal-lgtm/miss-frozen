@@ -535,43 +535,74 @@ export async function ownedShinobi(userId) {
  * still play/train — this only repairs locks that would otherwise be permanent.
  */
 async function repairShinobiLocks(userId, shinobi) {
-  const t = now();
-  const act = await db.get(sql`
-    SELECT kind, status, ends_at FROM activities
-    WHERE telegram_id = ${userId} AND shinobi = ${shinobi}
-  `);
-  if (!act || act.status !== 'active') return;
-  if (act.kind === 'pet') {
-    const live = await db.get(sql`
-      SELECT 1 AS ok FROM pet_activity
-      WHERE telegram_id = ${userId} AND shinobi_name = ${shinobi} AND status = 'active'
-    `);
-    if (live) return;
-    await db.run(sql`
-      UPDATE activities SET status = 'idle', partner_pet = NULL
+  // A repair that fails must never break the caller: Play/Train answer from
+  // shinobiAvailability, so an exception here would silently kill the tap.
+  try {
+    await ensurePetSchema();
+    const t = now();
+    const act = await db.get(sql`
+      SELECT kind, status, ends_at FROM activities
       WHERE telegram_id = ${userId} AND shinobi = ${shinobi}
-        AND kind = 'pet' AND status = 'active'
     `);
-    return;
-  }
-  if (Number(act.ends_at || 0) > 0 && Number(act.ends_at) <= t) {
-    try {
-      // Dynamic import: activities.js imports this module statically.
-      const { settleOwn } = await import('../activities.js');
-      await settleOwn({ id: userId });
-    } catch (e) { console.error('[pet repair settle]', e); }
+    if (!act || act.status !== 'active') return;
+    if (act.kind === 'pet') {
+      const live = await db.get(sql`
+        SELECT 1 AS ok FROM pet_activity
+        WHERE telegram_id = ${userId} AND shinobi_name = ${shinobi} AND status = 'active'
+      `);
+      if (live) return;
+      try {
+        await db.run(sql`
+          UPDATE activities SET status = 'idle', partner_pet = NULL
+          WHERE telegram_id = ${userId} AND shinobi = ${shinobi}
+            AND kind = 'pet' AND status = 'active'
+        `);
+      } catch (e) {
+        // Older database without the partner_pet column: free the lock anyway.
+        console.error('[pet repair partner]', e?.message || e);
+        await db.run(sql`
+          UPDATE activities SET status = 'idle'
+          WHERE telegram_id = ${userId} AND shinobi = ${shinobi}
+            AND kind = 'pet' AND status = 'active'
+        `);
+      }
+      return;
+    }
+    if (Number(act.ends_at || 0) > 0 && Number(act.ends_at) <= t) {
+      try {
+        // Dynamic import: activities.js imports this module statically.
+        const { settleOwn } = await import('../activities.js');
+        await settleOwn({ id: userId });
+      } catch (e) { console.error('[pet repair settle]', e); }
+    }
+  } catch (e) {
+    console.error('[pet repair]', e?.message || e);
   }
 }
 
-/** Null when the Shinobi can take a pet activity, else a short reason. */
+/**
+ * Null when the Shinobi can take a pet activity, else a short reason.
+ * Never throws: the Play/Train picker is built from this result, and a thrown
+ * error here used to leave the button with no visible response at all.
+ */
 export async function shinobiAvailability(userId, shinobi) {
-  const { getShinobiState, isExhausted } = await import('../rpg/state.js');
+  try {
+    return await shinobiAvailabilityUnsafe(userId, shinobi);
+  } catch (e) {
+    console.error('[shinobi availability]', e?.message || e);
+    return null;
+  }
+}
+
+async function shinobiAvailabilityUnsafe(userId, shinobi) {
+  await ensurePetSchema();
   const owned = await db.get(sql`
     SELECT 1 AS ok FROM inventory
     WHERE telegram_id = ${userId} AND item_name = ${shinobi} AND qty > 0
   `);
   if (!owned) return 'not_owned';
   await repairShinobiLocks(userId, shinobi);
+  const { getShinobiState, isExhausted } = await import('../rpg/state.js');
   const t = now();
   // Death is account-level, so a Shinobi is always available for Play/Train;
   // only exhaustion or another lock can block the session.

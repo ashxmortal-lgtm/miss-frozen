@@ -202,6 +202,14 @@ can at most address nothing (`❌ ᴘᴇᴛ ɴᴏᴛ ꜰᴏᴜɴᴅ.`). Unknown 
 answer `⚠️ ᴛʜɪꜱ ᴍᴇɴᴜ ɪꜱ ᴏᴜᴛᴅᴀᴛᴇᴅ…`, caught errors answer the generic unexpected
 error, and technical details stay in the server log.
 
+A tap is never silent: every screen is built **before** the callback is
+acknowledged, `answer()` acknowledges at most once, and `report()` falls back to
+a normal chat message when the callback was already acknowledged — otherwise a
+late error became an invisible no-op (exactly how the 🎾 Play button used to
+die). `shinobiAvailability()` and the stale-lock repair swallow their errors and
+answer "available", and `handlers/callback_query.js` acknowledges anything that
+escapes a handler.
+
 ## Values
 
 | Pet | Price | Ability |
