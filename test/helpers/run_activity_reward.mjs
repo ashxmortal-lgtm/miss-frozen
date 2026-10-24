@@ -21,17 +21,27 @@ const expected = [
   'ʜɪᴅᴅᴇɴ ʟᴇᴀғ ᴠɪʟʟᴀɢᴇ ɪs sᴀғᴇ.',
   '',
   '<a href="tg://user?id=2001">Tester</a>',
-  '🥷 𝐒𝐭𝐚𝐫𝐭𝐞𝐫 𝐒𝐡𝐢𝐧𝐨𝐛𝐢 → +307 🍥',
+  '<blockquote>🥷 𝐒𝐭𝐚𝐫𝐭𝐞𝐫 𝐒𝐡𝐢𝐧𝐨𝐛𝐢 → +307 🍥',
   '⭐ +66 xᴘ',
   '🌸 Sakura boost: +150 🍥',
   '🦋 Axofly boost: +30 🍥',
-  '🦄 Capycorn: −3% patrol time',
+  '🦄 Capycorn: −3% patrol time</blockquote>',
   '',
-  '🍥 𝐏𝐞𝐧𝐝𝐢𝐧𝐠 𝐭𝐨𝐭𝐚𝐥: 307 ᴋᴏɴᴏʜᴀ ᴄᴏɪɴs',
-  '',
-  '💰 ᴄʟᴀɪᴍ ᴀᴛ ᴛʜᴇ ʜᴏᴋᴀɢᴇ ᴏғғɪᴄᴇ — /map → 🏯 → 💰 ᴄʟᴀɪᴍ ʀᴇᴡᴀʀᴅ.',
+  '<blockquote>🍥 𝐏𝐞𝐧𝐝𝐢𝐧𝐠 𝐭𝐨𝐭𝐚𝐥: 307 ᴋᴏɴᴏʜᴀ ᴄᴏɪɴs</blockquote>',
 ].join('\n');
 assert.equal(card, expected, 'the patrol return card matches the requested layout');
+
+// The shinobi reward rows are quoted, the pending balance has its own quote,
+// and the old "/map -> Hokage" claim instructions are gone (a button replaces
+// them, see the map Gate + economy handler).
+const rewardQuote = card.slice(card.indexOf('<blockquote>'), card.indexOf('</blockquote>') + 13);
+assert.match(rewardQuote, /\+307 🍥/);
+assert.match(rewardQuote, /\+66 xᴘ/);
+assert.match(rewardQuote, /Sakura boost/);
+const pendingQuote = card.slice(card.lastIndexOf('<blockquote>'));
+assert.ok(pendingQuote.includes('<blockquote>'));
+assert.ok(!rewardQuote.includes('🍥 𝐏𝐞𝐧𝐝𝐢𝐧𝐠'), 'the pending balance is not inside the reward quote');
+assert.ok(!card.includes('/map → 🏯'), 'no manual /map → 🏯 claim hint');
 
 // Coins carry the currency icon; the XP row uses ⭐ and never the coin icon.
 const coinRow = card.split('\n').find((l) => l.includes('→ +307'));
@@ -93,7 +103,7 @@ assert.match(live, /⭐ \+\d+ xᴘ/);
 assert.match(live, /🌸 Sakura boost: \+\d+ 🍥/, 'Sakura boost shown in coins');
 assert.match(live, /🦄 Capycorn: −3% patrol time/, 'the shortened patrol names Capycorn');
 assert.match(live, /🍥 𝐏𝐞𝐧𝐝𝐢𝐧𝐠 𝐭𝐨𝐭𝐚𝐥: [\d,]+ ᴋᴏɴᴏʜᴀ ᴄᴏɪɴs/);
-assert.match(live, /💰 ᴄʟᴀɪᴍ ᴀᴛ ᴛʜᴇ ʜᴏᴋᴀɢᴇ ᴏғғɪᴄᴇ/);
+assert.ok(!live.includes('/map → 🏯'), 'the claim is a button, not a text hint');
 
 const pending = await db.get(sql`
   SELECT SUM(reward) AS total FROM pending_patrol_rewards WHERE telegram_id = ${U} AND claimed = 0

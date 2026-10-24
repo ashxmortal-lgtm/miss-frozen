@@ -77,7 +77,8 @@ async function announceDone() {
     const who = { id: r.id, first_name: r.name };
     const claimKb = {
       inline_keyboard: [[{
-        text: r.kind === 'pet' ? '🐾 Open Pets' : '🏯 Open Hokage Office',
+        // Group card: one rich button straight into the Hokage Office claim.
+        text: r.kind === 'pet' ? '🐾 Open Pets' : 'claim 🍥 reward',
         // Pet completions open the latest /pet card (not the retired menu).
         callback_data: r.kind === 'pet' ? `pet_me:${r.id}` : `map_loc_hokage:${r.id}`,
         style: 'success',
@@ -248,14 +249,29 @@ export async function handleEconomyCommand(message, ctx) {
       } else {
         const arg = text.trim().split(/\s+/).slice(1).join(' ');
         const r = await runActivity(user, cmd, arg || null, message.chat.id);
+        // A settled return is claimable straight from this reply.
+        const claimKb = r.settled
+          ? { inline_keyboard: [[{ text: 'claim 🍥 reward', callback_data: `map_loc_hokage:${user.id}`, style: 'success' }]] }
+          : undefined;
         await send(message.chat.id, {
           text: style(r.body),
           parse_mode: 'HTML',
           reply_parameters: { message_id: message.message_id },
+          ...(claimKb ? { reply_markup: claimKb } : {}),
         });
         for (const d of r.dms) {
           try {
-            await send(user.id, { text: render(user, d), parse_mode: 'HTML' });
+            await send(user.id, {
+              text: render(user, d),
+              parse_mode: 'HTML',
+              reply_markup: {
+                inline_keyboard: [[{
+                  text: 'claim 🍥 reward',
+                  callback_data: `map_loc_hokage:${user.id}`,
+                  style: 'success',
+                }]],
+              },
+            });
           } catch (e) { /* user never started the bot in DM */ }
         }
       }

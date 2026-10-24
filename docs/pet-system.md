@@ -187,7 +187,14 @@ map_pet_*:…  (owner id first for uid-first shapes, last for pet-first shapes)
 map_hot_relax|map_hot_recall:{uid} · map_hot_go|map_hot_stop:{shinobi}:{uid}
 map_bbq_select|map_bbq_recall|map_bbq_heal|map_bbq_hpay:{uid}
 map_bbq_go|map_bbq_stop:{shinobi}:{uid}
+map_btog|map_ptog:{shinobi}:{uid} · map_ball|map_pall|map_psend:{uid}
 ```
+
+The Gate (`map_loc_gate`) adds `🍖 Visit BBQ and recover` → `map_bbq_heal` as soon as one
+roster member is exhausted; that window is the BBQ recovery selection. After the
+200 🍥-each recovery the same message turns into the patrol picker with the healed
+units preselected (`map_btog` keeps re-rendering it), so a shinobi can be recovered
+and sent on patrol without walking back to the Gate.
 
 The owner id must equal `cb.from.id` (`🔒 ᴛʜɪꜱ ᴍᴇɴᴜ ɪꜱɴ'ᴛ ʏᴏᴜʀꜱ.`), and every
 pet id is re-read from the caller's own `user_pets` rows — a tampered callback
@@ -219,6 +226,12 @@ error, and technical details stay in the server log.
   links, not HTTP photo URLs, so they are resolved through the storage-channel
   forward → cached `file_id` path (`map_media_cache`) and embedded in the rich
   message; they are never passed to `sendPhoto` as a URL.
+- The card is a **media** rich message, so a screen opened from it (🎾 Play,
+  feed menu, stats, rename, list, store) is edited **with the same pet photo**:
+  Telegram refuses to convert a photo message into a text message (400), and an
+  in-place edit that fails silently made those buttons look dead. If every edit
+  is refused the screen is sent as a new message, so a tap is never silent.
+  "message is not modified" counts as success (no duplicate screens).
 
 ## State machine
 

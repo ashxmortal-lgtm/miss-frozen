@@ -239,19 +239,21 @@ export function rewardCard(r, { reminder = false } = {}) {
   let s = `${title}\n\n`;
   if (r.kind === 'patrol') s += `ʜɪᴅᴅᴇɴ ʟᴇᴀғ ᴠɪʟʟᴀɢᴇ ɪs sᴀғᴇ.\n\n`;
   s += `${returningMention(r)}\n`;
-  s += `${emo} ${bold(r.shinobi)} → +${fmt(r.coins)} 🍥\n`;
-  s += `⭐ +${r.xp} xᴘ\n`;
-  for (const line of boostLines(r)) s += `${line}\n`;
-  if (r.rankUp) s += `🏅 Rank up: ${r.rankUp}\n`;
-  if (reminder && r.found) s += `🐸 Jiraiya joined your roster!\n`;
-  if (r.pendingTotal > 0) s += `\n🍥 𝐏𝐞𝐧𝐝𝐢𝐧𝐠 𝐭𝐨𝐭𝐚𝐥: ${fmt(r.pendingTotal)} ᴋᴏɴᴏʜᴀ ᴄᴏɪɴs\n`;
-  if (r.exhaustedUntil) s += reminder
-    ? `🔥 ${r.shinobi} is exhausted — ready at ${dueText(r.exhaustedUntil)}.\n`
-    : `\n🔥 ${r.shinobi} is exhausted — ready at ${dueText(r.exhaustedUntil)}.\n`;
+  // The shinobi's reward rows are one quote: coin payout, XP and every boost.
+  const rows = [
+    `${emo} ${bold(r.shinobi)} → +${fmt(r.coins)} 🍥`,
+    `⭐ +${r.xp} xᴘ`,
+    ...boostLines(r),
+  ];
+  if (r.rankUp) rows.push(`🏅 Rank up: ${r.rankUp}`);
+  s += `${quote(rows.join('\n'))}\n`;
+  if (reminder && r.found) s += `\n🐸 Jiraiya joined your roster!\n`;
+  // The pending balance gets its own quote — the claim itself is a button now.
+  if (r.pendingTotal > 0) s += `\n${quote(`🍥 𝐏𝐞𝐧𝐝𝐢𝐧𝐠 𝐭𝐨𝐭𝐚𝐥: ${fmt(r.pendingTotal)} ᴋᴏɴᴏʜᴀ ᴄᴏɪɴs`)}\n`;
+  if (r.exhaustedUntil) s += `\n🔥 ${r.shinobi} is exhausted — ready at ${dueText(r.exhaustedUntil)}.\n`;
   if (!reminder && r.kind === 'mission') s += `\n⏳ Next mission available in: ${hours(KINDS.mission.cooldown)}\n`;
   if (!reminder && r.had) s += `\n𝑱𝒊𝒓𝒂𝒊𝒚𝒂 𝒊𝒔 𝒂𝒍𝒓𝒆𝒂𝒅𝒚 𝒑𝒂𝒓𝒕 𝒐𝒇 𝒚𝒐𝒖𝒓 𝒓𝒐𝒔𝒕𝒆𝒓.\n`;
-  s += `\n💰 ᴄʟᴀɪᴍ ᴀᴛ ᴛʜᴇ ʜᴏᴋᴀɢᴇ ᴏғғɪᴄᴇ — /map → 🏯 → 💰 ᴄʟᴀɪᴍ ʀᴇᴡᴀʀᴅ.`;
-  return s;
+  return s.replace(/\n+$/, '');
 }
 function fullText(r) { return rewardCard(r); }
 // Group reminder — same card, mention included so the caller need not add it.
@@ -263,7 +265,7 @@ function dmText(r) {
   let s = `✅ ${KINDS[r.kind].done}\n\n${emo} ${r.shinobi} returned.\n🍥 +${fmt(r.coins)} (pending)  ·  ✦ XP +${r.xp}`;
   if (r.found) s += `\n🐸 Jiraiya joined your roster!`;
   if (r.exhaustedUntil) s += `\n🔥 Exhausted until ${dueText(r.exhaustedUntil)}.`;
-  s += `\n\n💰 Claim at Hokage Office: /map → 🏯`;
+  // The claim itself is the "claim 🍥 reward" button under this DM.
   return s;
 }
 
@@ -538,7 +540,9 @@ async function usage(user, kind) {
   return { text: `「𝐍𝐎 𝐒𝐇𝐈𝐍𝐎𝐁𝐈 𝐒𝐄𝐋𝐄𝐂𝐓𝐄𝐃」\n\nYou need an eligible shinobi for this ${c.word}.\n\n» Choose ${c.choose} to continue.\n\nUse: /${c.word} &lt;shinobi name&gt;\n\n${list}` };
 }
 
-// Returns { body, dms, status, shinobi }. dms = short DM texts for completed activities.
+// Returns { body, dms, status, shinobi, settled }. dms = short DM texts for
+// completed activities; settled = how many return cards the body carries (the
+// caller then shows the claim button).
 export async function runActivity(user, kind, rawName, chatId) {
   await ensureUser(user.id);
   try { await ensurePetSchema(); } catch (_) {}
@@ -557,5 +561,5 @@ export async function runActivity(user, kind, rawName, chatId) {
   const body = items
     .map((it) => it.text)
     .join('\n\n');
-  return { body, dms: own.dms, status, shinobi };
+  return { body, dms: own.dms, status, shinobi, settled: own.blocks.length };
 }
