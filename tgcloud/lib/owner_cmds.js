@@ -8,7 +8,7 @@ import { eq } from 'sdk/db';
 import { users, knownGroups as KG, groupSettings as GS } from '../schema.js';
 import { OWNER_ID } from './config.js';
 import { extractQuote } from './quote/extract.js';
-import { fetchProfilePhoto, fetchChatPhoto } from './quote/avatar.js';
+import { resolveAvatar } from './quote/avatar.js';
 import { escapeHtml } from './texts.js';
 
 const bold = (text) => ({ type: 'bold', text });
@@ -342,13 +342,10 @@ export async function handleQuoteDebug(message) {
       }
     }
 
-    const photo = quote.senderId
-      ? await fetchProfilePhoto(quote.senderId)
-      : await fetchChatPhoto(quote.senderChatId);
-    lines.push(photo.ok
-      ? `decode: OK ${photo.image.width}x${photo.image.height}`
-      : `decode: FAILED reason=<code>${escapeHtml(String(photo.reason))}</code>`
-        + (photo.detail ? ` (${escapeHtml(String(photo.detail).slice(0, 120))})` : ''));
+    const avatar = await resolveAvatar(quote);
+    lines.push(`avatar: <b>${avatar.source}</b> `
+      + (avatar.ok ? `(${avatar.image.width}x${avatar.image.height})` : '(lettered disc)'));
+    if (avatar.reason) lines.push(`why: <code>${escapeHtml(avatar.reason)}</code>`);
   }
 
   await api.sendMessage({
