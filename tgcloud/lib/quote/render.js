@@ -16,8 +16,8 @@
 import { encodeRgbaPng } from './png.js';
 import { emojiTint, nameIsEmojiOnly } from './emoji.js';
 import {
-  loadAtlas, drawLine, measureLine, normalizeText, renderableShare,
-  wrapText, clampLines, ellipsize, lineHeightOf,
+  loadAtlas, drawLine, drawRich, ellipsizeRich, measureLine, normalizeText,
+  renderableShare, wrapText, clampLines, lineHeightOf,
 } from './text.js';
 
 export const STICKER_SIZE = 512;
@@ -166,6 +166,38 @@ export class Surface {
         const alpha = rgba[(sy * width + sx) * 4 + 3] / 255;
         if (alpha <= 0) continue;
         this.blend(px, py, cr, cg, cb, coverage * alpha);
+      }
+    }
+  }
+
+  /**
+   * Draw a decoded image into a rectangle — the inline emoji inside a name.
+   * Bilinear sampling, because the baked tile is 40 px and the name row is ~23.
+   */
+  imageRect(image, x, y, width, height) {
+    const { width: sourceWidth, height: sourceHeight, rgba } = image;
+    for (let py = Math.floor(y); py < Math.ceil(y + height); py += 1) {
+      if (py < 0 || py >= this.height) continue;
+      const v = ((py + 0.5 - y) / height) * sourceHeight - 0.5;
+      const y0 = Math.max(0, Math.min(sourceHeight - 1, Math.floor(v)));
+      const y1 = Math.min(sourceHeight - 1, y0 + 1);
+      const fy = Math.min(1, Math.max(0, v - y0));
+      for (let px = Math.floor(x); px < Math.ceil(x + width); px += 1) {
+        if (px < 0 || px >= this.width) continue;
+        const u = ((px + 0.5 - x) / width) * sourceWidth - 0.5;
+        const x0 = Math.max(0, Math.min(sourceWidth - 1, Math.floor(u)));
+        const x1 = Math.min(sourceWidth - 1, x0 + 1);
+        const fx = Math.min(1, Math.max(0, u - x0));
+
+        const sample = (sx, sy, channel) => rgba[(sy * sourceWidth + sx) * 4 + channel];
+        const mix = (channel) => {
+          const top = sample(x0, y0, channel) * (1 - fx) + sample(x1, y0, channel) * fx;
+          const bottom = sample(x0, y1, channel) * (1 - fx) + sample(x1, y1, channel) * fx;
+          return top * (1 - fy) + bottom * fy;
+        };
+        const alpha = mix(3) / 255;
+        if (alpha <= 0.004) continue;
+        this.blend(px, py, Math.round(mix(0)), Math.round(mix(1)), Math.round(mix(2)), alpha);
       }
     }
   }
@@ -324,10 +356,12 @@ function nestedContentWidth(innerWidth) {
  * @param {boolean} [options.emojiAvatar]  the avatar is emoji artwork, drawn as a
  *        single-tone glyph on a tinted disc the way Telegram paints it
  * @param {number} [options.emojiCodepoint]  which emoji, to pick its tint
+ * @param {Map<string, object>|null} [options.nameEmoji]  artwork for the emoji
+ *        inside the display name, keyed by cluster ("❄️")
  */
 export function renderQuote({
   text = '', name = '', userId = 0, avatar = null, kind = '', nested = null,
-  emojiAvatar = false, emojiCodepoint = 0,
+  emojiAvatar = false, emojiCodepoint = 0, nameEmoji = null,
 }) {
   loadAtlas(); // fail fast if the atlas is unusable
 
@@ -377,7 +411,7 @@ export function renderQuote({
   const avatarCy = bubbleY + bubbleH / 2;
   // The avatar arrives as an image in every case — a photo, an emoji tile, or an
   // emoji downloaded from the CDN. Only a total miss reaches the lettered disc.
-  const initials = (normalizeText(name).trim()[0] || '').toUpperCase();
+  const initials = ([...normalizeText(name).trim()][0] || '').toUpperCase();
   // Emoji avatars are painted as one tone on a tinted disc, matching Telegram.
   const tint = emojiAvatar ? emojiTint(emojiCodepoint) : null;
   const drawFace = (image, cx, cy, radius, fontSize) => {
@@ -413,15 +447,18 @@ export function renderQuote({
 
   const nameX = textX + BADGE + 12;
   const nameWidth = plan.innerWidth - BADGE - 12;
-  const cleanName = normalizeText(name).trim();
+  // The name keeps its own typography: 𝒃𝒐𝒍𝒅 stays bold, 𝑖𝑡𝑎𝑙𝑖𝑐 stays italic,
+  // and the ❄️ inside it is drawn as artwork instead of disappearing.
+  const cleanName = normalizeText(name, { keepEmoji: true }).trim();
   // A name that is only an emoji (🕸️) is drawn AS that emoji, on the badge
   // beside it. Calling it "Unknown" was wrong: the emoji IS the name.
   const emojiOnlyName = nameIsEmojiOnly(name);
   const shownName = emojiOnlyName
     ? String(name).trim()
-    : ellipsize(cleanName || 'Unknown', nameWidth, plan.nameSize);
+    : ellipsizeRich(cleanName || 'Unknown', nameWidth, plan.nameSize);
   if (!emojiOnlyName) {
-    drawLine(surface, shownName, nameX, nameBaseline, plan.nameSize, nameColor(userId));
+    drawRich(surface, shownName, nameX, nameBaseline, plan.nameSize,
+      nameColor(userId), nameEmoji);
   }
 
   // ---- the quoted message, inside the bubble (`/q r`) --------------------
@@ -438,10 +475,11 @@ export function renderQuote({
 
     const contentX = boxX + NESTED.pad + NESTED.bar + NESTED.barGap;
     const contentW = nestedContentWidth(plan.innerWidth);
-    const nestedName = ellipsize(normalizeText(nested?.name || '').trim(), contentW, NESTED.nameSize);
+    const nestedName = ellipsizeRich(
+      normalizeText(nested?.name || '', { keepEmoji: true }).trim(), contentW, NESTED.nameSize);
     if (nestedName) {
-      drawLine(surface, nestedName, contentX,
-        nestedTop + NESTED.pad + NESTED.nameSize, NESTED.nameSize, accent);
+      drawRich(surface, nestedName, contentX,
+        nestedTop + NESTED.pad + NESTED.nameSize, NESTED.nameSize, accent, nameEmoji);
     }
     const nestedLineHeight = lineHeightOf(NESTED.textSize);
     plan.nestedLines.forEach((line, index) => {

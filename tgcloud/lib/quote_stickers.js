@@ -19,7 +19,7 @@ import { extractQuote, quoteSourceOf } from './quote/extract.js';
 import { renderQuotePng } from './quote/render.js';
 import { resolveAvatar } from './quote/avatar.js';
 import { formatOfSticker, ownSticker, STICKER_LIMITS } from './quote/packs.js';
-import { emojiCodepointOf } from './quote/emoji.js';
+import { emojiCodepointOf, resolveNameEmoji } from './quote/emoji.js';
 
 export const QUOTE_COMMANDS = new Set(['q', 'own']);
 
@@ -98,8 +98,11 @@ const usageReply = (message, key) => reply(message, MESSAGES[key] || MESSAGES.re
  * @param {{name:string,text:string,userId:number}|null} [nested]  the parent
  *        message, for `/q r`
  * @param {string} [avatarSource]  where the avatar came from (`user`, `emoji`, …)
+ * @param {Map<string, object>|null} [nameEmoji]  artwork for the emoji in the
+ *        display name, keyed by cluster ("❄️")
  */
-export function buildQuoteSticker(quote, avatar = null, nested = null, avatarSource = '') {
+export function buildQuoteSticker(quote, avatar = null, nested = null, avatarSource = '',
+  nameEmoji = null) {
   const emojiAvatar = avatarSource === 'emoji' || avatarSource === 'emoji-fetched';
   return renderQuotePng({
     text: quote.text,
@@ -111,6 +114,8 @@ export function buildQuoteSticker(quote, avatar = null, nested = null, avatarSou
     // Emoji artwork is painted as a single-tone glyph on a tinted disc.
     emojiAvatar,
     emojiCodepoint: emojiAvatar ? emojiCodepointOf(quote.name) : 0,
+    // The ❄️ in "𝑭𝒓❄️𝒛𝒆𝒏" is part of the name; draw it, do not drop it.
+    nameEmoji,
   });
 }
 
@@ -154,9 +159,13 @@ async function handleQuote(message, mode = null) {
     if (parent?.ok) nested = { name: parent.name, text: parent.text || parent.kind, userId: parent.senderId || 0 };
   }
 
+  // Emoji inside the name need their artwork before the (synchronous) render:
+  // baked core first, CDN second, and nothing drawn when neither has it.
+  const nameEmoji = await resolveNameEmoji(`${quote.name} ${nested?.name || ''}`);
+
   let rendered;
   try {
-    rendered = buildQuoteSticker(quote, photo.image, nested, photo.source);
+    rendered = buildQuoteSticker(quote, photo.image, nested, photo.source, nameEmoji);
   } catch (e) {
     console.error('[quote render]', e?.message || e);
     await reply(message, MESSAGES.render);

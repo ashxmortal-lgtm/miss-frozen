@@ -18,7 +18,9 @@
 
 import { fetch } from 'sdk';
 import { zlibInflate } from './inflate.js';
-import { base64Decode, isEmojiModifier, isPictograph } from './text.js';
+import {
+  base64Decode, isEmojiModifier, isPictograph, splitClusters,
+} from './text.js';
 import { decodePng } from './png.js';
 import {
   EMOJI_CODEPOINTS, EMOJI_COLUMNS, EMOJI_DEFLATED_BASE64, EMOJI_EM,
@@ -285,6 +287,21 @@ export function emojiTileImage(codepoint) {
   return { width: EMOJI_EM, height: EMOJI_EM, rgba };
 }
 
+/** The first drawable code point of an emoji cluster ("❄️" → 0x2744). */
+function clusterCodepoint(cluster) {
+  for (const ch of String(cluster)) {
+    const cp = ch.codePointAt(0);
+    if (isPictograph(cp) && !isEmojiModifier(cp)) return cp;
+  }
+  return 0;
+}
+
+/**
+ * How many distinct emoji one display name may fetch. A name is a name, not a
+ * gallery; the cap keeps a pathological name from costing a dozen requests.
+ */
+const NAME_EMOJI_LIMIT = 4;
+
 /** The first position-valid emoji in `text`, or 0. */
 export function emojiCodepointOf(text) {
   for (const ch of String(text ?? '')) {
@@ -311,4 +328,28 @@ export function nameIsEmojiOnly(text) {
     emoji += 1;
   }
   return emoji > 0;
+}
+
+/**
+ * Artwork for the emoji inside a display name, keyed by cluster ("❄️").
+ *
+ * The name is drawn synchronously, so every image has to be in hand before the
+ * render starts: baked core first (offline-safe), CDN second. A cluster with no
+ * artwork is left out of the map, and the renderer draws the name without it.
+ *
+ * @returns {Promise<Map<string, {width:number,height:number,rgba:Uint8Array}>>}
+ */
+export async function resolveNameEmoji(text) {
+  const images = new Map();
+  const clusters = [];
+  for (const cluster of splitClusters(String(text ?? ''))) {
+    if (cluster.emoji && !clusters.includes(cluster.text)) clusters.push(cluster.text);
+  }
+  await Promise.all(clusters.slice(0, NAME_EMOJI_LIMIT).map(async (cluster) => {
+    const codepoint = clusterCodepoint(cluster);
+    if (!codepoint) return;
+    const image = emojiTileImage(codepoint) || await fetchEmojiImage(codepoint);
+    if (image) images.set(cluster, image);
+  }));
+  return images;
 }

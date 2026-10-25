@@ -2,13 +2,18 @@
  * Text layout/drawing on top of the baked DejaVu Sans atlas.
  *
  * The atlas (font_atlas.js, generated at build time) holds 8-bit anti-aliased
- * coverage for ASCII. This module inflates it once, then measures and blits
- * glyphs at any size with a box filter — no font engine needed at runtime.
+ * coverage for ASCII in two weights, regular and bold. This module inflates it
+ * once, then measures and blits glyphs at any size with a box filter — no font
+ * engine needed at runtime.
+ *
+ * Italic is synthesised by shearing the upright face, so the four styles people
+ * actually paste into their names (regular, bold, italic, bold italic) all cost
+ * the same single atlas.
  */
 
 import { zlibInflate } from './inflate.js';
 import {
-  ATLAS_DEFLATED_BASE64, ATLAS_HEIGHT, ATLAS_WIDTH, FONT_EM, GLYPHS,
+  ATLAS_DEFLATED_BASE64, ATLAS_HEIGHT, ATLAS_WIDTH, BOLD_GLYPHS, FONT_EM, GLYPHS,
 } from './font_atlas.js';
 
 let atlas = null;
@@ -78,11 +83,20 @@ const ASCII_LOWER = 'abcdefghijklmnopqrstuvwxyz';
 const DIGITS = '0123456789';
 
 const STYLED = new Map();
+/** Code points the renderer can draw in their own weight/slant. */
+const STYLED_FACE = new Map();
 
-/** Map `count` consecutive code points starting at `base` onto `chars`. */
-function mapRun(base, chars, offset = 0) {
-  for (let i = 0; i < chars.length; i += 1) STYLED.set(base + i, chars[i]);
-  return base + chars.length + offset;
+/**
+ * Map `count` consecutive code points starting at `base` onto `chars`.
+ * With a `face`, the character keeps its own code point and is drawn in that
+ * face (Telegram shows 𝐅 as bold, 𝑭 as bold italic); without one, it folds.
+ */
+function mapRun(base, chars, face = null) {
+  for (let i = 0; i < chars.length; i += 1) {
+    if (face) STYLED_FACE.set(base + i, { base: chars[i], face });
+    else STYLED.set(base + i, chars[i]);
+  }
+  return base + chars.length;
 }
 
 /**
@@ -94,26 +108,30 @@ function mapRun(base, chars, offset = 0) {
  * letters are in the Letterlike block" (handled by `LETTERLIKE` below).
  */
 const MATH_ALPHABETS = [
-  // [upperBase, lowerBase] — every run is 26 long; a handful of letters inside
-  // each run are "holes" whose real glyph lives in Letterlike Symbols, and are
-  // overridden by LETTERLIKE below (ℬ ℰ ℱ ℋ ℐ ℒ ℳ ℛ ℭ ℌ ℑ ℜ ℨ, ℎ ℯ ℊ ℴ).
-  [0x1d400, 0x1d41a], // bold
-  [0x1d434, 0x1d44e], // italic            (h → ℎ)
-  [0x1d468, 0x1d482], // bold italic
-  [0x1d49c, 0x1d4b6], // script            (e → ℯ, g → ℊ, o → ℴ)
-  [0x1d4d0, 0x1d4ea], // bold script
-  [0x1d504, 0x1d51e], // fraktur
-  [0x1d56c, 0x1d586], // bold fraktur
-  [0x1d5a0, 0x1d5ba], // sans-serif
-  [0x1d5d4, 0x1d5ee], // sans-serif bold
-  [0x1d608, 0x1d622], // sans-serif italic
-  [0x1d63c, 0x1d656], // sans-serif bold italic
-  [0x1d670, 0x1d68a], // monospace
+  // [upperBase, lowerBase, face] — every run is 26 long; a handful of letters
+  // inside each run are "holes" whose real glyph lives in Letterlike Symbols,
+  // and are overridden by LETTERLIKE below (ℬ ℰ ℱ ℋ ℐ ℒ ℳ ℛ ℭ ℌ ℑ ℜ ℨ, ℎ ℯ ℊ ℴ).
+  //
+  // `face` is null where the letterform itself is the decoration — script,
+  // fraktur and double-struck are different alphabets, not weights, and no face
+  // we can bake looks like them, so those fold back to plain letters.
+  [0x1d400, 0x1d41a, 'bold'],
+  [0x1d434, 0x1d44e, 'italic'],            // (h → ℎ)
+  [0x1d468, 0x1d482, 'bolditalic'],
+  [0x1d49c, 0x1d4b6, null],                // script            (e → ℯ, g → ℊ, o → ℴ)
+  [0x1d4d0, 0x1d4ea, null],                // bold script
+  [0x1d504, 0x1d51e, null],                // fraktur
+  [0x1d56c, 0x1d586, null],                // bold fraktur
+  [0x1d5a0, 0x1d5ba, 'regular'],           // sans-serif: our face is sans
+  [0x1d5d4, 0x1d5ee, 'bold'],              // sans-serif bold
+  [0x1d608, 0x1d622, 'italic'],            // sans-serif italic
+  [0x1d63c, 0x1d656, 'bolditalic'],        // sans-serif bold italic
+  [0x1d670, 0x1d68a, null],                // monospace
 ];
 
-for (const [upperBase, lowerBase] of MATH_ALPHABETS) {
-  mapRun(upperBase, ASCII_UPPER);
-  mapRun(lowerBase, ASCII_LOWER);
+for (const [upperBase, lowerBase, face] of MATH_ALPHABETS) {
+  mapRun(upperBase, ASCII_UPPER, face);
+  mapRun(lowerBase, ASCII_LOWER, face);
 }
 
 // Double-struck is the messy one: ℂ ℋ ℕ ℙ ℚ ℝ ℤ are letters, and ℎ/… aside, the
@@ -133,9 +151,9 @@ const LETTERLIKE = {
 for (const [cp, ch] of Object.entries(LETTERLIKE)) STYLED.set(Number(cp), ch);
 
 // Bold/blackboard digits and the double-struck alphabet's digits.
-mapRun(0x1D7CE, DIGITS); // bold
+mapRun(0x1D7CE, DIGITS, 'bold'); // bold
 mapRun(0x1D7E2, DIGITS); // sans-serif
-mapRun(0x1D7EC, DIGITS); // sans-serif bold
+mapRun(0x1D7EC, DIGITS, 'bold'); // sans-serif bold
 mapRun(0x1D7F6, DIGITS); // monospace
 
 // Fullwidth forms: ASCII shifted to U+FF01–FF5E, plus the ideographic space.
@@ -276,21 +294,82 @@ export function isEmojiModifier(cp) {
 }
 
 /**
+ * Split text into drawable units: single characters, and whole emoji clusters.
+ *
+ * An emoji is not one code point. "❄️" is a snowflake plus a selector; a family
+ * is several pictographs joined by ZWJ; a skin tone is a modifier. Grouping them
+ * here means an emoji is measured and drawn as one box, not as stray marks.
+ *
+ * @returns {{text:string, emoji:boolean}[]}
+ */
+/**
+ * Is this code point emoji *artwork* — as opposed to a letter that merely lives
+ * in a symbol block? Circled letters (Ⓢⓐⓚⓤⓡⓐ) sit inside the dingbat range but
+ * are text: they have a fold/face and must not be treated as pictures.
+ */
+function isEmojiChar(cp, ch) {
+  return isPictograph(cp) && !STYLED.has(cp) && !STYLED_FACE.has(cp) && !FOLD.has(ch);
+}
+
+export function splitClusters(input) {
+  const clusters = [];
+  let current = null;
+  let joined = false; // the previous code point was a ZWJ
+  for (const ch of String(input ?? '')) {
+    const cp = ch.codePointAt(0);
+    if (cp === 0x200d) { // zero-width joiner: glue the next pictograph on
+      if (current) { current.text += ch; joined = true; }
+      continue;
+    }
+    if (isEmojiModifier(cp)) { // skin tone, variation selector, keycap
+      if (current) { current.text += ch; joined = false; }
+      continue;
+    }
+    if (isEmojiChar(cp, ch)) {
+      if (current && joined) { current.text += ch; joined = false; continue; }
+      current = { text: ch, emoji: true };
+      clusters.push(current);
+      joined = false;
+      continue;
+    }
+    current = null;
+    joined = false;
+    clusters.push({ text: ch, emoji: false });
+  }
+  return clusters;
+}
+
+/** The face a character is drawn in: regular, bold, italic or bolditalic. */
+export function faceOf(char) {
+  const styled = STYLED_FACE.get(char.codePointAt(0));
+  return styled ? styled.face : 'regular';
+}
+
+/**
  * Fold user text into drawable characters. Emoji disappear; scripts the atlas
  * lacks become `?` (one per run) and `renderableShare` reports the loss so the
  * card can say so instead of silently showing question marks.
+ *
+ * With `keepEmoji`, emoji clusters stay in the string so a caller that has the
+ * artwork (the display name) can draw them in place.
  */
-export function normalizeText(input) {
+export function normalizeText(input, { keepEmoji = false } = {}) {
   let out = '';
-  for (const raw of String(input ?? '')) {
+  for (const cluster of splitClusters(input)) {
+    if (cluster.emoji) {
+      if (keepEmoji) out += cluster.text;
+      continue;
+    }
+    const raw = cluster.text;
     if (raw === '\n') { out += '\n'; continue; }
     const cp = raw.codePointAt(0);
     if (cp < 0x20) continue;
     if (cp <= 0x7e) { out += raw; continue; }
-    // Styled alphabets, accents and lookalikes fold back to plain letters.
+    // A styled letter keeps its code point: it is drawn in its own face.
+    if (STYLED_FACE.has(cp)) { out += raw; continue; }
+    // Other styled alphabets, accents and lookalikes fold to plain letters.
     const folded = foldChar(raw);
     if (folded) { out += folded.join(''); continue; }
-    if (isPictograph(cp)) continue;
     // A script the atlas genuinely lacks becomes one `?` per run, and
     // renderableShare reports the loss instead of hiding it.
     if (!out.endsWith('?')) out += '?';
@@ -304,7 +383,8 @@ export function renderableShare(input) {
   if (!chars.length) return 1;
   let drawable = 0;
   for (const raw of chars) {
-    if (raw.codePointAt(0) <= 0x7e || GLYPHS[raw] || foldChar(raw)) drawable += 1;
+    if (raw.codePointAt(0) <= 0x7e || GLYPHS[raw] || STYLED_FACE.has(raw.codePointAt(0))
+      || foldChar(raw)) drawable += 1;
   }
   return drawable / chars.length;
 }
@@ -313,13 +393,38 @@ export function renderableShare(input) {
 
 const scaleOf = (size) => size / FONT_EM;
 
+/** Horizontal shear applied to the upright face to synthesise italic. */
+export const ITALIC_SHEAR = 0.21;
+
+/** How wide an inline emoji is, as a fraction of the type size. */
+export const EMOJI_ADVANCE = 1.16;
+
+/** The atlas entry for a character, honouring its weight/slant. */
+function glyphOf(char) {
+  const styled = STYLED_FACE.get(char.codePointAt(0));
+  if (!styled) return GLYPHS[char] || GLYPHS['?'];
+  const bold = styled.face === 'bold' || styled.face === 'bolditalic';
+  return (bold ? BOLD_GLYPHS : GLYPHS)[styled.base] || GLYPHS['?'];
+}
+
 /** Width of one line at `size` px, in pixels. */
 export function measureLine(line, size) {
   const scale = scaleOf(size);
   let width = 0;
-  for (const char of line) {
-    const glyph = GLYPHS[char];
-    width += (glyph ? glyph[6] : GLYPHS['?'][6]) * scale;
+  for (const char of line) width += glyphOf(char)[6] * scale;
+  return width;
+}
+
+/**
+ * Width of a line that may contain emoji. Emoji are square artwork, so they
+ * advance by a fixed fraction of the type size instead of a font metric.
+ */
+export function measureRich(line, size) {
+  const scale = scaleOf(size);
+  let width = 0;
+  for (const cluster of splitClusters(line)) {
+    if (cluster.emoji) { width += size * EMOJI_ADVANCE; continue; }
+    for (const char of cluster.text) width += glyphOf(char)[6] * scale;
   }
   return width;
 }
@@ -370,7 +475,7 @@ export function clampLines(lines, maxLines, maxWidth, size) {
   if (lines.length <= maxLines) return { lines, clipped: false };
   const kept = lines.slice(0, maxLines);
   let last = kept[maxLines - 1];
-  while (last && measureLine(`${last}...`, size) > maxWidth) last = last.slice(0, -1);
+  while (last && measureLine(`${last}...`, size) > maxWidth) last = [...last].slice(0, -1).join('');
   kept[maxLines - 1] = `${last.trimEnd()}...`;
   return { lines: kept, clipped: true };
 }
@@ -378,9 +483,18 @@ export function clampLines(lines, maxLines, maxWidth, size) {
 /** Shorten a single line with an ellipsis so it fits `maxWidth`. */
 export function ellipsize(text, maxWidth, size) {
   if (measureLine(text, size) <= maxWidth) return text;
-  let cut = text;
-  while (cut.length > 1 && measureLine(`${cut}...`, size) > maxWidth) cut = cut.slice(0, -1);
-  return `${cut.trimEnd()}...`;
+  let cut = [...text];
+  while (cut.length > 1 && measureLine(`${cut.join('')}...`, size) > maxWidth) cut.pop();
+  return `${cut.join('').trimEnd()}...`;
+}
+
+/** Shorten a line that may contain emoji, cutting whole emoji off the end. */
+export function ellipsizeRich(text, maxWidth, size) {
+  if (measureRich(text, size) <= maxWidth) return text;
+  const clusters = splitClusters(text);
+  const joined = () => clusters.map((c) => c.text).join('');
+  while (clusters.length > 1 && measureRich(`${joined()}...`, size) > maxWidth) clusters.pop();
+  return `${joined().trimEnd()}...`;
 }
 
 // ---- drawing ---------------------------------------------------------------
@@ -390,9 +504,11 @@ export function ellipsize(text, maxWidth, size) {
  * The atlas is 8-bit coverage, sampled with a box filter when scaled down.
  */
 function blitGlyph(surface, char, penX, baselineY, size, color) {
-  const glyph = GLYPHS[char] || GLYPHS['?'];
+  const glyph = glyphOf(char);
   const [atlasX, atlasY, width, height, bearingX, bearingY] = glyph;
   if (!width || !height) return;
+  const face = faceOf(char);
+  const italic = face === 'italic' || face === 'bolditalic';
 
   const scale = scaleOf(size);
   const originX = penX + bearingX * scale;
@@ -410,8 +526,11 @@ function blitGlyph(surface, char, penX, baselineY, size, color) {
     if (y < 0 || y >= surface.height) continue;
     const sourceTop = (ty * height) / targetHeight;
     const sourceBottom = ((ty + 1) * height) / targetHeight;
+    // Italic leans right of the baseline: shearing the upright face is exactly
+    // how a renderer synthesises an oblique, and costs no atlas bytes.
+    const rowShift = italic ? Math.round(ITALIC_SHEAR * (baselineY - y)) : 0;
     for (let tx = 0; tx < targetWidth; tx += 1) {
-      const x = startX + tx;
+      const x = startX + tx + rowShift;
       if (x < 0 || x >= surface.width) continue;
       const sourceLeft = (tx * width) / targetWidth;
       const sourceRight = ((tx + 1) * width) / targetWidth;
@@ -450,8 +569,36 @@ export function drawLine(surface, line, x, baselineY, size, color) {
   let penX = x;
   for (const char of line) {
     blitGlyph(surface, char, penX, baselineY, size, color);
-    const glyph = GLYPHS[char] || GLYPHS['?'];
-    penX += glyph[6] * scale;
+    penX += glyphOf(char)[6] * scale;
+  }
+  return penX - x;
+}
+
+/**
+ * Draw one line that may contain emoji.
+ *
+ * @param {Map<string, object>|null} emoji  cluster text → decoded artwork. A
+ *        cluster with no artwork is skipped, the way a body-text emoji is:
+ *        a missing image must not turn into a box or a question mark.
+ */
+export function drawRich(surface, line, x, baselineY, size, color, emoji = null) {
+  const scale = scaleOf(size);
+  let penX = x;
+  for (const cluster of splitClusters(line)) {
+    if (cluster.emoji) {
+      const image = emoji && emoji.get(cluster.text);
+      if (image) {
+        // Square artwork sitting on the baseline, a shade taller than the caps.
+        const side = size * 1.05;
+        surface.imageRect(image, penX, baselineY - size * 0.92, side, side);
+        penX += size * EMOJI_ADVANCE;
+      }
+      continue;
+    }
+    for (const char of cluster.text) {
+      blitGlyph(surface, char, penX, baselineY, size, color);
+      penX += glyphOf(char)[6] * scale;
+    }
   }
   return penX - x;
 }

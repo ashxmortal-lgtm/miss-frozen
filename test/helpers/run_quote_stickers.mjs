@@ -11,11 +11,12 @@ import { readPngHeader, encodeRgbaPng, decodePng } from '../../tgcloud/lib/quote
 import { encodeRgbaPng as _unused } from '../../tgcloud/lib/quote/png.js';
 import { renderQuotePng, renderQuote, planLayout, nameColor } from '../../tgcloud/lib/quote/render.js';
 import {
-  wrapText, measureLine, normalizeText, renderableShare, isPictograph,
+  wrapText, measureLine, measureRich, normalizeText, renderableShare, isPictograph,
+  splitClusters, faceOf,
 } from '../../tgcloud/lib/quote/text.js';
 import {
   emojiCount, firstEmojiOf, emojiTileImage, fetchEmojiImage, resetEmojiCache,
-  emojiCodepointOf, nameIsEmojiOnly, emojiTint,
+  emojiCodepointOf, nameIsEmojiOnly, emojiTint, resolveNameEmoji,
 } from '../../tgcloud/lib/quote/emoji.js';
 import { extractQuote, formatMessageTime } from '../../tgcloud/lib/quote/extract.js';
 import { decodeJpeg } from '../../tgcloud/lib/quote/jpeg.js';
@@ -776,21 +777,112 @@ void fetchProfilePhoto;
 
 // ---- 6d. fancy fonts and emoji avatars ------------------------------------
 {
-  // --- styled alphabets fold back to plain letters ------------------------
+  // --- decorative alphabets fold back to plain letters --------------------
+  // Script, fraktur, double-struck and friends are different *letterforms*, not
+  // weights; no face we can bake looks like them, so they fold.
   const folds = [
     ['ᴅᴇʙᴜɢ', 'DEBUG', 'small caps'],
-    ['𝐒𝐚𝐤𝐮𝐫𝐚', 'Sakura', 'math bold'],
     ['𝕊𝕒𝕜𝕦𝕣𝕒', 'Sakura', 'double-struck'],
     ['𝓢𝓪𝓴𝓾𝓻𝓪', 'Sakura', 'script'],
     ['𝔖𝔞𝔨𝔲𝔯𝔞', 'Sakura', 'fraktur'],
     ['Ｓａｋｕｒａ', 'Sakura', 'fullwidth'],
     ['Ⓢⓐⓚⓤⓡⓐ', 'Sakura', 'circled'],
     ['ᴊɪʀᴀɪʏᴀ', 'JIRAIYA', 'small caps word'],
-    ['𝐃𝐡𝐝𝐣𝐣𝐬𝐣𝐬𝐣𝐞', 'Dhdjjsjsje', "the reporter's own name"],
   ];
   for (const [input, expected, label] of folds) {
     assert.equal(normalizeText(input), expected, `${label} folds to ASCII`);
   }
+
+  // --- weight and slant are kept: 𝐅 is bold, 𝑭 is bold italic -------------
+  // Telegram draws these as real bold/italic text; folding them to plain ASCII
+  // made a fancy name come out in a font its owner never chose.
+  assert.equal(faceOf('𝐀'), 'bold', 'math bold → bold face');
+  assert.equal(faceOf('𝑨'), 'bolditalic', 'math bold italic → bold + slant');
+  assert.equal(faceOf('𝐴'), 'italic', 'math italic → slant');
+  assert.equal(faceOf('𝗔'), 'bold', 'sans-serif bold is bold too');
+  assert.equal(faceOf('𝖠'), 'regular', 'sans-serif is the face we already draw');
+  assert.equal(faceOf('A'), 'regular');
+  assert.equal(normalizeText('𝐒𝐚𝐤𝐮𝐫𝐚'), '𝐒𝐚𝐤𝐮𝐫𝐚', 'a weight is not flattened away');
+  assert.equal(normalizeText('𝑭𝒓𝒛𝒆𝒏'), '𝑭𝒓𝒛𝒆𝒏', 'bold italic survives layout');
+
+  // Ink in a region, judged by brightness — the bubble behind is near-black.
+  const inkBox = (image, x0, y0, x1, y1, test = () => true) => {
+    const pixels = [];
+    for (let y = Math.max(0, y0); y < Math.min(image.height, y1); y += 1) {
+      for (let x = Math.max(0, x0); x < Math.min(image.width, x1); x += 1) {
+        const i = (y * image.width + x) * 4;
+        const [r, g, b, a] = [image.rgba[i], image.rgba[i + 1], image.rgba[i + 2], image.rgba[i + 3]];
+        if (a > 40 && (r + g + b) / 3 > 120 && test(r, g, b)) pixels.push({ x, y });
+      }
+    }
+    return pixels;
+  };
+  // The name row: right of the badge, on the first line of the bubble.
+  const NAME_BOX = [206, 26, 430, 64];
+  const inkCount = (image, test) => inkBox(image, ...NAME_BOX, test).length;
+  const inkSkew = (image) => {
+    const pixels = inkBox(image, ...NAME_BOX);
+    if (!pixels.length) return 0;
+    const ys = pixels.map((p) => p.y);
+    const top = Math.min(...ys);
+    const bottom = Math.max(...ys);
+    const third = Math.max(1, Math.round((bottom - top) / 3));
+    const mean = (list) => list.reduce((sum, p) => sum + p.x, 0) / Math.max(1, list.length);
+    return mean(pixels.filter((p) => p.y < top + third))
+      - mean(pixels.filter((p) => p.y >= bottom - third));
+  };
+
+  const plainAA = renderQuote({ text: 'hi', name: 'HHH', userId: 0, avatar: null });
+  const boldAA = renderQuote({ text: 'hi', name: '𝐇𝐇𝐇', userId: 0, avatar: null });
+  assert.ok(inkCount(boldAA) > inkCount(plainAA) * 1.1,
+    `bold strokes carry more ink (${inkCount(boldAA)} vs ${inkCount(plainAA)})`);
+
+  const italicH = renderQuote({ text: 'hi', name: '𝐻', userId: 0, avatar: null });
+  const uprightH = renderQuote({ text: 'hi', name: 'H', userId: 0, avatar: null });
+  assert.ok(inkSkew(italicH) > 0.8,
+    `italic leans right of the baseline (skew ${inkSkew(italicH).toFixed(2)})`);
+  assert.ok(Math.abs(inkSkew(uprightH)) < 0.8,
+    `the upright face does not lean (skew ${inkSkew(uprightH).toFixed(2)})`);
+
+  // --- an emoji inside the name is part of the name -----------------------
+  const styledName = '𝑭𝒓❄️𝒛𝒆𝒏 𝑩𝒍𝒐𝒐𝒅𝒆𝒅';
+  assert.deepEqual(
+    splitClusters('𝑭𝒓❄️𝒛𝒆𝒏').filter((c) => c.emoji).map((c) => c.text),
+    ['❄️'],
+    'the snowflake is one cluster, not a base plus a stray selector',
+  );
+  assert.equal(measureRich('❄️', 23) > 20, true, 'an emoji takes a full em of advance');
+
+  // Offline: the snowflake is baked, so the name needs no request at all.
+  const nameUrls = [];
+  setFetch(async (url) => { nameUrls.push(url); throw new Error('offline'); });
+  resetEmojiCache();
+  const nameArt = await resolveNameEmoji(styledName);
+  assert.ok(nameArt.has('❄️'), 'the baked core covers the emoji in the name');
+  assert.equal(nameUrls.length, 0, 'no request is made for a baked emoji');
+
+  const isBlue = (r, g, b) => b > r + 40 && b > 120;
+  const withEmoji = renderQuote({
+    text: 'hi', name: styledName, userId: 0, avatar: null, nameEmoji: nameArt,
+  });
+  const withoutEmoji = renderQuote({ text: 'hi', name: styledName, userId: 0, avatar: null });
+  assert.match(withEmoji.drawnName, /❄️/, 'the name keeps its emoji');
+  const snowPixels = inkCount(withEmoji, isBlue);
+  assert.ok(snowPixels > 40, `the snowflake is painted (${snowPixels} blue pixels)`);
+  assert.equal(inkCount(withoutEmoji, isBlue), 0, 'no artwork, no invented snowflake');
+  assert.ok(inkCount(withEmoji) > inkCount(withoutEmoji),
+    'the emoji adds ink to the name row');
+
+  // An emoji we could not obtain is left out, not drawn as a box or a \`?\`.
+  const noArt = await resolveNameEmoji('A🛸B');
+  assert.equal(noArt.size, 0, 'an unreachable emoji has no artwork');
+  const withoutSaucer = renderQuote({
+    text: 'hi', name: 'A🛸B', userId: 0, avatar: null, nameEmoji: noArt,
+  });
+  assert.equal(withoutSaucer.drawnName, 'A🛸B', 'the name still reads as written');
+  assert.equal(inkCount(withoutSaucer, isBlue), 0);
+  setFetch(null);
+  resetEmojiCache();
 
   // Accents decompose; the Latin letter underneath survives.
   assert.equal(normalizeText('José'), 'Jose');
@@ -798,9 +890,11 @@ void fetchProfilePhoto;
   assert.equal(normalizeText('Nguyễn'), 'Nguyen', 'Vietnamese folds too');
   assert.equal(normalizeText('ѕαкυяα'), 'sakura', 'Cyrillic/Greek lookalikes read as Latin');
 
-  // The rendered card shows the folded name, never "?" or "Unknown".
+  // The card credits the name as written — never "?" or "Unknown".
   const bold = renderQuote({ text: 'hi', name: '𝐒𝐚𝐤𝐮𝐫𝐚', avatar: null });
-  assert.equal(bold.drawnName, 'Sakura', 'a styled name is drawn, not "?"');
+  assert.equal(bold.drawnName, '𝐒𝐚𝐤𝐮𝐫𝐚', 'a styled name is drawn in its own face');
+  const foldedCard = renderQuote({ text: 'hi', name: '𝕊𝕒𝕜𝕦𝕣𝕒', avatar: null });
+  assert.equal(foldedCard.drawnName, 'Sakura', 'a letterform we cannot draw still folds');
 
   // --- astral-plane TEXT is no longer mistaken for emoji ------------------
   assert.equal(isPictograph(0x1d412), false, 'math bold S is text, not a pictograph');
@@ -1411,6 +1505,34 @@ const { helpText } = await import('../../tgcloud/lib/help.js');
 const help = helpText({ id: 1 });
 assert.match(help, /\/q — /);
 assert.match(help, /\/own — /);
+
+// ---- 21b. the author's own font reaches the sticker end to end ------
+// The unit tests above prove the renderer; this proves the wiring — the name
+// emoji are resolved before the render and handed to it.
+await reset();
+profilePhotoResult = { total_count: 1, photos: [[{ file_id: 'small', width: 40, height: 40 }]] };
+fileBytes = AVATAR_PNG;
+const styledAuthor = commandMessage({
+  text: '/q',
+  reply: {
+    from: { id: 9, first_name: '𝑭𝒓❄️𝒛𝒆𝒏 𝑩𝒍𝒐𝒐𝒅𝒆𝒅' },
+    text: 'The snow does not melt here.',
+  },
+});
+const sentBefore = calls.stickers.length;
+assert.equal(await handleQuoteCommand(styledAuthor), true);
+assert.equal(calls.stickers.length, sentBefore + 1, 'the card is sent');
+const styledSticker = decodePng(calls.stickers[calls.stickers.length - 1].sticker.value);
+let snowPixels = 0;
+for (let y = 26; y < 64; y += 1) {
+  for (let x = 206; x < 430; x += 1) {
+    const i = (y * styledSticker.width + x) * 4;
+    const [r, g, b, a] = [styledSticker.rgba[i], styledSticker.rgba[i + 1],
+      styledSticker.rgba[i + 2], styledSticker.rgba[i + 3]];
+    if (a > 40 && (r + g + b) / 3 > 120 && b > r + 40 && b > 120) snowPixels += 1;
+  }
+}
+assert.ok(snowPixels > 40, `the snowflake in the name is on the sticker (${snowPixels} px)`);
 
 // ---- 22. no message content is persisted ---------------------------
 const columns = await db.all(sql.raw('PRAGMA table_info(sticker_pack_sets)'));
