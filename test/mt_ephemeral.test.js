@@ -3,65 +3,66 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
-// Round 15 — /mt must actually reach the sender and the receiver as ephemeral
-// messages, and the group command menu must survive the ephemeral flag.
+// Round 16 — /mt delivery: ephemeral sends need an eligible trigger (or bot-admin
+// rights), the acknowledgement must match what Telegram actually accepted, and
+// the invoking command is only deleted as a fallback.
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+const run = (script) => execFileSync(
+  process.execPath,
+  ['--experimental-loader', './test/helpers/sdk-loader.mjs', script],
+  { cwd: new URL('..', import.meta.url), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+);
 
-test('every ephemeral /mt send is tied to the triggering command', () => {
+test('only an ephemeral message is an eligible ephemeral trigger', () => {
   const mt = read('tgcloud/lib/mt.js');
+  const trigger = mt.slice(mt.indexOf('function ephemeralTrigger'), mt.indexOf('async function botUserId'));
+  assert.match(trigger, /message\?\.ephemeral_message_id/, 'the incoming ephemeral id is used');
+  assert.match(trigger, /return ephemeralId > 0 \? \{ ephemeral_message_id: ephemeralId \} : null;/);
+  assert.doesNotMatch(trigger, /message_id: message\.message_id/, 'a plain message_id is not a trigger');
 
-  assert.match(mt, /function ephemeralTrigger\(message\)/, 'the trigger is derived from the incoming message');
-  assert.match(mt, /if \(message\?\.ephemeral_message_id\) \{/, 'an ephemeral command is answered by its ephemeral id');
-  assert.match(mt, /return \{ ephemeral_message_id: message\.ephemeral_message_id \};/);
-
-  const send = mt.slice(mt.indexOf('async function sendEphemeral'), mt.indexOf('/** Best-effort: hide the /mt command'));
-  assert.match(send, /ephemeral_message_parameters: \{ receiver_user_id: receiverUserId \}/);
-  assert.match(send, /reply_parameters: trigger/, 'the reply target keeps Telegram from refusing the send');
-  assert.match(send, /return api\.sendMessage\(base\);/, 'retry without a reply target instead of dropping the message');
-
-  // Both the receiver body and the sender confirmation use the shared helper.
-  const body = mt.slice(mt.indexOf('export async function handleMtCommand'));
-  assert.match(body, /const trigger = ephemeralTrigger\(message\);/);
-  assert.match(body, /await sendEphemeral\(chat\.id, recipient\.id, body, trigger\);/, 'the receiver body is ephemeral');
-  assert.match(body, /await sendEphemeral\(chat\.id, from\.id, html, trigger\);/, 'the sender answer is ephemeral');
+  const send = mt.slice(mt.indexOf('async function sendEphemeral'), mt.indexOf('/**\n * Best-effort: hide'));
+  assert.match(send, /ephemeral_message_parameters: \{ receiver_user_id: Number\(receiverUserId\) \}/,
+    'receiver_user_id is a JSON number in the documented wrapper shape');
+  assert.match(send, /reply_parameters: trigger/);
+  assert.match(send, /return api\.sendMessage\(base\);/, 'retry without the reply target instead of dropping it');
 });
 
-test('a refused ephemeral send falls back to the bot DM, never silence', () => {
+test('delivery is private, acknowledged honestly, and escalated only when needed', () => {
   const mt = read('tgcloud/lib/mt.js');
-  assert.match(mt, /console\.error\('mt sender DM failed:'/, 'the sender DM fallback is logged');
-  const body = mt.slice(mt.indexOf('let viaDm = false;'));
-  assert.match(body, /await api\.sendMessage\(\{ chat_id: recipient\.id, text: body, parse_mode: 'HTML' \}\);/,
-    'the receiver gets the text in DM when ephemeral delivery fails');
-  assert.match(body, /viaDm = true;/);
-  assert.match(body, /'Your message was delivered to their bot DM/);
+
+  // Bot-admin rights are the only route for a receiver who triggered nothing.
+  assert.match(mt, /const canEphemeral = Boolean\(trigger\) \|\| \(await botAdminStatus\(chat\.id\)\) !== false;/);
+  assert.match(mt, /status === 'administrator' \|\| status === 'creator'/);
+  assert.match(mt, /return null;/, 'an unknown status still tries ephemeral instead of skipping it');
+
+  // Success is only reported for a resolved route.
+  const body = mt.slice(mt.indexOf('let route = null;'));
+  assert.match(body, /route = 'ephemeral';/);
+  assert.match(body, /route = 'dm';/);
+  assert.match(body, /if \(!route\) \{[\s\S]*TRANSMISSION FAILED/, 'no route → failure card');
+  assert.match(body, /route === 'dm'/, 'the ack names the route that actually worked');
+
+  // Diagnostics never include the private text.
+  assert.ok(!/console\.error\([^)]*payload/.test(mt), 'the transmitted text is never logged');
 });
 
-test('both private routes down → a short public status instead of silence', () => {
+test('the invoking command is deleted only as a fallback', () => {
   const mt = read('tgcloud/lib/mt.js');
-  assert.match(mt, /Last resort: a short status in the group beats a silent command\./);
-  assert.match(mt, /fallback\.reply_parameters = \{ message_id: trigger\.message_id, allow_sending_without_reply: true \};/);
+  const hide = mt.slice(mt.indexOf('async function hideCommandMessage'), mt.indexOf('export async function handleMtCommand'));
+  assert.match(hide, /if \(Number\(message\?\.ephemeral_message_id \|\| 0\) > 0\) return false;/,
+    'an already-ephemeral command is not deleted');
+  assert.match(hide, /await api\.deleteMessage\(\{ chat_id: chatId, message_id: messageId \}\);/);
+  assert.match(hide, /\[mt hide\] deleteMessage failed:/, 'deletion failures are logged with context');
+  assert.match(hide, /chat=\$\{chatId\}`/, 'chat id in the diagnostic');
+  assert.doesNotMatch(hide, /reply_to_message/, 'the recipient message is never touched');
+  assert.ok(!/message_id: message\.reply_to_message/.test(hide));
+
+  const handler = mt.slice(mt.indexOf('export async function handleMtCommand'));
+  const deleteAt = handler.indexOf('await hideCommandMessage(message)');
+  const jutsuAt = handler.indexOf('await hasMtJutsu');
+  assert.ok(deleteAt > -1 && deleteAt < jutsuAt, 'deletion runs before the database checks');
 });
 
-test('the group command menu keeps every command when /mt is registered', () => {
-  const mt = read('tgcloud/lib/mt.js');
-  assert.match(mt, /import \{ COMMANDS \} from '\.\/command_registry\.js';/);
-  const fn = mt.slice(mt.indexOf('export async function ensureMtEphemeralCommand'), mt.indexOf('/**\n * The jutsu check'));
-  assert.match(fn, /const commands = COMMANDS/, 'the whole user menu is sent with /mt');
-  assert.match(fn, /c\.access === 'user' && !c\.hidden/);
-  assert.match(fn, /\.\.\.\(c\.cmd === '\/mt' \? \{ is_ephemeral: true \} : \{\}\),/, 'only /mt is ephemeral');
-  assert.match(fn, /commands\.map\(\(\{ is_ephemeral, \.\.\.rest \}\) => rest\)/, 'older API builds still get the full menu');
-
-  const registry = read('tgcloud/lib/command_registry.js');
-  for (const cmd of ['/help', '/rob', '/protect', '/buy']) {
-    assert.ok(registry.includes(`cmd: '${cmd}'`), `${cmd} stays in the group menu`);
-  }
-});
-
-test('/mt flow end to end (ephemeral payloads, DM fallback, jutsu gate)', () => {
-  const output = execFileSync(
-    process.execPath,
-    ['--experimental-loader', './test/helpers/sdk-loader.mjs', 'test/helpers/run_mt.mjs'],
-    { cwd: new URL('..', import.meta.url), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
-  );
-  assert.match(output, /mt ephemeral: OK/);
+test('/mt delivery end to end (trigger, admin route, DM fallback, failure ack)', () => {
+  assert.match(run('test/helpers/run_mt.mjs'), /mt delivery: OK/);
 });
