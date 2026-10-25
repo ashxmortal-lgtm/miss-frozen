@@ -1,10 +1,9 @@
 import { db } from 'sdk';
 import { api } from './message_api.js';
-import { eq } from 'sdk/db';
-import { inventory } from '../schema.js';
+import { sql } from 'sdk/db';
+import { COMMANDS } from './command_registry.js';
 
 const MAX_LEN = 1000;
-const JUTSU_NAMES = ['mind transmission', 'mind transmission jutsu', 'mind_transmission', 'mt jutsu'];
 
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const mentionHtml = (u) => {
@@ -14,36 +13,94 @@ const mentionHtml = (u) => {
 
 let MT_CMD_REGISTERED = false;
 
+/**
+ * Register /mt as an ephemeral group command so Telegram hides the command and
+ * its text from the rest of the group. The full group menu is sent with it —
+ * `setMyCommands` replaces the scope, so registering only /mt would wipe every
+ * other command from the group menu (Bot API 10.2+ `is_ephemeral`).
+ */
 export async function ensureMtEphemeralCommand() {
   if (MT_CMD_REGISTERED) return;
+  const commands = COMMANDS
+    .filter((c) => c.access === 'user' && !c.hidden)
+    .map((c) => ({
+      command: c.cmd.replace(/^\//, ''),
+      description: String(c.desc).slice(0, 256),
+      ...(c.cmd === '/mt' ? { is_ephemeral: true } : {}),
+    }));
   try {
-    await api.setMyCommands({
-      scope: { type: 'all_group_chats' },
-      commands: [
-        { command: 'mt', description: 'Mind Transmission (reply + text)', is_ephemeral: true },
-      ],
-    });
+    await api.setMyCommands({ scope: { type: 'all_group_chats' }, commands });
     MT_CMD_REGISTERED = true;
   } catch (e) {
     console.error('setMyCommands mt ephemeral failed:', e?.description || e);
+    // Older API builds reject `is_ephemeral`; keep the group menu intact.
+    try {
+      await api.setMyCommands({ scope: { type: 'all_group_chats' }, commands: commands.map(({ is_ephemeral, ...rest }) => rest) });
+      MT_CMD_REGISTERED = true;
+    } catch (e2) {
+      console.error('setMyCommands group menu failed:', e2?.description || e2);
+    }
   }
 }
 
+/**
+ * The jutsu check reads the same inventory rows /inventory shows (raw SQL, no
+ * query-builder dependency). A purchased jutsu is item_type 'jutsu' with the
+ * name "Mind Transmission Jutsu".
+ */
 async function hasMtJutsu(userId) {
-  const rows = await db.select().from(inventory).where(eq(inventory.telegramId, userId)).all();
-  return rows.some((r) => {
-    const n = String(r.itemName || '').toLowerCase();
-    return JUTSU_NAMES.some((j) => n === j || n.includes('mind transmission'));
-  });
+  try {
+    const row = await db.get(sql`
+      SELECT qty FROM inventory
+      WHERE telegram_id = ${userId} AND item_name LIKE '%Mind Transmission%'
+      LIMIT 1
+    `);
+    if (row && Number(row.qty) > 0) return true;
+  } catch (e) {
+    console.error('[mt jutsu check]', e?.message || e);
+  }
+  try {
+    const rows = await db.all(sql`
+      SELECT item_name FROM inventory WHERE telegram_id = ${userId} AND item_type = 'jutsu'
+    `);
+    return (rows || []).some((r) => String(r.item_name || '').toLowerCase().includes('mind transmission'));
+  } catch (_) {
+    return false;
+  }
 }
 
-async function sendEphemeral(chatId, receiverUserId, text) {
-  return api.sendMessage({
+/**
+ * Ephemeral messages must be tied to the action that triggered them: a reply to
+ * the incoming command (Bot API 10.3 — `ephemeral_message_id` when the command
+ * itself arrived as ephemeral, otherwise the message id). Without it Telegram
+ * rejects the send, which is why /mt used to stay silent.
+ */
+function ephemeralTrigger(message) {
+  if (message?.ephemeral_message_id) {
+    return { ephemeral_message_id: message.ephemeral_message_id };
+  }
+  if (message?.message_id) {
+    return { message_id: message.message_id, allow_sending_without_reply: true };
+  }
+  return null;
+}
+
+async function sendEphemeral(chatId, receiverUserId, text, trigger) {
+  const base = {
     chat_id: chatId,
     text,
     parse_mode: 'HTML',
     ephemeral_message_parameters: { receiver_user_id: receiverUserId },
-  });
+  };
+  if (!trigger) return api.sendMessage(base);
+  try {
+    return await api.sendMessage({ ...base, reply_parameters: trigger });
+  } catch (e) {
+    // Some API builds reject a reply target on an ephemeral send; the receiver
+    // still gets the message, just without the quoted trigger.
+    console.error('[mt ephemeral retry]', e?.description || e);
+    return api.sendMessage(base);
+  }
 }
 
 /** Best-effort: hide the /mt command from the group timeline */
@@ -84,20 +141,29 @@ export async function handleMtCommand(message) {
   // Always try to hide the invoking command from the group first
   if (isGroup) await hideCommandMessage(message);
 
+  const trigger = ephemeralTrigger(message);
+
+  // Answers go to the sender only. Ephemeral first; the bot's DM is the private
+  // fallback so a refused ephemeral send never leaves the player without a reply.
   const tellSender = async (html) => {
     if (isGroup) {
       try {
-        await sendEphemeral(chat.id, from.id, html);
+        await sendEphemeral(chat.id, from.id, html, trigger);
         return;
       } catch (e) {
         console.error('ephemeral to sender failed:', e?.description || e);
       }
-    }
-    if (chat.type === 'private') {
       try {
         await api.sendMessage({ chat_id: from.id, text: html, parse_mode: 'HTML' });
-      } catch (_) {}
+        return;
+      } catch (e2) {
+        console.error('mt sender DM failed:', e2?.description || e2);
+      }
+      return;
     }
+    try {
+      await api.sendMessage({ chat_id: from.id, text: html, parse_mode: 'HTML' });
+    } catch (_) {}
   };
 
   if (!isGroup) {
@@ -109,7 +175,7 @@ export async function handleMtCommand(message) {
 
   if (!(await hasMtJutsu(from.id))) {
     await tellSender(
-      `${mentionHtml(from)}\n\n🔒 <b>JUTSU NOT UNLOCKED</b>\n\nYou need Mind Transmission Jutsu 🧠 to use /mt.\n\nUnlock it from /shinobi_store to continue.`,
+      `${mentionHtml(from)}\n\n🔒 <b>JUTSU NOT UNLOCKED</b>\n\nYou need Mind Transmission Jutsu 🧠 to use /mt.\n\nUnlock it with /buy Mind Transmission Jutsu (or /shinobi_store → Jutsu).`,
     );
     return true;
   }
@@ -154,18 +220,38 @@ export async function handleMtCommand(message) {
     `───────────────\n\n` +
     `${esc(payload)}`;
 
+  let viaDm = false;
+  let failure = null;
   try {
-    await sendEphemeral(chat.id, recipient.id, body);
+    await sendEphemeral(chat.id, recipient.id, body, trigger);
   } catch (e) {
-    const desc = e?.description || e?.message || 'unknown error';
+    failure = e?.description || e?.message || 'unknown error';
+    console.error('[mt ephemeral]', failure);
+    // Ephemeral delivery is never guaranteed (the receiver may be offline, or
+    // the API build may refuse the send). The bot's DM is private as well, so
+    // the jutsu still works instead of failing silently.
+    try {
+      await api.sendMessage({ chat_id: recipient.id, text: body, parse_mode: 'HTML' });
+      viaDm = true;
+      failure = null;
+    } catch (e2) {
+      failure = e2?.description || e2?.message || failure;
+      console.error('[mt dm]', e2?.description || e2);
+    }
+  }
+
+  if (failure) {
     await tellSender(
-      `${mentionHtml(from)}\n\n❌ <b>TRANSMISSION FAILED</b>\n\nThe ephemeral message could not be delivered.\n\n<code>${esc(String(desc).slice(0, 200))}</code>`,
+      `${mentionHtml(from)}\n\n❌ <b>TRANSMISSION FAILED</b>\n\nThe message could not be delivered privately.\n\n<code>${esc(String(failure).slice(0, 200))}</code>`,
     );
     return true;
   }
 
   await tellSender(
-    `${mentionHtml(from)}\n\n✅ <b>MIND TRANSMISSION SENT</b>\n\nTarget: ${mentionHtml(recipient)}\n\nYour ephemeral message was delivered inside the group.`,
+    `${mentionHtml(from)}\n\n✅ <b>MIND TRANSMISSION SENT</b>\n\nTarget: ${mentionHtml(recipient)}\n\n` +
+    (viaDm
+      ? 'Your message was delivered to their bot DM instead (ephemeral delivery was unavailable).'
+      : 'Your ephemeral message was delivered inside the group.'),
   );
   return true;
 }

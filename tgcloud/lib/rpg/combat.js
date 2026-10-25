@@ -559,7 +559,8 @@ export async function handleRob(message) {
   }
   if ((skills.lastRobbedAt || 0) > t - ROB_LOCKOUT_SEC) {
     await replyText(message,
-      `⏳ ${escapeHtml(target.first_name || 'This target')} was robbed recently.\n\nrobbery possible again at ${dueText(skills.lastRobbedAt + ROB_LOCKOUT_SEC, t)}.`);
+      // No cooldown timer in a group message (same rule as death/protection).
+      `⏳ ${escapeHtml(target.first_name || 'This target')} was robbed recently.`);
     return true;
   }
 

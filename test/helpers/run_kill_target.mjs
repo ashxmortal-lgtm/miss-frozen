@@ -170,10 +170,13 @@ const shinobiLock = await db.get({
 });
 assert.equal(Number(shinobiLock.n), 0, 'no shinobi row keeps a rob lockout');
 
-// Second /rob in the same 24h is refused.
+// Second /rob in the same 24h is refused — without publishing the retry clock.
 sent.length = 0;
 await handleRob(message(ATTACKER, TARGET, '/rob'));
-assert.match(sent.map(textOf).join('\n'), /ʀᴏʙʙᴇᴅ ʀᴇᴄᴇɴᴛʟʏ/);
+const lockText = sent.map(textOf).join('\n');
+assert.match(lockText, /ʀᴏʙʙᴇᴅ ʀᴇᴄᴇɴᴛʟʏ/);
+assert.doesNotMatch(lockText, /ʀᴏʙʙᴇʀʏ ᴘᴏꜱꜱɪʙʟᴇ ᴀɢᴀɪɴ/, 'the retry time stays private');
+assert.doesNotMatch(lockText, /ɪꜱᴛ \(ɪɴ /, 'no countdown in the group');
 
 // ---- an ALIVE account cannot be robbed even when a shinobi row looks odd ----
 await db.run({
