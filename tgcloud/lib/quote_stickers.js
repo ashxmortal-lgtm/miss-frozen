@@ -23,17 +23,23 @@ import { formatOfSticker, ownSticker, STICKER_LIMITS } from './quote/packs.js';
 export const QUOTE_COMMANDS = new Set(['q', 'own']);
 
 /**
- * Parse `/q`, `/q@missfrozen_bot`, `/own`.
- * Returns { command, atBot } or null for any other text.
+ * Parse `/q`, `/q@missfrozen_bot`, `/q r`, `/own`.
+ * Returns { command, atBot, mode } or null for any other text.
+ *
+ * `mode: 'reply'` for `/q r` — quote the message that the replied-to message was
+ * itself replying to, shown nested inside the card.
  */
 export function parseQuoteCommand(text) {
   const raw = String(text || '').trim();
   if (!raw.startsWith('/')) return null;
-  const head = raw.split(/\s+/)[0].slice(1);
-  const [name, atBot] = head.split('@');
+  const parts = raw.split(/\s+/);
+  const [name, atBot] = parts[0].slice(1).split('@');
   const command = name.toLowerCase();
   if (!QUOTE_COMMANDS.has(command)) return null;
-  return { command, atBot: atBot || null };
+  // `/q r` (and the long form `/q reply`); ignored for /own.
+  const flag = String(parts[1] || '').toLowerCase();
+  const mode = command === 'q' && (flag === 'r' || flag === 'reply') ? 'reply' : null;
+  return { command, atBot: atBot || null, mode };
 }
 
 /** The `@bot` suffix must name this bot, otherwise the update is not ours. */
@@ -88,20 +94,38 @@ const usageReply = (message, key) => reply(message, MESSAGES[key] || MESSAGES.re
  *
  * @param {object} quote  result of `extractQuote`
  * @param {object|null} avatar  decoded profile photo, or null for the lettered disc
+ * @param {{name:string,text:string,userId:number}|null} [nested]  the parent
+ *        message, for `/q r`
  */
-export function buildQuoteSticker(quote, avatar = null) {
+export function buildQuoteSticker(quote, avatar = null, nested = null) {
   return renderQuotePng({
     text: quote.text,
     name: quote.name,
     userId: quote.senderId || quote.senderChatId || 0,
     avatar,
     kind: quote.kind,
-    subtitle: quote.handle,
+    nested,
   });
 }
 
+/**
+ * The message the replied-to message was itself replying to — the parent shown
+ * inside the card for `/q r`. Returns an extractable shape, or null when the
+ * replied-to message is not itself a reply.
+ */
+function nestedSourceOf(message) {
+  const target = message?.reply_to_message;
+  const parent = target?.reply_to_message;
+  if (!parent) return null;
+  // Never nest the command message itself.
+  if (message?.message_id != null && parent.message_id === message.message_id) return null;
+  const flat = quoteSourceOf({ reply_to_message: parent, message_id: message?.message_id });
+  if (!flat) return null;
+  return flat;
+}
+
 /** `/q` — render and send the quote sticker (never creates a pack). */
-async function handleQuote(message) {
+async function handleQuote(message, mode = null) {
   const source = quoteSourceOf(message);
   const quote = extractQuote(source);
   if (!quote.ok) {
@@ -114,9 +138,19 @@ async function handleQuote(message) {
   // bot's own photo stands in; the lettered disc is the last resort.
   const photo = await resolveAvatar(quote);
 
+  // `/q r`: show the parent message nested inside the card. If the replied-to
+  // message is not itself a reply there is nothing to nest, so the card is
+  // rendered normally rather than failing.
+  let nested = null;
+  if (mode === 'reply') {
+    const parentSource = nestedSourceOf(message);
+    const parent = parentSource ? extractQuote(parentSource) : null;
+    if (parent?.ok) nested = { name: parent.name, text: parent.text || parent.kind, userId: parent.senderId || 0 };
+  }
+
   let rendered;
   try {
-    rendered = buildQuoteSticker(quote, photo.image);
+    rendered = buildQuoteSticker(quote, photo.image, nested);
   } catch (e) {
     console.error('[quote render]', e?.message || e);
     await reply(message, MESSAGES.render);
@@ -210,5 +244,5 @@ export async function handleQuoteCommand(message, parsed = null) {
     return true;
   }
 
-  return command.command === 'own' ? handleOwn(message) : handleQuote(message);
+  return command.command === 'own' ? handleOwn(message) : handleQuote(message, command.mode);
 }

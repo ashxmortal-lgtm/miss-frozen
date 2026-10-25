@@ -9,20 +9,19 @@
  * unsupported encoding, size limits — so each failure returns a reason instead
  * of throwing, and the caller falls back.
  *
- * Fallback order (`resolveAvatar`):
- *   1. the quoted author's own photo  (user → getUserProfilePhotos,
- *                                      channel/anonymous admin → getChat photo)
- *   2. MissFrozen's own profile photo (`getMe` → getUserProfilePhotos)
- *   3. a lettered disc, with the real reason logged
+ * Order (`resolveAvatar`):
+ *   1. the quoted author's own photo — `getUserProfilePhotos`, then the
+ *      `getChat` copy for users whose privacy setting hides the list;
+ *      `getChat` for a channel or an anonymous admin
+ *   2. a lettered disc, with the real reason logged
  *
- * Telegram does not expose every photo to a bot: a privacy setting, a hidden
- * channel photo or an API error all look like "no photo". So an unavailable
- * author photo is never treated as "this person has no photo" — it falls
- * through to the bot's photo instead.
+ * There is no bot-photo substitute: MissFrozen's face on someone else's message
+ * misattributes the quote. Telegram does not expose every photo to a bot — a
+ * privacy setting, a hidden channel photo and a genuine "no photo" all look the
+ * same over the API — so the failure is logged and the initial is drawn.
  *
- * The author's photo is never cached (it can change at any moment, and the card
- * is built from the message being quoted right now). Only the *bot's* photo is
- * cached, which is safe: it belongs to this app and changes rarely.
+ * Nothing is cached: a profile photo can change at any moment, and the card is
+ * built from the message being quoted right now.
  */
 
 import { api, BotApiError } from 'sdk';
@@ -101,136 +100,94 @@ export async function fetchChatPhoto(chatId) {
 }
 
 /**
- * Fetch and decode a user's profile photo.
+ * Download a file by its `file_id` and decode it.
  *
- * @param {number} userId  author of the quoted message (never the caller)
- * @returns {Promise<{ok:true, image:object}|{ok:false, reason:string}>}
+ * `file_id` is opaque base64-ish data — it may contain `+`, `/`, `_`, `-` or
+ * padding. Only emptiness and whitespace are rejected: guessing at the alphabet
+ * previously discarded perfectly valid ids and silently produced the lettered
+ * avatar for users who do have a photo.
  */
-export async function fetchProfilePhoto(userId) {
-  if (!userId) return { ok: false, reason: 'no_user' };
-
-  let photos;
-  try {
-    photos = await api.getUserProfilePhotos({ user_id: userId, offset: 0, limit: 1 });
-  } catch (error) {
-    const reason = error instanceof BotApiError ? `api_${error.code || 'error'}` : 'api_error';
-    return { ok: false, reason };
+async function downloadAndDecode(fileId) {
+  if (typeof fileId !== 'string' || !fileId || /\s/.test(fileId)) {
+    return { ok: false, reason: 'no_file_id' };
   }
-
-  const list = photos?.photos || [];
-  if (!list.length) return { ok: false, reason: 'no_photo' };
-
-  const sizes = list[0] || [];
-  const size = pickPhotoSize(sizes) || sizes[PHOTO_SIZE_INDEX] || sizes[0];
-  const fileId = size?.file_id || size?.file_unique_id;
-  if (!fileId || typeof fileId !== 'string') return { ok: false, reason: 'no_file_id' };
-  // Only real file ids are downloadable (file_unique_id is not accepted by getFile).
-  if (!/^[\w-]+$/.test(fileId)) return { ok: false, reason: 'bad_file_id' };
-
   let bytes;
   try {
-    const result = await api.getFileContent(fileId);
-    bytes = asBytes(result);
+    bytes = asBytes(await api.getFileContent(fileId));
     if (bytes && bytes.length > MAX_DOWNLOAD_BYTES) return { ok: false, reason: 'too_large' };
   } catch (error) {
     return { ok: false, reason: 'download_failed' };
   }
-
   return decodeProfilePhoto(bytes);
 }
 
-// ---- MissFrozen's own photo (the documented fallback) ---------------------
-
-/** The bot changes its photo rarely; an hour matches `bot_avatar.js`. */
-const BOT_PHOTO_TTL_MS = 60 * 60 * 1000;
-/** Do not re-ask Telegram on every /q while the bot has no usable photo. */
-const BOT_PHOTO_RETRY_MS = 5 * 60 * 1000;
-
-let botIdCache = null;
-let botPhotoCache = null; // { at, image }
-let botPhotoFailAt = 0;
-let botPhotoFailReason = '';
-
-/** Test hook — forget the cached bot identity and photo. */
-export function resetBotPhotoCache() {
-  botIdCache = null;
-  botPhotoCache = null;
-  botPhotoFailAt = 0;
-  botPhotoFailReason = '';
-}
-
-/** Resolve the bot's own user id once per isolate. */
-async function botUserId() {
-  if (botIdCache) return botIdCache;
-  try {
-    const me = await api.getMe();
-    if (me && me.id) botIdCache = me.id;
-  } catch (error) {
-    console.error('[quote avatar] getMe failed',
-      error?.description || error?.message || error);
-  }
-  return botIdCache;
-}
-
 /**
- * Fetch (and cache) MissFrozen's own profile photo.
+ * Fetch and decode a user's profile photo.
  *
- * @returns {Promise<{ok:true,image:object,source:'bot',cached?:boolean}
- *   |{ok:false,reason:string,source:'bot',cached?:boolean}>}
+ * Two sources, because Telegram hides the same photo from one of them:
+ *   1. `getUserProfilePhotos` — the authoritative list of profile photos
+ *   2. `getChat` on the user id — the private-chat object still carries the
+ *      photo when the user's privacy setting blocks the first call. This is the
+ *      same fallback `bot_avatar.js` uses for the Mini App header.
+ *
+ * A blocked photo and a genuinely absent photo are indistinguishable over the
+ * API, so both end here as `ok: false` and the caller draws the initial.
+ *
+ * @param {number} userId  author of the quoted message (never the caller)
+ * @returns {Promise<{ok:true, image:object, source:'photos'|'chat'}|{ok:false, reason:string}>}
  */
-export async function fetchBotPhoto() {
-  const now = Date.now();
-  if (botPhotoCache && now - botPhotoCache.at < BOT_PHOTO_TTL_MS) {
-    return { ok: true, image: botPhotoCache.image, source: 'bot', cached: true };
-  }
-  if (botPhotoFailAt && now - botPhotoFailAt < BOT_PHOTO_RETRY_MS) {
-    return { ok: false, reason: botPhotoFailReason, source: 'bot', cached: true };
+export async function fetchProfilePhoto(userId) {
+  if (!userId) return { ok: false, reason: 'no_user' };
+
+  let reason = 'no_photo';
+  try {
+    const photos = await api.getUserProfilePhotos({ user_id: userId, offset: 0, limit: 1 });
+    const list = photos?.photos || [];
+    if (list.length) {
+      const sizes = list[0] || [];
+      const size = pickPhotoSize(sizes) || sizes[PHOTO_SIZE_INDEX] || sizes[0];
+      const fileId = size?.file_id || size?.file_unique_id;
+      const decoded = await downloadAndDecode(fileId);
+      if (decoded.ok) return { ...decoded, source: 'photos' };
+      reason = decoded.reason; // e.g. an unsupported encoding — try the chat copy
+    }
+  } catch (error) {
+    reason = error instanceof BotApiError ? `api_${error.code || 'error'}` : 'api_error';
   }
 
-  const id = await botUserId();
-  if (!id) {
-    botPhotoFailAt = now;
-    botPhotoFailReason = 'no_bot_id';
-    return { ok: false, reason: 'no_bot_id', source: 'bot' };
-  }
+  // The photo may be visible on the chat object even when the list is not.
+  const viaChat = await fetchChatPhoto(userId);
+  if (viaChat.ok) return { ...viaChat, source: 'chat' };
 
-  // Same empty-array / API-error / download / decode handling as a user photo.
-  let result = await fetchProfilePhoto(id);
-  // Some bots only expose a *chat* photo, never a user one — the same fallback
-  // `bot_avatar.js` already relies on for the Mini App header.
-  if (!result.ok) {
-    const chat = await fetchChatPhoto(id);
-    if (chat.ok) result = chat;
-  }
-  if (result.ok) {
-    botPhotoCache = { at: now, image: result.image };
-    botPhotoFailAt = 0;
-    botPhotoFailReason = '';
-    return { ok: true, image: result.image, source: 'bot' };
-  }
-
-  botPhotoFailAt = now;
-  botPhotoFailReason = result.reason;
-  return { ok: false, reason: result.reason, source: 'bot' };
+  return { ok: false, reason };
 }
 
 /**
- * Pick the avatar for a quote, in documented order.
+ * Pick the avatar for a quote.
  *
- * Never substitutes the `/q` invoker's photo: `quote` only ever carries the
+ * Only the **replied-to author's own photo** is ever used. There is deliberately
+ * no bot-photo substitute: putting MissFrozen's face on someone else's message
+ * misattributes the quote. When the photo is unavailable — no photo set, hidden
+ * by a privacy setting, or undecodable — the renderer draws the author's initial
+ * in a coloured disc and the real reason is logged.
+ *
+ * The `/q` invoker's photo is never considered: `quote` only carries the
  * replied-to sender's ids.
  *
  * @param {object} quote  the result of `extractQuote`
  * @returns {Promise<{ok:boolean, image:object|null,
- *   source:'user'|'channel'|'bot'|'initial', reason:string}>}
+ *   source:'user'|'channel'|'group'|'initial', reason:string}>}
  */
 export async function resolveAvatar(quote = {}) {
   const attempts = [];
 
   if (quote.senderChatId) {
+    // A channel post, or an anonymous admin posting as the group.
     const chat = await fetchChatPhoto(quote.senderChatId);
-    if (chat.ok) return { ok: true, image: chat.image, source: 'channel', reason: '' };
-    attempts.push(`channel:${chat.reason}`);
+    if (chat.ok) {
+      return { ok: true, image: chat.image, source: quote.isChannel ? 'channel' : 'group', reason: '' };
+    }
+    attempts.push(`chat:${chat.reason}`);
   } else if (quote.senderId) {
     const user = await fetchProfilePhoto(quote.senderId);
     if (user.ok) return { ok: true, image: user.image, source: 'user', reason: '' };
@@ -239,14 +196,8 @@ export async function resolveAvatar(quote = {}) {
     attempts.push('user:no_user');
   }
 
-  const bot = await fetchBotPhoto();
-  if (bot.ok) {
-    return { ok: true, image: bot.image, source: 'bot', reason: attempts.join(', ') };
-  }
-  attempts.push(`bot:${bot.reason}`);
-
-  // Last resort: the renderer draws the author's initial instead. Log why, so
-  // a missing photo is diagnosable rather than a silent blank disc.
+  // Last resort: the renderer draws the author's initial. Log why, so a missing
+  // photo is diagnosable rather than a silent blank disc.
   const reason = attempts.join(', ');
   console.error('[quote avatar] lettered fallback —', reason);
   return { ok: false, image: null, source: 'initial', reason };
