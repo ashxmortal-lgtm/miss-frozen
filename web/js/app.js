@@ -1095,7 +1095,6 @@
   function watchForeground() {
     if (tg && typeof tg.onEvent === 'function') {
       try { tg.onEvent('activated', syncOnReturn); } catch (_) {}
-      try { tg.onEvent('viewportChanged', () => { if (tg.isExpanded) syncOnReturn(); }); } catch (_) {}
     }
     if (document && typeof document.addEventListener === 'function') {
       document.addEventListener('visibilitychange', () => {
