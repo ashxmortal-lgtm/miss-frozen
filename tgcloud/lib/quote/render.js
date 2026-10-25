@@ -14,6 +14,7 @@
  */
 
 import { encodeRgbaPng } from './png.js';
+import { drawEmoji, emojiLuminance, firstEmojiOf } from './emoji.js';
 import {
   loadAtlas, drawLine, measureLine, normalizeText, renderableShare,
   wrapText, clampLines, ellipsize, lineHeightOf,
@@ -30,6 +31,7 @@ export const PALETTE = {
   nameFallback: [167, 139, 250],
   meta: [150, 138, 168],
   avatarFallback: [58, 47, 78],
+  avatarFallbackLight: [232, 226, 242], // for emoji artwork that is itself dark
   avatarInk: [138, 122, 168],
   nestedBg: [44, 33, 62],      // the quoted block, a shade above the bubble
   nestedText: [196, 186, 212],
@@ -318,21 +320,34 @@ export function renderQuote({
 
   // ---- the author's avatar, LEFT, centred against the bubble --------------
   const avatarCy = bubbleY + bubbleH / 2;
-  // Lettered fallback — used only when the bot's own photo is unavailable too.
-  // A missing initial draws a plain disc rather than a literal "?".
+  // Avatar fallback order when Telegram gives us no photo:
+  //   1. an emoji from the author's name (🕸️ IS their picture, in effect)
+  //   2. the first letter of the name
+  // A name with neither draws a plain disc rather than a literal "?".
   const initials = (normalizeText(name).trim()[0] || '').toUpperCase();
+  const nameEmoji = firstEmojiOf(name);
+  // Dark artwork on a dark disc is invisible (the Noto spider web), so pick the
+  // disc that gives the emoji contrast.
+  const emojiDisc = nameEmoji && emojiLuminance(nameEmoji) < 110
+    ? PALETTE.avatarFallbackLight
+    : PALETTE.avatarFallback;
   const drawFace = (image, cx, cy, radius, fontSize) => {
     if (image) {
       surface.circularImage(image, cx, cy, radius);
       return;
     }
-    // Honest fallback: a tinted disc with the initial. Never a fake person.
+    // No photo: a name that is an emoji gets that emoji as its picture.
+    if (nameEmoji) {
+      surface.circle(cx, cy, radius, emojiDisc);
+      if (drawEmoji(surface, nameEmoji, cx, cy, radius)) return;
+    }
     surface.circle(cx, cy, radius, PALETTE.avatarFallback);
     if (!initials) return;
     const width = measureLine(initials, fontSize);
     drawLine(surface, initials, cx - width / 2, cy + fontSize * 0.36, fontSize, PALETTE.avatarInk);
   };
   drawFace(avatar, avatarCx, avatarCy, avatarRadius, 52);
+  const usedEmojiAvatar = !avatar && Boolean(nameEmoji);
 
   // ---- badge + display name inside the bubble ---------------------------
   const badgeCx = textX + BADGE / 2;
@@ -341,8 +356,21 @@ export function renderQuote({
 
   const nameX = textX + BADGE + 12;
   const nameWidth = plan.innerWidth - BADGE - 12;
-  const shownName = ellipsize(normalizeText(name).trim() || 'Unknown', nameWidth, plan.nameSize);
-  drawLine(surface, shownName, nameX, nameBaseline, plan.nameSize, nameColor(userId));
+  const cleanName = normalizeText(name).trim();
+  // A name that is only an emoji (🕸️) is drawn AS that emoji. Calling it
+  // "Unknown" was wrong: the emoji is the name, and we can draw it now.
+  const emojiOnlyName = !cleanName && Boolean(nameEmoji);
+  const shownName = emojiOnlyName
+    ? String(name).trim()
+    : ellipsize(cleanName || 'Unknown', nameWidth, plan.nameSize);
+  if (emojiOnlyName) {
+    // The badge beside the name is already this emoji — drawing it again here
+    // would show it twice. The badge IS the name in this case.
+    void nameX;
+    void drawEmoji;
+  } else {
+    drawLine(surface, shownName, nameX, nameBaseline, plan.nameSize, nameColor(userId));
+  }
 
   // ---- the quoted message, inside the bubble (`/q r`) --------------------
   if (plan.nestedLines.length) {
@@ -396,6 +424,8 @@ export function renderQuote({
     label,
     unsupportedScript,
     hasAvatar: Boolean(avatar),
+    // True when the disc shows an emoji instead of a photo or a letter.
+    emojiAvatar: usedEmojiAvatar ? nameEmoji : 0,
     // What the card actually credits — lets tests assert the visible name.
     drawnName: shownName,
     nestedLines: plan.nestedLines,
