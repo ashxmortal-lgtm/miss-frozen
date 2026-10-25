@@ -19,6 +19,17 @@ test('Jiraiya discovery keeps the exact caption spacing', () => {
   assert.match(source, /' he was busy with his “<span class="tg-spoiler">research<\/span>”\.\.\.🤫'/, 'tail line');
 });
 
+test('blank lines use <br/>, never their own paragraph', () => {
+  const source = read('tgcloud/lib/rpg/jiraiya_discovery.js');
+  const fn = source.slice(
+    source.indexOf('export function captionParagraphs'),
+    source.indexOf('export function jiraiyaDiscoveryRich'),
+  );
+  assert.match(fn, /lines\.join\('<br\/>'\)/, 'one paragraph, <br/> breaks');
+  assert.doesNotMatch(fn, /<p><br\/><\/p>/, 'no empty paragraph per blank line');
+  assert.doesNotMatch(fn, /map\(\(line\) =>[\s\S]*?<p>\$\{text\}<\/p>/, 'one <p> only');
+});
+
 test('the Jiraiya button is a rich tg-button inside the rich photo message', () => {
   const source = read('tgcloud/lib/rpg/jiraiya_discovery.js');
   assert.match(source, /import \{ richHtml \} from '\.\.\/map\/rich\.js';/, 'reuses the /map rich helpers');
