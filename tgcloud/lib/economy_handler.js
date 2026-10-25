@@ -1,4 +1,5 @@
 import { sweepTsunadeSearches } from "./rpg/tsunade.js";
+import { sweepProtectionReminders } from "./rpg/protect_reminder.js";
 import { handleRedeemCoupon } from "./coupons.js";
 // Economy commands + store/level-up buttons, restored from the old handlers.
 // /start /help /claim /balance /inventory /shinobi_store /buy /mission /patrol /ability /addcoins /backup
@@ -73,6 +74,8 @@ function claimBody(r) {
 // Finished missions/patrols: group reminder + short DM + claim button.
 async function announceDone() {
   try { await sweepTsunadeSearches(); } catch (e) { console.error(e); }
+  // Private "shield expires soon" DM — timers never appear in group messages.
+  try { await sweepProtectionReminders(); } catch (e) { console.error(e); }
   for (const r of await sweepActivities()) {
     const who = { id: r.id, first_name: r.name };
     const claimKb = {

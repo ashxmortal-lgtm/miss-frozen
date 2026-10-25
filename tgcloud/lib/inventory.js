@@ -82,9 +82,11 @@ export async function buildInventoryBlocks(user) {
     const status = await collectStatus(uid);
     const byName = Object.fromEntries(status.rows.map((r) => [r.name, r]));
     // Overall PLAYER status above the table — death belongs to the account.
+    // No revive countdown: /inventory is usually run in a group, and timers are
+    // private knowledge ( /byakugan is the only reveal ).
     const skills = await getUserSkills(uid);
     if (isAccountDead(skills, status.now)) {
-      blocks.push(para(`Status: ☠️ dead (revives ${dueText(Number(skills.deadUntil) || 0, status.now)})`));
+      blocks.push(para('Status: ☠️ dead'));
     } else {
       blocks.push(para('Status: ✅ alive'));
     }
