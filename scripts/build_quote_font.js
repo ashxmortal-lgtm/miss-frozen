@@ -6,6 +6,11 @@
  * art at sticker size. So real glyphs are baked here, once, from DejaVu Sans
  * (free, Bitstream Vera licence) and committed as `tgcloud/lib/quote/font_atlas.js`.
  *
+ * Two weights are baked — regular and bold — because people write their names in
+ * "fancy fonts" (𝐅𝐫𝐨𝐳𝐞𝐧, 𝑭𝒓𝒐𝒛𝒆𝒏) and those code points carry the weight
+ * Telegram would draw. Italic needs no face of its own: the blitter shears the
+ * upright face at draw time, which is how real renderers synthesise an oblique.
+ *
  * Steps per character:
  *   1. ImageMagick renders the glyph at a fixed baseline on a transparent canvas
  *      (anti-aliased, 8-bit coverage).
@@ -23,7 +28,11 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 
-const REGULAR = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf';
+const FACES = [
+  { name: 'regular', path: '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf' },
+  { name: 'bold', path: '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf' },
+];
+const REGULAR = FACES[0].path;
 const EM = 64; // pixels per em while rendering
 const SIZE = 200; // render canvas (generous, trimmed afterwards)
 const BASELINE = 150; // baseline y inside the canvas
@@ -124,10 +133,10 @@ function fontMetrics(path) {
 // ---- rasterise -------------------------------------------------------------
 
 /** Alpha coverage of one character, rendered at a fixed baseline. */
-function renderGlyph(char) {
+function renderGlyph(char, fontPath = REGULAR) {
   const alpha = execFileSync('convert', [
     '-size', `${SIZE}x${SIZE}`, 'xc:none',
-    '-font', REGULAR,
+    '-font', fontPath,
     '-pointsize', String(EM),
     '-fill', 'white',
     '-annotate', `+${ORIGIN_X}+${BASELINE}`, char,
@@ -173,24 +182,31 @@ function renderGlyph(char) {
 
 // ---- pack + emit -----------------------------------------------------------
 
-const metrics = fontMetrics(REGULAR);
-const scaleToEm = EM / metrics.unitsPerEm;
-
-const glyphs = new Map();
-for (const char of CHARS) {
-  const rendered = renderGlyph(char);
-  const code = char.charCodeAt(0);
-  const advance = Math.round((metrics.advances.get(code) ?? EM * 0.6) * scaleToEm);
-  glyphs.set(char, rendered ? { ...rendered, advance } : { width: 0, height: 0, advance });
+// Every face is rasterised into the same shelf list, so one atlas image serves
+// both weights; each face keeps its own glyph table (advances differ).
+const perFace = new Map();
+for (const face of FACES) {
+  const metrics = fontMetrics(face.path);
+  const scaleToEm = EM / metrics.unitsPerEm;
+  const glyphs = new Map();
+  for (const char of CHARS) {
+    const rendered = renderGlyph(char, face.path);
+    const code = char.charCodeAt(0);
+    const advance = Math.round((metrics.advances.get(code) ?? EM * 0.6) * scaleToEm);
+    glyphs.set(char, rendered ? { ...rendered, advance } : { width: 0, height: 0, advance });
+  }
+  perFace.set(face.name, glyphs);
 }
+
+const allGlyphs = [...perFace.values()].flatMap((glyphs) => [...glyphs.values()]);
 
 // Shelf packing: sort by height, fill rows up to ATLAS_WIDTH.
 const ATLAS_WIDTH = 900;
-const ordered = [...glyphs.entries()].sort((a, b) => b[1].height - a[1].height);
+const ordered = allGlyphs.sort((a, b) => b.height - a.height);
 let cursorX = 1;
 let cursorY = 1;
 let shelfHeight = 0;
-for (const [, glyph] of ordered) {
+for (const glyph of ordered) {
   if (!glyph.width) { glyph.x = 0; glyph.y = 0; continue; }
   if (cursorX + glyph.width + 1 > ATLAS_WIDTH) {
     cursorX = 1;
@@ -205,7 +221,7 @@ for (const [, glyph] of ordered) {
 const ATLAS_HEIGHT = cursorY + shelfHeight + 1;
 
 const atlas = new Uint8Array(ATLAS_WIDTH * ATLAS_HEIGHT);
-for (const [, glyph] of glyphs) {
+for (const glyph of allGlyphs) {
   if (!glyph.width) continue;
   for (let y = 0; y < glyph.height; y += 1) {
     for (let x = 0; x < glyph.width; x += 1) {
@@ -220,30 +236,43 @@ const { zlibDeflate } = await import('../tgcloud/lib/quote/deflate.js');
 const compressed = zlibDeflate(atlas);
 const base64 = Buffer.from(compressed).toString('base64');
 
-const table = {};
-for (const [char, glyph] of glyphs) {
-  if (!glyph.width) { table[char] = [0, 0, 0, 0, 0, 0, glyph.advance]; continue; }
-  table[char] = [glyph.x, glyph.y, glyph.width, glyph.height, glyph.bearingX, glyph.bearingY, glyph.advance];
-}
+const tableOf = (glyphs) => {
+  const table = {};
+  for (const [char, glyph] of glyphs) {
+    if (!glyph.width) { table[char] = [0, 0, 0, 0, 0, 0, glyph.advance]; continue; }
+    table[char] = [glyph.x, glyph.y, glyph.width, glyph.height,
+      glyph.bearingX, glyph.bearingY, glyph.advance];
+  }
+  return table;
+};
+const regular = tableOf(perFace.get('regular'));
+const bold = tableOf(perFace.get('bold'));
 
 const output = `/**
  * GENERATED FILE — do not edit by hand.
- * Built by scripts/build_quote_font.js from DejaVu Sans (Bitstream Vera licence).
+ * Built by scripts/build_quote_font.js from DejaVu Sans and DejaVu Sans Bold
+ * (Bitstream Vera licence).
  *
  * 8-bit anti-aliased coverage atlas, deflated with the project's own encoder.
  * Glyph entry: [x, y, width, height, bearingX, bearingY, advance]
  *   bearingX — pen origin → first ink column
  *   bearingY — baseline → top of ink
  * All units are pixels at em = ${EM}.
+ *
+ * Italic is not baked: the blitter shears the upright face, so the italic and
+ * bold-italic styles cost no extra bytes.
  */
 export const FONT_EM = ${EM};
 export const ATLAS_WIDTH = ${ATLAS_WIDTH};
 export const ATLAS_HEIGHT = ${ATLAS_HEIGHT};
 export const ATLAS_DEFLATED_BASE64 = '${base64}';
 
-export const GLYPHS = ${JSON.stringify(table)};
+export const GLYPHS = ${JSON.stringify(regular)};
+
+export const BOLD_GLYPHS = ${JSON.stringify(bold)};
 `;
 
 writeFileSync(new URL('../tgcloud/lib/quote/font_atlas.js', import.meta.url), output);
-console.log(`font atlas: ${Object.keys(table).length} glyphs, ${ATLAS_WIDTH}x${ATLAS_HEIGHT}px `
-  + `(${atlas.length}B → ${compressed.length}B → ${base64.length}B base64)`);
+console.log(`font atlas: ${Object.keys(regular).length}+${Object.keys(bold).length} glyphs, `
+  + `${ATLAS_WIDTH}x${ATLAS_HEIGHT}px (${atlas.length}B → ${compressed.length}B → `
+  + `${base64.length}B base64)`);
