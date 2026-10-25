@@ -141,34 +141,47 @@ export function drawEmoji(surface, codepoint, cx, cy, radius, fill = 0.92) {
   return true;
 }
 
+// ---- Telegram-style tinting ------------------------------------------------
+
 /**
- * Mean luminance of an emoji's visible pixels (0–255).
+ * Emoji avatars as Telegram draws them: a single-colour glyph on a tinted disc,
+ * not full-colour artwork.
  *
- * Used to pick a disc that the artwork actually reads against: the Noto spider
- * web is dark grey, so putting it on the dark fallback disc makes it vanish.
+ * This mirrors what `needs_repainting` does for custom emoji (Bot API 6.6,
+ * 2023-03-09): the glyph is painted in one tone derived from context and laid
+ * over a disc of the same hue. Recreating that look is what makes the sticker
+ * read like the native avatar instead of a washed-out grey blob.
+ *
+ * The hue is chosen from the code point, so an emoji always gets the same
+ * disc — stable across renders and between users.
  */
-export function emojiLuminance(codepoint) {
-  loadEmojiAtlas();
-  const tile = index.get(codepoint);
-  if (tile === undefined) return 128;
+// Sampled from the reference render: a bright pastel disc with a near-white
+// glyph. The glyph is LIGHTER than the disc — inverting that (dark glyph, as a
+// first pass did) reads as a muddy blob instead of a clean icon.
+const TINTS = [
+  { bg: [255, 181, 158], ink: [255, 245, 240] }, // peach
+  { bg: [255, 217, 142], ink: [255, 252, 240] }, // amber
+  // Violet sits at index 2 on purpose: the hash below lands U+1F578 (🕸️) here.
+  { bg: [219, 143, 239], ink: [253, 246, 255] }, // violet
+  { bg: [168, 230, 161], ink: [245, 255, 244] }, // green
+  { bg: [143, 227, 216], ink: [240, 255, 253] }, // teal
+  { bg: [158, 201, 255], ink: [244, 250, 255] }, // blue
+  { bg: [191, 176, 255], ink: [250, 247, 255] }, // lavender
+  { bg: [255, 168, 197], ink: [255, 245, 249] }, // rose
+];
 
-  const col = tile % EMOJI_COLUMNS;
-  const row = Math.floor(tile / EMOJI_COLUMNS);
-  const baseX = col * EMOJI_EM;
-  const baseY = row * EMOJI_EM;
-
-  let sum = 0;
-  let weight = 0;
-  for (let y = 0; y < EMOJI_EM; y += 1) {
-    for (let x = 0; x < EMOJI_EM; x += 1) {
-      const i = ((baseY + y) * EMOJI_WIDTH + baseX + x) * 4;
-      const alpha = atlas[i + 3] / 255;
-      if (alpha <= 0.05) continue;
-      sum += (0.299 * atlas[i] + 0.587 * atlas[i + 1] + 0.114 * atlas[i + 2]) * alpha;
-      weight += alpha;
-    }
-  }
-  return weight ? sum / weight : 128;
+/**
+ * Stable, well-spread choice of tint for a code point.
+ *
+ * A plain `cp % 8` clusters: most emoji share the same low bits, so nearly every
+ * avatar came out the same colour. Mixing the high bits spreads the palette.
+ *
+ * @returns {{bg:number[], ink:number[]}}
+ */
+export function emojiTint(codepoint) {
+  const cp = Math.abs(Number(codepoint) || 0);
+  const index = ((cp * 23 + (cp >>> 9)) % TINTS.length + TINTS.length) % TINTS.length;
+  return TINTS[index];
 }
 
 // ---- runtime source (Twemoji CDN) -----------------------------------------
@@ -254,8 +267,8 @@ export async function fetchEmojiImage(codepoint) {
 }
 
 /**
- * The atlas tile for one emoji, as a standalone image the renderer can blit
- * like a profile photo. Null when the codepoint is not baked.
+ * The atlas tile for one emoji, as a standalone image the renderer can blit.
+ * Null when the codepoint is not baked.
  */
 export function emojiTileImage(codepoint) {
   loadEmojiAtlas();

@@ -6,17 +6,19 @@
  * the text atlas is ASCII-only, so emoji are baked here once and committed as
  * `tgcloud/lib/quote/emoji_atlas.js`.
  *
- * Artwork: Google Noto Emoji, via the `emoji-datasource-google` npm package
- * (Apache-2.0). Only the curated set below is shipped — the full catalogue is
- * ~3,800 images and far too large to commit.
+ * Artwork: Twemoji, via the `emoji-datasource-twitter` npm package (CC-BY 4.0)
+ * — the same set the runtime CDN serves, so a baked emoji and a fetched emoji
+ * look identical. (Google's Noto web, by contrast, is boxy where Twemoji's is
+ * round, which is visibly different from what Telegram renders.) Only the
+ * curated core below is shipped; everything else is fetched at render time.
  *
  * Each emoji is downscaled to EMOJI_EM×EMOJI_EM RGBA, packed into one square
  * grid, deflated with the project's own encoder and written out as base64. The
  * runtime only needs its own inflate + the atlas dimensions.
  *
  * Usage:
- *   npm i --no-save emoji-datasource-google
- *   node scripts/build_emoji_atlas.js [path/to/emoji-datasource-google]
+ *   npm i --no-save emoji-datasource-twitter
+ *   node scripts/build_emoji_atlas.js [path/to/emoji-datasource-twitter]
  */
 
 import { execFileSync } from 'node:child_process';
@@ -26,10 +28,12 @@ import { join } from 'node:path';
 
 import { zlibDeflate } from '../tgcloud/lib/quote/deflate.js';
 
-const EM = 32; // pixels per emoji in the atlas
+const EM = 40; // pixels per emoji in the atlas (crisper glyph edges)
 const COLUMNS = 16;
 
-const SOURCE = process.argv[2] || 'node_modules/emoji-datasource-google';
+const SOURCE = process.argv[2] || 'node_modules/emoji-datasource-twitter';
+/** Which artwork flavour inside the package (twitter | google | apple | …). */
+const FLAVOUR = 'twitter';
 
 /**
  * Curated set, selected by category and capped per group so the atlas stays a
@@ -72,7 +76,7 @@ const pickEmoji = (catalogue) => {
   // 1. The must-have set first, in the order listed.
   for (const cp of ALWAYS) {
     const hex = cp.toString(16).toUpperCase();
-    const entry = catalogue.find((candidate) => candidate.has_img_google
+    const entry = catalogue.find((candidate) => candidate[`has_img_${FLAVOUR}`]
       && candidate.image && candidate.unified.split('-')[0] === hex);
     if (!entry || seen.has(entry.unified)) continue;
     seen.add(entry.unified);
@@ -83,7 +87,7 @@ const pickEmoji = (catalogue) => {
   //    covers everything else, so the baked atlas stays small.
   for (const group of GROUPS) {
     const pool = catalogue.filter((entry) => {
-      if (!entry.has_img_google || !entry.image) return false;
+      if (!entry[`has_img_${FLAVOUR}`] || !entry.image) return false;
       if (entry.category !== group.category) return false;
       if (group.subcategories && !group.subcategories.includes(entry.subcategory)) return false;
       // Skip skin-tone / hair variants and "component" placeholders.
@@ -118,7 +122,7 @@ const main = () => {
 
   const codePoints = [];
   picks.forEach((entry, index) => {
-    const file = join(SOURCE, 'img', 'google', '64', entry.image);
+    const file = join(SOURCE, 'img', FLAVOUR, '64', entry.image);
     const rgbaFile = join(work, `${index}.rgba`);
     execFileSync('convert', [file, '-resize', `${EM}x${EM}!`, '-depth', '8', `rgba:${rgbaFile}`]);
     const pixels = readFileSync(rgbaFile);
@@ -146,8 +150,9 @@ const main = () => {
 
   const out = `/**
  * GENERATED FILE — do not edit by hand.
- * Built by scripts/build_emoji_atlas.js from Google Noto Emoji
- * (emoji-datasource-google, Apache-2.0).
+ * Built by scripts/build_emoji_atlas.js from Twemoji
+ * (emoji-datasource-twitter, CC-BY 4.0) — the same artwork the runtime CDN
+ * serves, so baked and fetched emoji look identical.
  *
  * ${picks.length} emoji, ${EM}×${EM} px each, packed ${COLUMNS} per row in one
  * ${width}×${height} RGBA atlas, deflated with the project's own encoder.
