@@ -24,7 +24,8 @@ test('the renderer is pure JS — no canvas, no zlib, no npm at runtime', () => 
     assert.doesNotMatch(source, /require\(/, 'no CommonJS requires');
   }
   assert.doesNotMatch(png, /require\('zlib'\)|zlib\.deflate/, 'zlib is unavailable at runtime');
-  assert.match(png, /stored/, 'deflate uses stored (uncompressed) blocks');
+  assert.match(png, /encodeRgbaPng/, 'RGBA output for real transparency');
+  assert.match(png, /zlibDeflate/, 'compressed IDAT (stored blocks would exceed 512 KB)');
   assert.match(render, /STICKER_SIZE = 512/, 'stickers are 512 px wide');
 });
 
@@ -71,4 +72,28 @@ test('help lists /q and /own exactly once', () => {
   const help = read('tgcloud/lib/help.js');
   assert.equal((help.match(/'\/q'/g) || []).length, 1);
   assert.equal((help.match(/'\/own'/g) || []).length, 1);
+});
+
+test('the image codecs are pure JS and agree with the zlib reference', () => {
+  const inflate = read('tgcloud/lib/quote/inflate.js');
+  const deflate = read('tgcloud/lib/quote/deflate.js');
+  const jpeg = read('tgcloud/lib/quote/jpeg.js');
+  for (const source of [inflate, deflate, jpeg]) {
+    assert.doesNotMatch(source, /from 'node:/, 'no node: builtins in the isolate');
+    assert.doesNotMatch(source, /require\(/, 'no CommonJS requires');
+  }
+  assert.match(inflate, /export function zlibInflate/, 'PNG decode needs inflate');
+  assert.match(deflate, /export function zlibDeflate/, 'RGBA PNG encode needs deflate');
+  assert.match(jpeg, /export function decodeJpeg/, 'profile photos are JPEG');
+  assert.match(jpeg, /progressive JPEG is not supported/, 'unsupported JPEGs fail loudly');
+});
+
+test('the font atlas is generated data, not a runtime dependency', () => {
+  const atlas = read('tgcloud/lib/quote/font_atlas.js');
+  assert.match(atlas, /GENERATED FILE/, 'built by scripts/build_quote_font.js');
+  assert.match(atlas, /export const GLYPHS/);
+  // The atlas is deflated with the project's own encoder and inflated at runtime.
+  const text = read('tgcloud/lib/quote/text.js');
+  assert.match(text, /zlibInflate/);
+  assert.doesNotMatch(text, /registerFont|canvas|freetype/i);
 });

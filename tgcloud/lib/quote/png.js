@@ -17,6 +17,9 @@
  * in the isolate and in the Node test harness.
  */
 
+import { zlibDeflate } from './deflate.js';
+import { zlibInflate } from './inflate.js';
+
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
 // ---- checksums -------------------------------------------------------------
@@ -165,7 +168,6 @@ export function encodeIndexedPng({ width, height, indices, palette, alpha = null
     const trns = new Uint8Array(alpha.length);
     alpha.forEach((a, i) => { trns[i] = Math.max(0, Math.min(255, a)); });
     // tRNS may be shorter than the palette: trailing entries are opaque.
-    chunk('tRNS', trns);
     chunks.push(chunk('tRNS', trns));
   }
   chunks.push(chunk('IDAT', zlibStored(raw)));
@@ -189,4 +191,229 @@ export function readPngHeader(bytes) {
     filter: bytes[27],
     interlace: bytes[28],
   };
+}
+
+// ---- truecolour + alpha ----------------------------------------------------
+
+/**
+ * Encode an RGBA image as PNG (colour type 6) with real deflate compression.
+ *
+ * Used for stickers, which need genuine transparency outside the artwork:
+ * uncompressed RGBA would be ~1 MB, but flat artwork compresses to tens of KB.
+ *
+ * @param {object} image
+ * @param {number} image.width
+ * @param {number} image.height
+ * @param {Uint8Array} image.rgba  width × height × 4 bytes, row-major
+ * @param {boolean} [image.filtering] apply per-row Sub/Up filters (default true)
+ */
+export function encodeRgbaPng({ width, height, rgba, filtering = true }) {
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) {
+    throw new Error(`encodeRgbaPng: bad size ${width}x${height}`);
+  }
+  if (rgba.length !== width * height * 4) {
+    throw new Error(`encodeRgbaPng: expected ${width * height * 4} bytes, got ${rgba.length}`);
+  }
+
+  const stride = width * 4;
+  const raw = new Uint8Array((stride + 1) * height);
+  const previous = new Uint8Array(stride);
+  const current = new Uint8Array(stride);
+
+  for (let y = 0; y < height; y += 1) {
+    const start = y * stride;
+    current.set(rgba.subarray(start, start + stride));
+    const rowStart = y * (stride + 1);
+
+    // Pick the filter with the smallest sum of absolute differences — the
+    // standard heuristic, and a big win on flat artwork.
+    let bestFilter = 0;
+    let bestScore = Infinity;
+    let bestRow = null;
+    if (!filtering) {
+      bestRow = current;
+    } else {
+      for (const filter of [1, 2]) { // Sub, Up (None is the baseline)
+        const candidate = new Uint8Array(stride);
+        let score = 0;
+        for (let i = 0; i < stride; i += 1) {
+          const left = i >= 4 ? current[i - 4] : 0;
+          const up = previous[i];
+          const value = filter === 1 ? (current[i] - left) & 0xff : (current[i] - up) & 0xff;
+          candidate[i] = value;
+          score += value < 128 ? value : 256 - value;
+        }
+        if (score < bestScore) {
+          bestScore = score;
+          bestFilter = filter;
+          bestRow = candidate;
+        }
+      }
+      let scoreNone = 0;
+      for (let i = 0; i < stride; i += 1) {
+        const value = current[i];
+        scoreNone += value < 128 ? value : 256 - value;
+      }
+      if (scoreNone <= bestScore) {
+        bestFilter = 0;
+        bestRow = current;
+      }
+    }
+    raw[rowStart] = bestFilter;
+    raw.set(bestRow, rowStart + 1);
+    previous.set(current);
+  }
+
+  const ihdr = concat([
+    u32(width),
+    u32(height),
+    new Uint8Array([8, 6, 0, 0, 0]), // 8-bit RGBA, deflate, adaptive filter, no interlace
+  ]);
+
+  return concat([
+    new Uint8Array(PNG_SIGNATURE),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', zlibDeflate(raw)),
+    chunk('IEND', new Uint8Array(0)),
+  ]);
+}
+
+// ---- decoder ---------------------------------------------------------------
+
+const be32 = (bytes, offset) => ((bytes[offset] << 24) | (bytes[offset + 1] << 16)
+  | (bytes[offset + 2] << 8) | bytes[offset + 3]) >>> 0;
+
+export function isPng(bytes) {
+  if (!bytes || bytes.length < 8) return false;
+  for (let i = 0; i < PNG_SIGNATURE.length; i += 1) if (bytes[i] !== PNG_SIGNATURE[i]) return false;
+  return true;
+}
+
+/**
+ * Decode a PNG to RGBA. Supports colour types 0/2/3/4/6 at 8 and 16 bit depth,
+ * all five row filters, and both `tRNS` styles. Interlaced PNGs are rejected —
+ * Telegram profile photos are never interlaced, and the fallback avatar covers
+ * the (unlikely) failure.
+ */
+export function decodePng(bytes) {
+  if (!isPng(bytes)) throw new Error('not a PNG');
+  let offset = 8;
+  let width = 0;
+  let height = 0;
+  let bitDepth = 8;
+  let colorType = 6;
+  let interlace = 0;
+  let palette = null;
+  let transparency = null;
+  const idat = [];
+
+  while (offset + 8 <= bytes.length) {
+    const length = be32(bytes, offset);
+    const type = String.fromCharCode(bytes[offset + 4], bytes[offset + 5], bytes[offset + 6], bytes[offset + 7]);
+    const data = bytes.subarray(offset + 8, offset + 8 + length);
+    offset += 12 + length;
+
+    if (type === 'IHDR') {
+      width = be32(data, 0);
+      height = be32(data, 4);
+      bitDepth = data[8];
+      colorType = data[9];
+      interlace = data[12];
+    } else if (type === 'PLTE') {
+      palette = data;
+    } else if (type === 'tRNS') {
+      transparency = data;
+    } else if (type === 'IDAT') {
+      idat.push(data);
+    } else if (type === 'IEND') {
+      break;
+    }
+  }
+
+  if (!width || !height) throw new Error('PNG has no IHDR');
+  if (interlace) throw new Error('interlaced PNG is not supported');
+  if (bitDepth !== 8 && bitDepth !== 16) throw new Error(`unsupported PNG bit depth ${bitDepth}`);
+
+  const totalLength = idat.reduce((n, part) => n + part.length, 0);
+  const compressed = new Uint8Array(totalLength);
+  let cursor = 0;
+  for (const part of idat) {
+    compressed.set(part, cursor);
+    cursor += part.length;
+  }
+  const raw = zlibInflate(compressed);
+
+  const channels = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 }[colorType];
+  if (!channels) throw new Error(`unsupported PNG colour type ${colorType}`);
+  const bytesPerSample = bitDepth / 8;
+  const stride = width * channels * bytesPerSample;
+  const bpp = Math.max(1, channels * bytesPerSample);
+
+  const pixels = new Uint8Array(stride * height);
+  let rawOffset = 0;
+  for (let y = 0; y < height; y += 1) {
+    const filter = raw[rawOffset];
+    rawOffset += 1;
+    const rowStart = y * stride;
+    const previousStart = rowStart - stride;
+    for (let i = 0; i < stride; i += 1) {
+      const value = raw[rawOffset + i];
+      const left = i >= bpp ? pixels[rowStart + i - bpp] : 0;
+      const up = y > 0 ? pixels[previousStart + i] : 0;
+      const upLeft = y > 0 && i >= bpp ? pixels[previousStart + i - bpp] : 0;
+      let result;
+      switch (filter) {
+        case 0: result = value; break;
+        case 1: result = value + left; break;
+        case 2: result = value + up; break;
+        case 3: result = value + ((left + up) >> 1); break;
+        case 4: {
+          const p = left + up - upLeft;
+          const pa = Math.abs(p - left);
+          const pb = Math.abs(p - up);
+          const pc = Math.abs(p - upLeft);
+          const predictor = pa <= pb && pa <= pc ? left : (pb <= pc ? up : upLeft);
+          result = value + predictor;
+          break;
+        }
+        default: throw new Error(`bad PNG filter ${filter}`);
+      }
+      pixels[rowStart + i] = result & 0xff;
+    }
+    rawOffset += stride;
+  }
+
+  const rgba = new Uint8Array(width * height * 4);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = y * width + x;
+      const out = index * 4;
+      const base = y * stride + x * channels * bytesPerSample;
+      const sample = (channel) => pixels[base + channel * bytesPerSample];
+      if (colorType === 3) {
+        const paletteIndex = pixels[base];
+        rgba[out] = palette[paletteIndex * 3];
+        rgba[out + 1] = palette[paletteIndex * 3 + 1];
+        rgba[out + 2] = palette[paletteIndex * 3 + 2];
+        rgba[out + 3] = transparency && paletteIndex < transparency.length ? transparency[paletteIndex] : 255;
+      } else if (colorType === 0 || colorType === 4) {
+        const gray = sample(0);
+        rgba[out] = gray;
+        rgba[out + 1] = gray;
+        rgba[out + 2] = gray;
+        rgba[out + 3] = colorType === 4 ? sample(1) : 255;
+        if (colorType === 0 && transparency && transparency.length >= 2 && gray === transparency[1]) rgba[out + 3] = 0;
+      } else {
+        rgba[out] = sample(0);
+        rgba[out + 1] = sample(1);
+        rgba[out + 2] = sample(2);
+        rgba[out + 3] = colorType === 6 ? sample(3) : 255;
+        if (colorType === 2 && transparency && transparency.length >= 6
+          && rgba[out] === transparency[1] && rgba[out + 1] === transparency[3] && rgba[out + 2] === transparency[5]) {
+          rgba[out + 3] = 0;
+        }
+      }
+    }
+  }
+  return { width, height, rgba };
 }
