@@ -19,15 +19,17 @@ test('Jiraiya discovery keeps the exact caption spacing', () => {
   assert.match(source, /' he was busy with his “<span class="tg-spoiler">research<\/span>”\.\.\.🤫'/, 'tail line');
 });
 
-test('blank lines use <br/>, never their own paragraph', () => {
+test('the caption is ONE paragraph with real newlines (no <br/>, no extra <p>)', () => {
   const source = read('tgcloud/lib/rpg/jiraiya_discovery.js');
   const fn = source.slice(
     source.indexOf('export function captionParagraphs'),
     source.indexOf('export function jiraiyaDiscoveryRich'),
   );
-  assert.match(fn, /lines\.join\('<br\/>'\)/, 'one paragraph, <br/> breaks');
-  assert.doesNotMatch(fn, /<p><br\/><\/p>/, 'no empty paragraph per blank line');
-  assert.doesNotMatch(fn, /map\(\(line\) =>[\s\S]*?<p>\$\{text\}<\/p>/, 'one <p> only');
+  assert.match(fn, /return `<p>\$\{text\}<\/p>`/, 'a single <p> wraps the whole caption');
+  assert.doesNotMatch(fn, /<br\s*\/?>/, 'rich HTML has no <br> tag — it inflates the gap');
+  assert.doesNotMatch(fn, /<p><br\s*\/?><\/p>/, 'no empty paragraph per blank line');
+  assert.doesNotMatch(fn, /<p>\$\{(?!text\})/, 'no <p> built per line');
+  assert.equal((fn.match(/<p>/g) || []).length, 1, 'exactly one <p> in the caption builder');
 });
 
 test('the Jiraiya button is a rich tg-button inside the rich photo message', () => {

@@ -83,16 +83,15 @@ assert.match(withPhoto.html, /^<figure><img src="tg:\/\/photo\?id=jiraiya_photo"
 assert.deepEqual(withPhoto.media, [
   { id: 'jiraiya_photo', media: { type: 'photo', media: 'JIRAIYA_PHOTO' } },
 ], 'the photo travels inside the rich message, like /map');
-// ONE compact paragraph: blank lines are <br/>, never their own paragraph
-// (a paragraph per blank line added margins and blew the message up).
-assert.match(withPhoto.html, /<p>🐸 [\s\S]*?<br\/><br\/><br\/><br\/>🥀 /,
+// ONE compact paragraph with real newlines: rich HTML has no <br> tag, and a
+// <p> per line adds margins — both made the message far too tall.
+assert.match(withPhoto.html, /<p>🐸 [\s\S]*?\n\n\n\n🥀 /,
   'exactly three blank lines between the mention and the snake line');
-assert.match(withPhoto.html, /ꜱᴘʀɪɴɢꜱ!<br\/><br\/> ʜᴇ ᴡᴀꜱ ʙᴜꜱʏ/,
+assert.match(withPhoto.html, /ꜱᴘʀɪɴɢꜱ!\n\n ʜᴇ ᴡᴀꜱ ʙᴜꜱʏ/,
   'exactly one blank line before the last line');
-assert.equal((withPhoto.html.match(/<p><br\/><\/p>/g) || []).length, 0,
-  'no empty paragraph is emitted — they carry margins');
 assert.equal((withPhoto.html.match(/<p>/g) || []).length, 1, 'the caption is a single paragraph');
-assert.equal((withPhoto.html.match(/<br\/>/g) || []).length, 6, 'four + two line breaks');
+assert.doesNotMatch(withPhoto.html, /<br\s*\/?>/, 'no <br> tags — unsupported in rich HTML');
+assert.equal((withPhoto.html.match(/\n/g) || []).length, 6, 'four + two real line breaks');
 assert.match(withPhoto.html, /<span class="tg-spoiler">ʀᴇꜱᴇᴀʀᴄʜ<\/span>/, 'styled spoiler');
 assert.match(withPhoto.html, rawButton, 'a real rich tg-button, not an inline keyboard');
 
@@ -201,8 +200,9 @@ assert.ok(settled.blocks.some((b) => /Jiraiya has joined your shinobi roster/i.t
 assert.equal(rich.length, 1, 'exactly one discovery announcement');
 assert.equal(rich[0].chat_id, group.id, 'the patrol group, not the DM');
 assert.match(htmlOf(rich[0]), /<figure><img src="tg:\/\/photo\?id=jiraiya_photo"\/><\/figure>/);
-assert.equal((htmlOf(rich[0]).match(/<p><br\/><\/p>/g) || []).length, 0, 'no empty paragraphs');
-assert.equal((htmlOf(rich[0]).match(/<br\/>/g) || []).length, 6, 'compacted line breaks');
+assert.doesNotMatch(htmlOf(rich[0]), /<br\s*\/?>/, 'no <br> tags in rich HTML');
+assert.equal((htmlOf(rich[0]).match(/<p>/g) || []).length, 1, 'one paragraph');
+assert.equal((htmlOf(rich[0]).match(/\n/g) || []).length, 6, 'compacted line breaks');
 assert.match(htmlOf(rich[0]), sentButton);
 const owned = await db.get(sql`
   SELECT qty FROM inventory WHERE telegram_id = ${HERO} AND item_name = 'Jiraiya'
