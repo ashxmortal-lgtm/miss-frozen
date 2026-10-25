@@ -612,13 +612,38 @@ export const dailyMissions = table('daily_missions', {
 }));
 
 // ---- Sticker packs (/own) ------------------------------------------------
-// ONE ROW PER (user, format): Telegram sets are single-format, so a user keeps
-// an independent static pack and video pack (and animated, where supported).
-// The row is claimed before the Telegram call, so concurrent first /own
-// requests for the same format cannot create two sets.
+// The LIVE table, kept in its pre-existing shape on purpose. Its column
+// `telegram_id INTEGER PRIMARY KEY` can only hold one pack per user, and SQLite
+// cannot ALTER a column — redeclaring it as NOT NULL makes the platform demand a
+// destructive "change column" migration, which blocks deployment.
+//
+// So it is left byte-for-byte as deployed and new packs go to
+// `sticker_pack_sets` below. Adding a table is applied automatically by
+// `npx tgcloud migrate`; changing a key is not.
+export const quoteStickerPacks = table('quote_sticker_packs', {
+  telegramId: integer('telegram_id').primaryKey(),
+  setName: text('set_name').notNull(),
+  title: text('title').notNull(),
+  stickerCount: integer('sticker_count').notNull().default(0),
+  status: text('status').notNull().default('creating'),
+  stickerFormat: text('sticker_format').notNull().default('static'),
+  lastError: text('last_error'),
+  createdAt: integer('created_at').notNull().default(0),
+  updatedAt: integer('updated_at').notNull().default(0),
+}, (t) => ({
+  nameUnique: uniqueIndex('uidx_quote_pack_name').on(t.setName),
+}));
+
+// One personal pack per (user, format): Telegram sets are single-format, so a
+// user keeps an independent static pack AND a video pack (and animated where
+// supported). Rows are claimed before the Telegram call, so concurrent first
+// /own requests for the same format cannot create two sets.
+//
+// Additive table: safe to migrate, no column changes, no data loss.
 // status: creating | ready | full
 // sticker_format: static | animated | video
-export const quoteStickerPacks = table('quote_sticker_packs', {
+export const stickerPackSets = table('sticker_pack_sets', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
   telegramId: integer('telegram_id').notNull(),
   stickerFormat: text('sticker_format').notNull().default('static'),
   setName: text('set_name').notNull(),
@@ -629,9 +654,7 @@ export const quoteStickerPacks = table('quote_sticker_packs', {
   createdAt: integer('created_at').notNull().default(0),
   updatedAt: integer('updated_at').notNull().default(0),
 }, (t) => ({
-  // One row per (user, format). A table-level unique index — the same mechanism
-  // `daily_missions` uses — is the SQLite conflict target for
-  // `ON CONFLICT(telegram_id, sticker_format)` in quote/packs.js.
-  owner: uniqueIndex('uidx_quote_pack_owner').on(t.telegramId, t.stickerFormat),
-  nameUnique: uniqueIndex('uidx_quote_pack_name').on(t.setName),
+  // Conflict target for ON CONFLICT(telegram_id, sticker_format).
+  owner: uniqueIndex('uidx_sticker_pack_owner').on(t.telegramId, t.stickerFormat),
+  nameUnique: uniqueIndex('uidx_sticker_pack_name').on(t.setName),
 }));

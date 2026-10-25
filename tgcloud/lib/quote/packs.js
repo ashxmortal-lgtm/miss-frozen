@@ -96,7 +96,7 @@ export async function getPackRow(userId, format = 'static') {
   try {
     return await db.get(sql`
       SELECT telegram_id, set_name, title, sticker_count, status, sticker_format
-      FROM quote_sticker_packs
+      FROM sticker_pack_sets
       WHERE telegram_id = ${userId} AND sticker_format = ${format}
     `);
   } catch (error) {
@@ -111,7 +111,7 @@ export async function listPackRows(userId) {
   try {
     return await db.all(sql`
       SELECT telegram_id, set_name, title, sticker_count, status, sticker_format
-      FROM quote_sticker_packs WHERE telegram_id = ${userId}
+      FROM sticker_pack_sets WHERE telegram_id = ${userId}
     `);
   } catch (error) {
     console.error('[sticker pack] list failed', error?.message || error);
@@ -127,7 +127,7 @@ export async function claimPack(userId, format, name, title) {
   await ensureQuotePackSchema();
   const now = Math.floor(Date.now() / 1000);
   const inserted = await db.run(sql`
-    INSERT INTO quote_sticker_packs
+    INSERT INTO sticker_pack_sets
       (telegram_id, sticker_format, set_name, title, sticker_count, status, created_at, updated_at)
     VALUES (${userId}, ${format}, ${name}, ${title}, 0, 'creating', ${now}, ${now})
     ON CONFLICT(telegram_id, sticker_format) DO NOTHING
@@ -141,7 +141,7 @@ export async function markPack(userId, format, status, extra = {}) {
   const count = Number(extra.count) || 0;
   const now = Math.floor(Date.now() / 1000);
   await db.run(sql`
-    UPDATE quote_sticker_packs
+    UPDATE sticker_pack_sets
     SET status = ${status},
         sticker_count = ${count},
         last_error = ${extra.error || null},
@@ -154,7 +154,7 @@ export async function markPack(userId, format, status, extra = {}) {
 export async function releasePackClaim(userId, format) {
   await ensureQuotePackSchema();
   await db.run(sql`
-    DELETE FROM quote_sticker_packs
+    DELETE FROM sticker_pack_sets
     WHERE telegram_id = ${userId} AND sticker_format = ${format}
       AND status = 'creating' AND sticker_count = 0
   `);

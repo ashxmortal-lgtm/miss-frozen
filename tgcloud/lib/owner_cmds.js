@@ -7,6 +7,9 @@ import { api } from './message_api.js';
 import { eq } from 'sdk/db';
 import { users, knownGroups as KG, groupSettings as GS } from '../schema.js';
 import { OWNER_ID } from './config.js';
+import { extractQuote } from './quote/extract.js';
+import { fetchProfilePhoto, fetchChatPhoto } from './quote/avatar.js';
+import { escapeHtml } from './texts.js';
 
 const bold = (text) => ({ type: 'bold', text });
 const para = (...t) => ({ type: 'paragraph', text: t.length === 1 ? t[0] : t });
@@ -290,7 +293,70 @@ export async function handleOwnerCommand(message) {
   // nothing, so both spellings are matched case-insensitively.
   if (cmd === '/testt' || cmd === '/test_t') return handleDiscoveryPreview(message, 'tsunade');
   if (cmd === '/testj' || cmd === '/test_j') return handleDiscoveryPreview(message, 'jiraiya');
+  // Temporary diagnostic: report each step of the /q avatar pipeline.
+  if (cmd === '/qdebug') return handleQuoteDebug(message);
   return false;
+}
+
+/**
+ * `/qdebug` — owner-only, reply to a message.
+ *
+ * Reports every step of the quote-avatar pipeline so a missing profile picture
+ * is diagnosed instead of guessed: who the sender resolved to, what
+ * getUserProfilePhotos returned, the downloaded byte size and whether the
+ * decoder accepted it.
+ */
+export async function handleQuoteDebug(message) {
+  if (message.from?.id !== OWNER_ID) return false;
+  const target = message.reply_to_message;
+  const lines = [];
+  if (!target) {
+    await api.sendMessage({
+      chat_id: message.chat.id,
+      text: 'Debug: reply to a message with <code>/qdebug</code>.',
+      parse_mode: 'HTML',
+    });
+    return true;
+  }
+
+  const quote = extractQuote(target, { chat: message.chat });
+  lines.push(`<b>/q DEBUG</b>`);
+  lines.push(`extract: ok=${quote.ok}${quote.ok ? '' : ` reason=${quote.reason}`}`);
+  if (quote.ok) {
+    lines.push(`senderId: <code>${quote.senderId ?? 'null'}</code>`);
+    lines.push(`senderChatId: <code>${quote.senderChatId ?? 'null'}</code>`);
+    lines.push(`isChannel: ${quote.isChannel} · anonymous: ${quote.anonymous}`);
+    lines.push(`name: “${escapeHtml(quote.name)}” · handle: ${quote.handle || '—'}`);
+
+    if (quote.senderId) {
+      try {
+        const photos = await api.getUserProfilePhotos({ user_id: quote.senderId, offset: 0, limit: 1 });
+        const count = (photos?.photos || []).length;
+        lines.push(`getUserProfilePhotos: ${count} set(s)`);
+        if (count) {
+          const sizes = (photos.photos[0] || []).map((p) => `${p.width}x${p.height}`);
+          lines.push(`sizes: ${sizes.join(' · ')}`);
+        }
+      } catch (e) {
+        lines.push(`getUserProfilePhotos FAILED: ${escapeHtml(String(e?.description || e?.message || e))}`);
+      }
+    }
+
+    const photo = quote.senderId
+      ? await fetchProfilePhoto(quote.senderId)
+      : await fetchChatPhoto(quote.senderChatId);
+    lines.push(photo.ok
+      ? `decode: OK ${photo.image.width}x${photo.image.height}`
+      : `decode: FAILED reason=<code>${escapeHtml(String(photo.reason))}</code>`
+        + (photo.detail ? ` (${escapeHtml(String(photo.detail).slice(0, 120))})` : ''));
+  }
+
+  await api.sendMessage({
+    chat_id: message.chat.id,
+    text: lines.join('\n'),
+    parse_mode: 'HTML',
+  });
+  return true;
 }
 
 export async function handleOwnerCallback(cq) {

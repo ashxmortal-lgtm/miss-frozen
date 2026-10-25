@@ -53,19 +53,50 @@ test('schema.js imports every sdk/db helper it calls', () => {
     `these helpers are called in constraints but not imported from 'sdk/db': ${[...missing].join(', ')}`);
 });
 
+test('the DEPLOYED pack table shape is never changed again', () => {
+  const schema = read('tgcloud/schema.js');
+  const block = schema.slice(
+    schema.indexOf("export const quoteStickerPacks = table("),
+    schema.indexOf('}));', schema.indexOf("export const quoteStickerPacks = table(")) + 4,
+  );
+  // This table exists in production. SQLite cannot ALTER a column, so any
+  // change here makes the platform demand a destructive "change column"
+  // migration — which is exactly what blocked the deploy.
+  assert.match(block, /telegramId: integer\('telegram_id'\)\.primaryKey\(\)/,
+    'telegram_id stays INTEGER PRIMARY KEY — changing it blocks deploys');
+  assert.doesNotMatch(block, /notNull\(\),?\s*\n\s*stickerFormat/,
+    'telegram_id must not be redeclared as plain NOT NULL');
+  // New packs go to the additive table instead.
+  assert.match(schema, /export const stickerPackSets = table\('sticker_pack_sets'/);
+  assert.match(schema, /uniqueIndex\('uidx_sticker_pack_owner'\)\.on\(t\.telegramId, t\.stickerFormat\)/);
+});
+
+test('only ADDITIVE migrations are introduced (no column changes)', () => {
+  const schema = read('tgcloud/schema.js');
+  // `deprecated()` triggers a destructive drop prompt; none should be pending
+  // for the sticker tables.
+  const packBlock = schema.slice(schema.indexOf("table('quote_sticker_packs'"));
+  const endOfPacks = packBlock.indexOf("table('sticker_pack_sets'");
+  assert.doesNotMatch(packBlock.slice(0, endOfPacks > 0 ? endOfPacks : 2000), /\.deprecated\(/,
+    'no deprecated() columns on the deployed pack table');
+});
+
 test('the quote pack table matches the DDL used by the lazy schema setup', () => {
   const schema = read('tgcloud/schema.js');
   const lazy = read('tgcloud/lib/quote/schema.js');
 
   // The platform declaration must expose one row per (user, format) through a
   // table-level unique index — NOT a variadic primaryKey() call.
-  const block = schema.slice(
-    schema.indexOf("export const quoteStickerPacks = table("),
-    schema.indexOf('}));', schema.indexOf("export const quoteStickerPacks = table(")) + 4,
+  const setBlock = schema.slice(
+    schema.indexOf("export const stickerPackSets = table("),
+    schema.indexOf('}));', schema.indexOf("export const stickerPackSets = table(")) + 4,
   );
-  assert.match(block, /uniqueIndex\('uidx_quote_pack_owner'\)\.on\(t\.telegramId, t\.stickerFormat\)/,
+  assert.match(setBlock, /uniqueIndex\('uidx_sticker_pack_owner'\)\.on\(t\.telegramId, t\.stickerFormat\)/,
     'owner uniqueness comes from a unique index');
-  assert.doesNotMatch(block, /primaryKey\s*\(/, 'no primaryKey helper in the constraint block');
+  // A bare `primaryKey(...)` helper call is the bug that broke the deploy.
+  // `integer('id').primaryKey({...})` is the column method and is fine.
+  assert.doesNotMatch(setBlock, /(^|[^.\w])primaryKey\s*\(/m,
+    'no variadic primaryKey() helper');
 
   // Same columns, same index names on both sides.
   for (const column of ['telegram_id', 'sticker_format', 'set_name', 'title',
@@ -73,8 +104,10 @@ test('the quote pack table matches the DDL used by the lazy schema setup', () =>
     assert.ok(schema.includes(`'${column}'`), `schema.js declares ${column}`);
     assert.ok(lazy.includes(column), `lazy DDL declares ${column}`);
   }
-  assert.ok(lazy.includes('uidx_quote_pack_owner'), 'lazy setup creates the owner index');
-  assert.ok(lazy.includes('uidx_quote_pack_name'), 'lazy setup creates the name index');
+  assert.ok(lazy.includes('uidx_sticker_pack_owner'), 'lazy setup creates the owner index');
+  assert.ok(lazy.includes('uidx_sticker_pack_name'), 'lazy setup creates the name index');
+  assert.match(lazy, /sticker_pack_sets/, 'lazy setup targets the new table');
+  assert.match(lazy, /quote_sticker_packs/, 'lazy setup still knows the legacy table for adoption');
 });
 
 test('the conflict target matches a real unique index', () => {
@@ -84,6 +117,6 @@ test('the conflict target matches a real unique index', () => {
   // The target must be backed by the unique index declared above, or SQLite
   // rejects the statement at runtime.
   assert.match(read('tgcloud/lib/quote/schema.js'),
-    /uidx_quote_pack_owner[^\n]*\n?[^\n]*telegram_id, sticker_format|telegram_id, sticker_format\)/,
+    /uidx_sticker_pack_owner[^\n]*\n?[^\n]*telegram_id, sticker_format|telegram_id, sticker_format\)/,
     'the owner index covers (telegram_id, sticker_format)');
 });

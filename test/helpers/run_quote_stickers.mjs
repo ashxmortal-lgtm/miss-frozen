@@ -23,7 +23,8 @@ import {
 
 void _unused;
 
-await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS quote_sticker_packs (
+await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS sticker_pack_sets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   telegram_id INTEGER NOT NULL,
   sticker_format TEXT NOT NULL DEFAULT 'static',
   set_name TEXT NOT NULL,
@@ -32,10 +33,9 @@ await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS quote_sticker_packs (
   status TEXT NOT NULL DEFAULT 'creating',
   last_error TEXT,
   created_at INTEGER NOT NULL DEFAULT 0,
-  updated_at INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (telegram_id, sticker_format)
+  updated_at INTEGER NOT NULL DEFAULT 0
 )`));
-await db.run(sql.raw('CREATE UNIQUE INDEX IF NOT EXISTS uidx_quote_pack_name ON quote_sticker_packs (set_name)'));
+await db.run(sql.raw('CREATE UNIQUE INDEX IF NOT EXISTS uidx_sticker_pack_name ON sticker_pack_sets (set_name)'));
 
 // ---- fixtures -------------------------------------------------------------
 
@@ -155,7 +155,7 @@ const reset = async () => {
   fileBytes = null;
   nextCreateError = null;
   nextAddError = null;
-  await db.run(sql.raw('DELETE FROM quote_sticker_packs'));
+  await db.run(sql.raw('DELETE FROM sticker_pack_sets'));
 };
 
 const user = (id = 42, extra = {}) => ({
@@ -352,7 +352,7 @@ assert.equal(created.stickers[0].format, 'static');
 assert.equal(created.stickers[0].emoji_list[0], '🍥');
 assert.equal(calls.stickers.length, 0, 'no PNG is generated for /own');
 
-const row = await db.get(sql`SELECT * FROM quote_sticker_packs WHERE telegram_id = 42`);
+const row = await db.get(sql`SELECT * FROM sticker_pack_sets WHERE telegram_id = 42`);
 assert.equal(row.status, 'ready');
 assert.equal(row.sticker_count, 1);
 assert.equal(row.sticker_format, 'static');
@@ -372,7 +372,7 @@ assert.match(lastMessage(), /saved/i);
 assert.equal(await handleQuoteCommand(commandMessage({ text: '/own', reply: stickerReply() })), true);
 assert.equal(calls.adds.length, 1, 'the duplicate is not uploaded again');
 assert.match(lastMessage(), /already in your pack/i);
-const rowDup = await db.get(sql`SELECT * FROM quote_sticker_packs WHERE telegram_id = 42`);
+const rowDup = await db.get(sql`SELECT * FROM sticker_pack_sets WHERE telegram_id = 42`);
 assert.equal(rowDup.sticker_count, 2);
 
 // ---- 11. separate users get separate packs ---------------------------
@@ -405,7 +405,7 @@ assert.equal(await handleQuoteCommand(commandMessage({
 })), true);
 assert.equal(calls.creates[0].sticker_format, 'animated');
 assert.equal(calls.creates[0].stickers[0].format, 'animated');
-const animRow = await db.get(sql`SELECT * FROM quote_sticker_packs WHERE telegram_id = 42 AND sticker_format = 'animated'`);
+const animRow = await db.get(sql`SELECT * FROM sticker_pack_sets WHERE telegram_id = 42 AND sticker_format = 'animated'`);
 assert.equal(animRow.sticker_format, 'animated');
 assert.match(animRow.set_name, /_animated_/);
 
@@ -429,7 +429,7 @@ assert.match(calls.creates[1].name, /^frozen_video_42_by_missfrozen_bot$/);
 assert.match(lastMessage(), /video sticker pack created/i);
 
 const bothRows = await db.all(sql`
-  SELECT sticker_format, set_name, sticker_count FROM quote_sticker_packs
+  SELECT sticker_format, set_name, sticker_count FROM sticker_pack_sets
   WHERE telegram_id = 42 ORDER BY sticker_format
 `);
 assert.equal(bothRows.length, 2, 'one row per format');
@@ -470,7 +470,7 @@ const results = await Promise.all([
   ownSticker({ userId: 555, displayName: 'Race', botUsername: 'missfrozen_bot', sticker: racer }),
   ownSticker({ userId: 555, displayName: 'Race', botUsername: 'missfrozen_bot', sticker: racer }),
 ]);
-const raceRows = await db.all(sql`SELECT * FROM quote_sticker_packs WHERE telegram_id = 555`);
+const raceRows = await db.all(sql`SELECT * FROM sticker_pack_sets WHERE telegram_id = 555`);
 assert.equal(raceRows.length, 1, 'a single row per user');
 assert.equal(calls.creates.length, 1, 'exactly one createNewStickerSet');
 assert.ok(results.some((r) => r.ok), 'at least one invocation succeeds');
@@ -485,7 +485,7 @@ const timedOut = await ownSticker({
 });
 assert.equal(timedOut.ok, false, 'an ambiguous create is not reported as success');
 assert.equal(timedOut.code, 'unclear');
-const released = await db.get(sql`SELECT * FROM quote_sticker_packs WHERE telegram_id = 666`);
+const released = await db.get(sql`SELECT * FROM sticker_pack_sets WHERE telegram_id = 666`);
 assert.equal(released, null, 'the claim is released so a retry can start over');
 
 // Timeout where the set *was* created remotely.
@@ -527,7 +527,7 @@ const fullSet = calls.sets[buildPackName(888, 'missfrozen_bot')];
 for (let i = 0; i < MAX_STATIC_STICKERS - 1; i += 1) {
   fullSet.stickers.push({ file_id: `F${i + 1}`, file_unique_id: `uniq-F${i + 1}` });
 }
-await db.run(sql`UPDATE quote_sticker_packs SET sticker_count = ${MAX_STATIC_STICKERS} WHERE telegram_id = 888`);
+await db.run(sql`UPDATE sticker_pack_sets SET sticker_count = ${MAX_STATIC_STICKERS} WHERE telegram_id = 888`);
 const full = await ownSticker({
   userId: 888, displayName: 'Full', botUsername: 'missfrozen_bot',
   sticker: { file_id: 'OVER', file_unique_id: 'over', type: 'regular' },
@@ -759,13 +759,14 @@ assert.match(help, /\/q — /);
 assert.match(help, /\/own — /);
 
 // ---- 22. no message content is persisted ---------------------------
-const columns = await db.all(sql.raw('PRAGMA table_info(quote_sticker_packs)'));
+const columns = await db.all(sql.raw('PRAGMA table_info(sticker_pack_sets)'));
 const columnNames = columns.map((c) => c.name);
 for (const forbidden of ['text', 'quote_text', 'caption', 'message', 'avatar']) {
   assert.ok(!columnNames.includes(forbidden), `no ${forbidden} column`);
 }
 assert.deepEqual(columnNames.sort(),
-  ['created_at', 'last_error', 'set_name', 'status', 'sticker_count', 'sticker_format', 'telegram_id', 'title', 'updated_at']);
+  ['created_at', 'id', 'last_error', 'set_name', 'status', 'sticker_count',
+    'sticker_format', 'telegram_id', 'title', 'updated_at']);
 
 void decodeJpeg;
 console.log('quote stickers: OK');
