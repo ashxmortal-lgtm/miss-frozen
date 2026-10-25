@@ -7,6 +7,5 @@
  */
 import { part1 } from './source_snapshot_1.js';
 import { part2 } from './source_snapshot_2.js';
-import { part3 } from './source_snapshot_3.js';
 
-export const SOURCE_SNAPSHOT = [...part1, ...part2, ...part3];
+export const SOURCE_SNAPSHOT = [...part1, ...part2];

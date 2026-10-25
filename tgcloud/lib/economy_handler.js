@@ -531,12 +531,18 @@ async function handleTransfer(message, text) {
     return;
   }
   const amount = Number(amountRaw);
-  const bal = await getBalance(user.id);
-  if (bal < amount) {
+  // Debit atomically: the balance check and the deduction must be one
+  // statement, otherwise two concurrent transfers both pass the read-only
+  // check and mint coins (sender pays once, receiver is credited twice).
+  const paid = await db.run(sql`
+    UPDATE users SET balance = balance - ${amount}
+    WHERE telegram_id = ${user.id} AND balance >= ${amount}
+  `);
+  if (!paid?.rowsAffected) {
+    const bal = await getBalance(user.id);
     await reply(message, `Not enough coins. You have ${fmt(bal)} 🍥.`);
     return;
   }
-  await adjustBalance(user.id, -amount);
   await adjustBalance(replied.id, amount);
   const grpName = groupChatLink(chat, message.message_id);
   await reply(message, `✅ Transferred ${fmt(amount)} 🍥 to ${mentionFn(replied)}.`);
