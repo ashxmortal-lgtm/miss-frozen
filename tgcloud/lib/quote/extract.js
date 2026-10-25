@@ -15,6 +15,18 @@ export const MAX_QUOTE_CHARS = 900;
 /** Telegram caps a sticker's author name/username display reasonably. */
 const MAX_NAME = 40;
 
+/** Telegram timestamps are unix seconds; the sticker shows a short local time. */
+export function formatMessageTime(date) {
+  const seconds = Number(date);
+  if (!Number.isFinite(seconds) || seconds <= 0) return '';
+  const iso = new Date(seconds * 1000).toISOString(); // UTC, isolate-safe
+  const hours = Number(iso.slice(11, 13));
+  const minutes = iso.slice(14, 16);
+  const suffix = hours >= 12 ? 'PM' : 'AM';
+  const hour12 = hours % 12 === 0 ? 12 : hours % 12;
+  return `${hour12}:${minutes} ${suffix}`;
+}
+
 const MEDIA_LABELS = {
   photo: 'Photo',
   video: 'Video',
@@ -118,6 +130,7 @@ export function extractQuote(message) {
     text: body,
     name: name.slice(0, MAX_NAME),
     handle: handle.slice(0, MAX_NAME),
+    time: formatMessageTime(message.date),
     kind,
     hasMedia: Boolean(mediaKind),
     mediaKind,
@@ -135,6 +148,7 @@ export function quoteSourceOf(message) {
   return {
     message_id: target.message_id,
     from: target.from,
+    date: target.date,
     text: target.text,
     entities: target.entities,
     caption: target.caption,

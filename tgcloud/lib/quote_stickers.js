@@ -1,15 +1,14 @@
 /**
- * `/q` and `/own` — Classic QuotLy-style quote stickers.
+ * `/q` and `/own`.
  *
- *   /q     reply to a message → render a 512×512 PNG quote and send it here.
- *   /own   the same, then save it to the caller's personal sticker pack
- *          (created on first use, reused afterwards) and return the pack link.
+ *   /q    reply to a message → a Classic QuotLy-style sticker: the author's
+ *         profile photo, their display name, and the quoted text inside a dark
+ *         rounded bubble with a transparent background. Sent to this chat only;
+ *         never creates a pack.
+ *   /own  reply to a *sticker* → save that sticker, unchanged, into the caller's
+ *         personal sticker pack (created on first use, reused afterwards).
  *
- * Pipeline: extract (quote/extract.js) → render (quote/render.js, pure JS) →
- * send or upload (quote/packs.js). The isolate has no canvas, no npm packages
- * and no `node:zlib`, which is why the renderer and PNG encoder are hand-written.
- *
- * Nothing about the quoted message is persisted: only the pack metadata.
+ * Both commands only ever look at the replied-to message, never at the command.
  */
 
 import { api, InputFile } from 'sdk';
@@ -18,12 +17,13 @@ import { escapeHtml } from './texts.js';
 import { replyParametersFor } from './reply_target.js';
 import { extractQuote, quoteSourceOf } from './quote/extract.js';
 import { renderQuotePng } from './quote/render.js';
-import { ownQuote, MAX_STATIC_STICKERS } from './quote/packs.js';
+import { fetchProfilePhoto } from './quote/avatar.js';
+import { formatOfSticker, ownSticker, STICKER_LIMITS } from './quote/packs.js';
 
 export const QUOTE_COMMANDS = new Set(['q', 'own']);
 
 /**
- * Parse `/q`, `/q@missfrozen_bot`, `/own foo`.
+ * Parse `/q`, `/q@missfrozen_bot`, `/own`.
  * Returns { command, atBot } or null for any other text.
  */
 export function parseQuoteCommand(text) {
@@ -44,17 +44,28 @@ export function addressedToUs(atBot) {
 
 const MESSAGES = {
   reply_required: '↩️ Reply to a message with <code>/q</code> to quote it.',
-  own_reply_required: '↩️ Reply to a message with <code>/own</code> to save it to your pack.',
+  own_reply_required: '↩️ Reply to a <b>sticker</b> with <code>/own</code> to save it to your pack.',
+  not_sticker: '↩️ <code>/own</code> only saves stickers. Reply to a sticker with <code>/own</code>.',
   no_author: '🚫 That message has no author to quote.',
   nothing_to_quote: '🚫 That message has nothing to quote — it needs text or a caption.',
   render: '⚠️ Could not build that quote sticker. Try a shorter message.',
-  full: `📦 Your pack is full (${MAX_STATIC_STICKERS} stickers). Remove one in Telegram to add another.`,
+  full: '📦 Your sticker pack is full. Remove a sticker in Telegram to add another.',
+  full_static: `📦 Your sticker pack is full (${STICKER_LIMITS.static} stickers). Remove one in Telegram to add another.`,
+  full_animated: `📦 Your animated sticker pack is full (${STICKER_LIMITS.animated} stickers). Remove one in Telegram to add another.`,
+  full_video: `📦 Your video sticker pack is full (${STICKER_LIMITS.video} stickers). Remove one in Telegram to add another.`,
   pending: '⏳ Your pack is still being created — try again in a moment.',
   unclear: '⚠️ Telegram did not confirm the upload. Check your pack before retrying.',
-  api: '⚠️ Telegram refused the upload. Try again later.',
-  bad_file: '⚠️ Telegram rejected the sticker image.',
+  api: '⚠️ Telegram refused the request. Try again later.',
+  bad_file: '⚠️ Telegram rejected that sticker.',
   invalid_name: '⚠️ That pack name is not valid for this bot.',
   bad_bot_username: '⚠️ Sticker packs are not configured for this bot.',
+  format: '⚠️ Telegram rejected that sticker format for your pack.',
+  format_mismatch: '⚠️ Your pack holds a different sticker format. Telegram packs are single-format: '
+    + 'a pack created with a static sticker cannot take an animated or video one. '
+    + 'This sticker was not saved.',
+  unsupported_mask: '🚫 Mask stickers cannot be saved to a personal pack.',
+  unsupported_custom_emoji: '🚫 Custom emoji cannot be saved to a personal pack.',
+  not_sticker_format: '↩️ <code>/own</code> only saves regular stickers.',
 };
 
 async function reply(message, html) {
@@ -70,6 +81,108 @@ async function reply(message, html) {
   }
 }
 
+const usageReply = (message, key) => reply(message, MESSAGES[key] || MESSAGES.reply_required);
+
+/** `/q` — render and send the quote sticker (never creates a pack). */
+async function handleQuote(message) {
+  const source = quoteSourceOf(message);
+  const quote = extractQuote(source);
+  if (!quote.ok) {
+    await usageReply(message, quote.reason === 'reply_required' ? 'reply_required' : quote.reason);
+    return true;
+  }
+
+  // The avatar belongs to the author of the *replied-to* message.
+  const photo = await fetchProfilePhoto(source?.from?.id);
+  const avatar = photo.ok ? photo.image : null;
+
+  let rendered;
+  try {
+    rendered = renderQuotePng({
+      text: quote.text,
+      name: quote.name,
+      time: quote.time,
+      userId: source?.from?.id,
+      avatar,
+      kind: quote.kind,
+    });
+  } catch (e) {
+    console.error('[quote render]', e?.message || e);
+    await reply(message, MESSAGES.render);
+    return true;
+  }
+
+  try {
+    await api.sendSticker({
+      chat_id: message.chat.id,
+      sticker: new InputFile(rendered.bytes, 'quote.png', { type: 'image/png' }),
+    });
+  } catch (e) {
+    console.error('[quote send sticker]', e?.description || e?.message || e);
+    await reply(message, MESSAGES.api);
+  }
+  return true;
+}
+
+/** `/own` — copy the replied sticker into the caller's personal pack. */
+async function handleOwn(message) {
+  const target = message.reply_to_message;
+  if (!target) {
+    await usageReply(message, 'own_reply_required');
+    return true;
+  }
+
+  const sticker = target.sticker;
+  if (!sticker) {
+    await usageReply(message, 'not_sticker');
+    return true;
+  }
+
+  const format = formatOfSticker(sticker);
+  if (!format.ok) {
+    await usageReply(message, MESSAGES[format.reason] ? format.reason : 'not_sticker_format');
+    return true;
+  }
+
+  let result;
+  try {
+    result = await ownSticker({
+      userId: message.from.id,
+      displayName: message.from.first_name || message.from.username,
+      botUsername: BOT_USERNAME,
+      sticker,
+    });
+  } catch (e) {
+    console.error('[sticker own]', e?.description || e?.message || e);
+    await reply(message, MESSAGES.api);
+    return true;
+  }
+
+  if (!result.ok) {
+    let text = MESSAGES[result.code] || MESSAGES.api;
+    if (result.code === 'full') {
+      text = MESSAGES[`full_${result.setFormat || 'static'}`] || MESSAGES.full;
+    }
+    const suffix = result.url ? `\n\n🔗 ${escapeHtml(result.url)}` : '';
+    await reply(message, text + suffix);
+    return true;
+  }
+
+  let headline;
+  if (result.duplicate) headline = '📦 <b>ALREADY IN YOUR PACK</b>';
+  else if (result.created) headline = '📦 <b>STICKER PACK CREATED</b>';
+  else headline = '✅ <b>SAVED TO YOUR PACK</b>';
+
+  const detail = result.duplicate
+    ? `That sticker is already saved (${result.count} in your pack).`
+    : `Stickers in your pack: ${result.count}.`;
+  await reply(message, [
+    headline, '', detail, '',
+    `🔗 <a href="${escapeHtml(result.url)}">Open your sticker pack</a>`,
+  ].join('\n'));
+  return true;
+}
+
 /**
  * Handle `/q` or `/own`. Returns true when the update was consumed.
  * Text is only ever sent as escaped HTML; quoted content never becomes markup.
@@ -78,70 +191,12 @@ export async function handleQuoteCommand(message, parsed = null) {
   const command = parsed || parseQuoteCommand(message?.text);
   if (!command) return false;
   if (!addressedToUs(command.atBot)) return false;
-  const isOwn = command.command === 'own';
+  if (!message.from || message.from.is_bot) return false;
 
   if (!message.reply_to_message) {
-    await reply(message, isOwn ? MESSAGES.own_reply_required : MESSAGES.reply_required);
+    await usageReply(message, command.command === 'own' ? 'own_reply_required' : 'reply_required');
     return true;
   }
 
-  const quote = extractQuote(quoteSourceOf(message));
-  if (!quote.ok) {
-    const key = quote.reason === 'reply_required'
-      ? (isOwn ? 'own_reply_required' : 'reply_required')
-      : quote.reason;
-    await reply(message, MESSAGES[key] || MESSAGES.nothing_to_quote);
-    return true;
-  }
-
-  let rendered;
-  try {
-    rendered = renderQuotePng({ text: quote.text, name: quote.name, handle: quote.handle, kind: quote.kind });
-  } catch (e) {
-    console.error('[quote render]', e?.message || e);
-    await reply(message, MESSAGES.render);
-    return true;
-  }
-
-  if (!isOwn) {
-    try {
-      await api.sendSticker({
-        chat_id: message.chat.id,
-        sticker: new InputFile(rendered.bytes, 'quote.png', { type: 'image/png' }),
-      });
-    } catch (e) {
-      console.error('[quote send sticker]', e?.description || e?.message || e);
-      await reply(message, MESSAGES.api);
-    }
-    return true;
-  }
-
-  // /own — create or reuse the caller's pack, then report the link.
-  let result;
-  try {
-    result = await ownQuote({
-      userId: message.from.id,
-      displayName: message.from.first_name || message.from.username,
-      botUsername: BOT_USERNAME,
-      pngBytes: rendered.bytes,
-    });
-  } catch (e) {
-    console.error('[quote own]', e?.description || e?.message || e);
-    await reply(message, MESSAGES.api);
-    return true;
-  }
-
-  if (!result.ok) {
-    const text = MESSAGES[result.code] || MESSAGES.api;
-    const suffix = result.url ? `\n\n🔗 ${escapeHtml(result.url)}` : '';
-    await reply(message, text + suffix);
-    return true;
-  }
-
-  const lines = result.created
-    ? ['📦 <b>STICKER PACK CREATED</b>', '', `Your quote was saved to a new pack (${result.count} sticker).`]
-    : ['✅ <b>SAVED TO YOUR PACK</b>', '', `Stickers in your pack: ${result.count}.`];
-  lines.push('', `🔗 <a href="${escapeHtml(result.url)}">Open your quote pack</a>`);
-  await reply(message, lines.join('\n'));
-  return true;
+  return command.command === 'own' ? handleOwn(message) : handleQuote(message);
 }

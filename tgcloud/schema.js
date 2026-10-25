@@ -615,12 +615,14 @@ export const dailyMissions = table('daily_missions', {
 // One personal pack per user. The row is claimed before the Telegram call so
 // concurrent /own requests cannot create two sets (unique telegram_id).
 // status: creating | ready | full
+// sticker_format: static | animated | video — a Telegram set holds one format.
 export const quoteStickerPacks = table('quote_sticker_packs', {
   telegramId: integer('telegram_id').primaryKey(),
   setName: text('set_name').notNull(),
   title: text('title').notNull(),
   stickerCount: integer('sticker_count').notNull().default(0),
   status: text('status').notNull().default('creating'),
+  stickerFormat: text('sticker_format').notNull().default('static'),
   lastError: text('last_error'),
   createdAt: integer('created_at').notNull().default(0),
   updatedAt: integer('updated_at').notNull().default(0),
