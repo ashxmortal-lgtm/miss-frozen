@@ -17,7 +17,8 @@ import { render, style, escapeHtml, mention } from '../texts.js';
 import { send } from '../chat.js';
 import { getMapPhotoFileId } from '../map/media.js';
 import { todayKey } from '../economy.js';
-import { dueText, istDateTime, inRemaining } from './time.js';
+import { dueText, istDateTime, istHm, isToday, inRemaining } from './time.js';
+import { P, quote } from '../rich.js';
 import {
   ensureShinobiState,
 } from './state.js';
@@ -46,6 +47,53 @@ async function chakraQty(telegramId) {
   return r ? r.qty : 0;
 }
 
+// Bold (math-sans) digits: the requested card prints every time in bold.
+const BOLD_DIGITS = ['𝟎', '𝟏', '𝟐', '𝟑', '𝟒', '𝟓', '𝟔', '𝟕', '𝟖', '𝟗'];
+const boldDigits = (text) => String(text).replace(/\d/g, (d) => BOLD_DIGITS[Number(d)]);
+
+const SEARCH_PROGRESS_HEADING = '🔎 𝐒𝐄𝐀𝐑𝐂𝐇 𝐈𝐍 𝐏𝐑𝐎𝐆𝐑𝐄𝐒𝐒';
+
+/** "2h 26m" / "26m" / "45s" — no "in" prefix, the card labels it itself. */
+function searchTimeLeft(endsAt, t) {
+  const total = Math.max(0, Math.floor(endsAt - t));
+  const d = Math.floor(total / 86400);
+  const h = Math.floor((total % 86400) / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`;
+  if (m > 0) return `${m}m`;
+  return `${total % 60}s`;
+}
+
+/**
+ * "SEARCH IN PROGRESS" card — the heading stays outside, the divider and every
+ * line below it are quoted (requested layout):
+ *
+ *   🔎 𝐒𝐄𝐀𝐑𝐂𝐇 𝐈𝐍 𝐏𝐑𝐎𝐆𝐑𝐄𝐒𝐒
+ *   ───────────────
+ *   > 🍥 ɴᴀʀᴜᴛᴏ ᴀɴᴅ 🐸 ᴊɪʀᴀɪʏᴀ ᴀʀᴇ ᴏɴ ᴛʜᴇ ʜᴜɴᴛ ꜰᴏʀ ʟᴀᴅʏ ᴛꜱᴜɴᴀᴅᴇ!
+ *   > ⏳ 𝐂𝐎𝐌𝐏𝐋𝐄𝐓𝐄𝐒 𝐀𝐓 𝟏𝟒:𝟑𝟎 𝐈𝐒𝐓
+ *   > 🕒 ᴛɪᴍᴇ ʟᴇꜰᴛ: 𝟐ʜ 𝟐𝟲ᴍ
+ */
+export function searchProgressContent(row, t = now()) {
+  // "IST" stays in bold uppercase (style() would small-cap plain ASCII).
+  const stamp = isToday(row.endsAt, t)
+    ? istHm(row.endsAt)
+    : istDateTime(row.endsAt).replace(/ IST$/, '');
+  const finish = `${boldDigits(stamp)} 𝐈𝐒𝐓`;
+  const left = boldDigits(searchTimeLeft(row.endsAt, t));
+  const lines = [
+    '🍥 Naruto and 🐸 Jiraiya are on the hunt for Lady Tsunade!',
+    `⏳ 𝐂𝐎𝐌𝐏𝐋𝐄𝐓𝐄𝐒 𝐀𝐓 ${finish}`,
+    `🕒 time left: ${left}`,
+  ];
+  return {
+    blocks: [P(SEARCH_PROGRESS_HEADING), { type: 'divider' }, quote(lines.join('\n'))],
+    // Classic fallback: same words, no rich divider.
+    text: `${SEARCH_PROGRESS_HEADING}\n\n<blockquote>${style(lines.join('\n\n'))}</blockquote>`,
+  };
+}
+
 export async function searchRow(telegramId) {
   return db.get(sql`
     SELECT status, started_at AS startedAt, ends_at AS endsAt, day_key AS dayKey,
@@ -56,7 +104,8 @@ export async function searchRow(telegramId) {
 
 /**
  * /search_tsuna — start a session or check/resolve a finished one.
- * Returns { body } (HTML body; caller prepends nothing — mention included).
+ * Returns an HTML body string, or { blocks, text } for the rich in-progress
+ * card (the caller sends the blocks and keeps `text` as the classic fallback).
  */
 export async function handleSearchTsuna(message) {
   const user = message.from;
@@ -80,9 +129,9 @@ export async function handleSearchTsuna(message) {
     return result;
   }
 
-  // Active session → status report (works in DM and groups).
+  // Active session → the rich status card (works in DM and groups).
   if (row && row.status === 'active') {
-    return `🔎 𝐒𝐄𝐀𝐑𝐂𝐇 𝐈𝐍 𝐏𝐑𝐎𝐆𝐑𝐄𝐒𝐒\n\nNaruto and Jiraiya are searching for Lady Tsunade.\n\n⏳ completes at ${dueText(row.endsAt, t)}\n(search #${row.totalSearches})\n\n❄️ Check back at ${dueText(row.endsAt, t)} — invoke /search_tsuna again after it finishes.`;
+    return searchProgressContent(row, t);
   }
 
   // Starting a new search is group-only
@@ -125,7 +174,7 @@ export async function handleSearchTsuna(message) {
   `);
   if (won.rowsAffected === 0) {
     row = await searchRow(id);
-    return `🔎 𝐒𝐄𝐀𝐑𝐂𝐇 𝐈𝐍 𝐏𝐑𝐎𝐆𝐑𝐄𝐒𝐒\n\n⏳ completes at ${dueText(row.endsAt, t)}`;
+    return searchProgressContent(row, t);
   }
 
   // Charge chakra after the session is claimed (so a duplicate request can

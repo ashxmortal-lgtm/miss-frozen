@@ -185,8 +185,13 @@
   }
 
   function equippedCard(profile) {
-    const list = Array.isArray(profile.equippedList) ? profile.equippedList
-      : (profile.life && profile.life.equipped ? [profile.life.equipped] : []);
+    // Slot order, max 3. The bot sends profile.equippedList; if a payload omits
+    // it (or sends an empty list) fall back to the primary equip in
+    // profile.life.equipped so the slots never render blank over real data.
+    const raw = Array.isArray(profile.equippedList) ? profile.equippedList.filter(Boolean) : [];
+    const list = raw.length
+      ? raw.slice(0, 3)
+      : (profile.life && profile.life.equipped ? [String(profile.life.equipped)] : []);
     const card = element('section', 'card');
     addSectionTitle(card, 'Equipped shinobi', 'users', list.length + ' of 3 slots used');
     const row = element('div', 'slot-row');
@@ -316,5 +321,17 @@
 
   retry.addEventListener('click', loadProfile);
   openTelegramLinks();
+
+  // Equipping happens in the bot, so re-read the record when this page comes
+  // back to the foreground instead of showing the payload it booted with.
+  if (doc && typeof doc.addEventListener === 'function') {
+    doc.addEventListener('visibilitychange', () => {
+      if (doc.visibilityState === 'visible') loadProfile();
+    });
+  }
+  if (tg && typeof tg.onEvent === 'function') {
+    try { tg.onEvent('activated', loadProfile); } catch (_) {}
+  }
+
   loadProfile();
 })();

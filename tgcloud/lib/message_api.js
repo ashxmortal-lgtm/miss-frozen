@@ -134,7 +134,8 @@ function withReplyTarget(method, payload) {
   if (disabled || !REPLY_METHODS.has(method) || 'reply_parameters' in rest) {
     return { payload: rest, injected: false };
   }
-  // Ephemeral /mt messages cannot be replies.
+  // Ephemeral sends (mt.js) carry their own trigger in reply_parameters and
+  // must not inherit the remembered command target.
   if (rest.ephemeral_message_parameters) return { payload: rest, injected: false };
   const reply = replyParametersFor(rest.chat_id);
   return reply ? { payload: { ...rest, reply_parameters: reply }, injected: true } : { payload: rest, injected: false };

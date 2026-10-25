@@ -13,7 +13,7 @@ import {
   SAKURA_COINS, SAKURA_CHAKRA, getBalance, adjustBalance,
 } from './economy.js';
 import { render, style, escapeHtml, COIN, mention as mentionFn } from './texts.js';
-import { SCREENS, screenText, screenKeyboard, findItem, fmt } from './store.js';
+import { SCREENS, screenText, screenKeyboard, findItem, fmt, JUTSU } from './store.js';
 import { handleBuy } from './buy.js';
 import { purchase } from './purchase.js';
 import { ownedSet, getEquipped, setEquipped, equipShinobi, unequipShinobi, getEquippedList } from './rpg/state.js';
@@ -35,7 +35,7 @@ import {
   sweepClones,
 } from '../lib/rpg/combat.js';
 import { handleSearchTsuna } from '../lib/rpg/tsunade.js';
-import { send, sweepMessages, trackUser } from './chat.js';
+import { send, sendRich, sweepMessages, trackUser } from './chat.js';
 import { groupChatLink } from './telegram_links.js';
 import { handlePetCommand } from './pet/ui.js';
 import { PETS } from './pet/defs.js';
@@ -307,11 +307,30 @@ export async function handleEconomyCommand(message, ctx) {
     } else if (cmd === 'byakugan') {
       await handleByakugan(message);
     } else if (cmd === 'search_tsuna') {
-      await send(message.chat.id, {
-        text: style(await handleSearchTsuna(message)),
-        parse_mode: 'HTML',
-        reply_parameters: { message_id: message.message_id },
-      });
+      const out = await handleSearchTsuna(message);
+      const replyTo = { message_id: message.message_id };
+      if (out && typeof out === 'object' && Array.isArray(out.blocks)) {
+        // Heading outside, rich divider, the timer lines quoted.
+        try {
+          await sendRich(message.chat.id, {
+            rich_message: { blocks: out.blocks, skip_entity_detection: false },
+            reply_parameters: replyTo,
+          });
+        } catch (e) {
+          console.error('search rich failed:', e?.description || e);
+          await send(message.chat.id, {
+            text: style(out.text || ''),
+            parse_mode: 'HTML',
+            reply_parameters: replyTo,
+          });
+        }
+      } else {
+        await send(message.chat.id, {
+          text: style(String(out)),
+          parse_mode: 'HTML',
+          reply_parameters: replyTo,
+        });
+      }
     } else if (cmd === 'claim' || cmd === 'daily') {
       await replyClaimPrompt(message, cmd);
     } else if (cmd === 'balance') {
@@ -664,10 +683,31 @@ function abilityExtra(name) {
   return keyboard ? { reply_markup: keyboard } : {};
 }
 
-async function handleEquip(message, text) {
+export async function handleEquip(message, text) {
   const args = text.trim().split(/\s+/).slice(1).join(' ').trim();
   if (!args) {
     await reply(message, 'ᴜsᴀɢᴇ: /equip &lt;pet or shinobi name&gt;\nᴇxᴀᴍᴘʟᴇ: /equip Naruto · /equip Axofly\nꜱʜɪɴᴏʙɪ: ᴍᴀx 3 ᴇǫᴜɪᴘᴘᴇᴅ. ᴄʜᴇᴄᴋ /inventory');
+    return;
+  }
+  // Jutsu are passive: buying one unlocks the skill, nothing is equipped. The
+  // shinobi "you don't own it" card was misleading right after a purchase.
+  const jutsuKey = args.toLowerCase().replace(/\s+/g, ' ').trim();
+  const jutsu = JUTSU.find((j) => {
+    const name = j.name.toLowerCase();
+    // "Mind Transmission Jutsu" also answers to "mind transmission".
+    return name === jutsuKey || name.replace(/\s*jutsu$/, '') === jutsuKey.replace(/\s*jutsu$/, '');
+  });
+  if (jutsu) {
+    let owned = false;
+    try {
+      const row = await db.get(sql`
+        SELECT qty FROM inventory WHERE telegram_id = ${message.from.id} AND item_name = ${jutsu.name}
+      `);
+      owned = !!row && Number(row.qty) > 0;
+    } catch (_) { /* treat as not owned */ }
+    await reply(message, owned
+      ? `🧠 <b>${escapeHtml(jutsu.name)}</b> is already unlocked — jutsu are always active and never equipped.\n\n» In a group, reply to a member with <code>/mt your message</code>.\n\nCheck /inventory`
+      : `🔒 You don't own <b>${escapeHtml(jutsu.name)}</b> yet.\n\n» Unlock it with <code>/buy ${escapeHtml(jutsu.name)}</code>, then reply in a group with <code>/mt your message</code>.`);
     return;
   }
   // Pets and shinobi share /equip; the pet catalogue is checked first.

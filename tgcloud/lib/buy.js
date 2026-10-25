@@ -89,7 +89,8 @@ export async function handleBuy(user, text, updateId) {
     return `✅ 𝐂𝐇𝐀𝐊𝐑𝐀 𝐑𝐄𝐏𝐋𝐄𝐍𝐈𝐒𝐇𝐄𝐃\n\nᴀᴍᴏᴜɴᴛ: chakra x ${fmt(req.qty)} ⚡\n${tail}`;
   }
   if (req.type === 'jutsu') {
-    return `✅ 𝐉𝐔𝐓𝐒𝐔 𝐔𝐍𝐋𝐎𝐂𝐊𝐄𝐃\n\n${req.name} ${req.emoji}\n\n${tail}`;
+    // Jutsu are passive: the unlock is live immediately, nothing is equipped.
+    return `✅ 𝐉𝐔𝐓𝐒𝐔 𝐔𝐍𝐋𝐎𝐂𝐊𝐄𝐃\n\n${req.name} ${req.emoji}\n\n» ʀᴇᴀᴅʏ ᴛᴏ ᴜsᴇ — ɴᴏ /equip ɴᴇᴇᴅᴇᴅ.\n» ɢʀᴏᴜᴘ: ʀᴇᴘʟʏ ᴛᴏ ᴀ ᴍᴇᴍʙᴇʀ ᴡɪᴛʜ /mt [ᴍᴇssᴀɢᴇ]\n\n${tail}`;
   }
   return {
     text: `✅ 𝐏𝐔𝐑𝐂𝐇𝐀𝐒𝐄 𝐒𝐔𝐂𝐂𝐄𝐒𝐒𝐅𝐔𝐋\n\nᴜɴʟᴏᴄᴋᴇᴅ: ${req.name} ${req.emoji}\n\n${tail}`,
