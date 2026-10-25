@@ -15,13 +15,16 @@ const MT_COMMAND = 'mt';
 
 // Per-isolate state. There is no scheduler in the serverless runtime, so every
 // /mt (or the my_chat_member hook) is a chance to verify/repair the menu.
-const state = { verifiedAt: 0, failedAt: 0, botId: 0 };
+// `ephemeralMode` is the payload shape this Bot API build proved it honours.
+const state = { verifiedAt: 0, failedAt: 0, botId: 0, ephemeralMode: null, ephemeralRetryAt: 0 };
 
 /** Test hook: forget the registration/admin cache of this isolate. */
 export function resetMtRegistrationState() {
   state.verifiedAt = 0;
   state.failedAt = 0;
   state.botId = 0;
+  state.ephemeralMode = null;
+  state.ephemeralRetryAt = 0;
 }
 
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -51,6 +54,16 @@ function buildCommandList() {
     const command = { command: name, description: style(String(entry.desc || '').slice(0, 256)) };
     if (name === MT_COMMAND) command.is_ephemeral = true;
     list.push(command);
+  }
+  // /mt must always be registered: the is_ephemeral flag is the ONLY thing that
+  // hides the command and its text from the group, so dropping it from the
+  // registry (or from BotFather) must not silently disable ephemeral delivery.
+  if (!list.some((c) => c.command === MT_COMMAND)) {
+    list.push({
+      command: MT_COMMAND,
+      description: style('Mind Transmission — reply in group (requires jutsu)'),
+      is_ephemeral: true,
+    });
   }
   return list;
 }
@@ -243,24 +256,103 @@ async function botAdminStatus(chatId) {
   }
 }
 
-async function sendEphemeral(chatId, receiverUserId, text, trigger) {
-  // receiver_user_id must be a JSON number (Bot API 10.3 shape inside
-  // ephemeral_message_parameters); the wrapper forwards this object verbatim.
-  const base = {
-    chat_id: chatId,
-    text,
-    parse_mode: 'HTML',
-    ephemeral_message_parameters: { receiver_user_id: Number(receiverUserId) },
-  };
-  if (!trigger) return api.sendMessage(base);
-  try {
-    return await api.sendMessage({ ...base, reply_parameters: trigger });
-  } catch (e) {
-    // Some API builds refuse the reply target on an ephemeral send; deliver it
-    // without the quoted trigger instead of dropping the message.
-    console.error('[mt ephemeral retry]', describeError(e));
-    return api.sendMessage(base);
+/**
+ * Bot API 10.2 shipped ephemeral sends as a FLAT `receiver_user_id`; 10.3
+ * replaced it with the `ephemeral_message_parameters` object. A build that does
+ * not know a shape does not always error — it can ignore the unknown field and
+ * post the message publicly to the whole group. That is exactly the
+ * "everyone can read it" failure, so every send is verified from its response
+ * and a leaked copy is deleted immediately.
+ */
+// 'both' carries the 10.2 flat field and the 10.3 object in one request: each
+// API generation ignores the field it does not know and honours the other, so
+// the common case works on either build without a public attempt first.
+const EPHEMERAL_MODES = ['both', 'nested', 'flat'];
+const EPHEMERAL_RETRY_MS = 10 * 60_000;
+
+function ephemeralPayload(mode, chatId, receiverUserId, text) {
+  const payload = { chat_id: chatId, text, parse_mode: 'HTML' };
+  const userId = Number(receiverUserId);
+  if (mode === 'both' || mode === 'flat') payload.receiver_user_id = userId; // Bot API 10.2
+  if (mode === 'both' || mode === 'nested') {
+    payload.ephemeral_message_parameters = { receiver_user_id: userId }; // Bot API 10.3
   }
+  return payload;
+}
+
+/** 'ephemeral' when the reply is private, 'public' when it reached the group. */
+function classifyEphemeralResult(sent) {
+  if (!sent || typeof sent !== 'object') return 'unknown';
+  if (Number(sent.ephemeral_message_id || 0) > 0) return 'ephemeral';
+  const messageId = Number(sent.message_id);
+  if (Number.isFinite(messageId)) return messageId > 0 ? 'public' : 'ephemeral';
+  return 'unknown';
+}
+
+async function deleteLeakedMessage(chatId, messageId) {
+  if (!messageId) return false;
+  try {
+    await api.deleteMessage({ chat_id: chatId, message_id: messageId });
+    return true;
+  } catch (e) {
+    console.error('[mt leak] leaked message could not be deleted:', describeError(e),
+      `chat=${chatId}`, `message=${messageId}`);
+    return false;
+  }
+}
+
+/**
+ * Deliver one private message inside the group. Returns { ok: true, mode } or
+ * { ok: false, reason }. It never posts the text publicly and never falls back
+ * to a DM — a private in-group message or a reported failure, nothing else.
+ */
+async function sendEphemeral(chatId, receiverUserId, text, trigger) {
+  // A build that ignored every shape is not probed again for a while: each
+  // probe can flash a public copy, so this is deliberately conservative.
+  if (!state.ephemeralMode && state.ephemeralRetryAt > Date.now()) {
+    return { ok: false, reason: 'ephemeral delivery is unavailable on this Bot API build' };
+  }
+  const modes = state.ephemeralMode ? [state.ephemeralMode] : EPHEMERAL_MODES;
+  let reason = null;
+
+  for (const mode of modes) {
+    const withTrigger = trigger ? { ...ephemeralPayload(mode, chatId, receiverUserId, text), reply_parameters: trigger } : null;
+    let sent = null;
+    try {
+      sent = await api.sendMessage(withTrigger || ephemeralPayload(mode, chatId, receiverUserId, text));
+    } catch (e) {
+      reason = describeError(e);
+      console.error(`[mt ephemeral ${mode}]`, reason);
+      if (withTrigger) {
+        // The reply target may be refused on its own; retry the same shape bare.
+        try {
+          sent = await api.sendMessage(ephemeralPayload(mode, chatId, receiverUserId, text));
+        } catch (e2) {
+          reason = describeError(e2);
+          console.error(`[mt ephemeral ${mode} bare]`, reason);
+          continue;
+        }
+      } else {
+        continue;
+      }
+    }
+
+    if (classifyEphemeralResult(sent) !== 'public') {
+      state.ephemeralMode = mode;
+      return { ok: true, mode };
+    }
+
+    // Telegram ignored the ephemeral parameters and posted the message to the
+    // whole group: remove that copy now, then try the other API shape.
+    const removed = await deleteLeakedMessage(chatId, Number(sent.message_id));
+    console.error('[mt leak] ephemeral send was posted publicly; deleted:', removed, `mode=${mode}`);
+    reason = 'this Bot API build did not apply the ephemeral parameters';
+    state.ephemeralMode = null;
+  }
+
+  state.ephemeralMode = null;
+  state.ephemeralRetryAt = Date.now() + EPHEMERAL_RETRY_MS;
+  return { ok: false, reason: reason || 'ephemeral delivery unavailable' };
 }
 
 /**
@@ -304,7 +396,6 @@ export async function handleMtCommand(message) {
   const chat = message.chat;
   const isGroup = chat.type === 'group' || chat.type === 'supergroup';
   const payload = text.replace(/^\/mt(@\w+)?\s*/i, '').trim();
-  const commandMessageId = message.message_id || null;
 
   // Hide the invoking command first: no point waiting for DB/API work while the
   // whole group can read a private transmission request.
@@ -318,8 +409,8 @@ export async function handleMtCommand(message) {
   const trigger = ephemeralTrigger(message);
   const canEphemeral = Boolean(trigger) || (await botAdminStatus(chat.id)) !== false;
 
-  // Answers go to the sender only. Ephemeral first; the bot's DM is the private
-  // fallback so a refused ephemeral send never leaves the player without a reply.
+  // Answers go to the sender only: in-group ephemeral first, then the bot DM.
+  // Nothing is ever posted to the group timeline, not even a status line.
   const tellSender = async (html) => {
     if (!isGroup) {
       try {
@@ -330,29 +421,13 @@ export async function handleMtCommand(message) {
       return;
     }
     if (canEphemeral) {
-      try {
-        await sendEphemeral(chat.id, from.id, html, trigger);
-        return;
-      } catch (e) {
-        console.error('[mt ack ephemeral]', describeError(e));
-      }
+      const ack = await sendEphemeral(chat.id, from.id, html, trigger);
+      if (ack.ok) return;
     }
     try {
       await api.sendMessage({ chat_id: from.id, text: html, parse_mode: 'HTML' });
-      return;
     } catch (e) {
       console.error('[mt ack dm]', describeError(e));
-    }
-    // Last resort: a short status in the group beats a silent command. Only the
-    // status text is public — the transmitted body never is.
-    try {
-      const fallback = { chat_id: chat.id, text: html, parse_mode: 'HTML' };
-      if (commandMessageId) {
-        fallback.reply_parameters = { message_id: commandMessageId, allow_sending_without_reply: true };
-      }
-      await api.sendMessage(fallback);
-    } catch (e) {
-      console.error('[mt ack public]', describeError(e));
     }
   };
 
@@ -410,44 +485,28 @@ export async function handleMtCommand(message) {
     `───────────────\n\n` +
     `${esc(payload)}`;
 
-  // Deliver privately. The acknowledgement below is only a success when one of
-  // these routes actually resolved — a rejected ephemeral send is not success.
-  let route = null;
+  // Deliver privately INSIDE the group — never a DM, never a public post. A
+  // refused ephemeral send is reported as a failure, not rerouted.
   let failure = null;
-  if (canEphemeral) {
-    try {
-      await sendEphemeral(chat.id, recipient.id, body, trigger);
-      route = 'ephemeral';
-    } catch (e) {
-      failure = describeError(e);
-      console.error('[mt ephemeral]', failure);
-    }
-  }
-  if (!route) {
-    // Ephemeral delivery is never guaranteed (the receiver may be offline, or
-    // the bot may not be an admin). The bot's DM is private as well, so the
-    // jutsu still works instead of failing silently.
-    try {
-      await api.sendMessage({ chat_id: recipient.id, text: body, parse_mode: 'HTML' });
-      route = 'dm';
-    } catch (e) {
-      failure = describeError(e);
-      console.error('[mt dm]', failure);
-    }
+  if (!canEphemeral) {
+    failure = 'the bot is not a group administrator, so it cannot privately message another member';
+  } else {
+    const delivery = await sendEphemeral(chat.id, recipient.id, body, trigger);
+    if (!delivery.ok) failure = delivery.reason;
   }
 
-  if (!route) {
+  if (failure) {
+    console.error('[mt failed]', failure);
     await tellSender(
-      `${mentionHtml(from)}\n\n❌ <b>TRANSMISSION FAILED</b>\n\nThe message could not be delivered privately.\n\n<code>${esc(String(failure).slice(0, 200))}</code>`,
+      `${mentionHtml(from)}\n\n❌ <b>TRANSMISSION FAILED</b>\n\n` +
+      `Nothing was posted to the group.\n\n<code>${esc(String(failure).slice(0, 200))}</code>`,
     );
     return true;
   }
 
   await tellSender(
     `${mentionHtml(from)}\n\n✅ <b>MIND TRANSMISSION SENT</b>\n\nTarget: ${mentionHtml(recipient)}\n\n` +
-    (route === 'dm'
-      ? 'Your message was delivered to their bot DM instead (ephemeral delivery was unavailable).'
-      : 'Your ephemeral message was delivered inside the group.'),
+    'Your message was delivered privately inside the group.',
   );
   return true;
 }

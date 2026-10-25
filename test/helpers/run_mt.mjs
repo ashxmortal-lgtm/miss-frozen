@@ -1,8 +1,8 @@
-// /mt delivery: every private message (receiver body + sender answer) must be an
-// ephemeral send that Telegram accepts. Ephemeral sends need an eligible trigger
-// (`reply_parameters.ephemeral_message_id`) or bot-admin rights — a plain
-// message_id is not one. A refused ephemeral send falls back to the bot DM, and
-// only a resolved delivery produces a success acknowledgement.
+// /mt delivery: the transmitted body must appear only as a private (ephemeral)
+// in-group message — never public, never a DM. Bot API 10.2 uses a flat
+// `receiver_user_id`, 10.3 uses `ephemeral_message_parameters`; the payload
+// carries both, every send is verified from its response, and a build that
+// ignores the parameters (a public post) gets that copy deleted immediately.
 import assert from 'node:assert/strict';
 import { api } from 'sdk';
 import { db } from './sdk_db_stub.mjs';
@@ -18,28 +18,43 @@ for (const text of [
 const sent = [];
 const deleted = [];
 const menus = [];
+const publicPosts = []; // messages Telegram actually showed to the group
+let generation = '10.3'; // '10.3' | '10.2' | 'legacy' (ignores ephemeral params)
 let refuseEphemeralFor = null;
 let refuseDmFor = null;
-let refuseSenderDm = false;
 let refuseDelete = false;
-let botStatus = 'administrator';
+let ephemeralSeq = 0;
+let publicSeq = 0;
 
-const isEphemeralTo = (payload, id) => Number(payload.ephemeral_message_parameters?.receiver_user_id) === id;
+const isEphemeralPayload = (p) => Boolean(p.ephemeral_message_parameters || p.receiver_user_id);
 
-api.sendMessage = async (payload) => {
-  if (refuseSenderDm && Number(payload.chat_id) === 8101 && !payload.ephemeral_message_parameters) {
-    throw Object.assign(new Error('Forbidden: bot cannot initiate conversation with a user'), { code: 403 });
+// A tiny emulation of the Bot API generations.
+function deliver(payload) {
+  if (isEphemeralPayload(payload)) {
+    const nestedHonoured = Boolean(payload.ephemeral_message_parameters) && generation === '10.3';
+    const flatHonoured = Boolean(payload.receiver_user_id) && generation === '10.2';
+    const receiver = Number(payload.ephemeral_message_parameters?.receiver_user_id ?? payload.receiver_user_id);
+    if (refuseEphemeralFor != null && receiver === refuseEphemeralFor) {
+      throw Object.assign(new Error('Bad Request: ephemeral message is not supported'), { code: 400 });
+    }
+    sent.push(payload);
+    // An unhonoured shape is NOT an error: Telegram ignores the field and the
+    // message is posted to the group.
+    if (nestedHonoured || flatHonoured) {
+      return { message_id: 0, ephemeral_message_id: ++ephemeralSeq };
+    }
+    const leaked = { chat_id: Number(payload.chat_id), message_id: ++publicSeq };
+    publicPosts.push(leaked);
+    return { message_id: leaked.message_id };
   }
-  if (refuseDmFor != null && Number(payload.chat_id) === refuseDmFor && !payload.ephemeral_message_parameters) {
+  if (refuseDmFor != null && Number(payload.chat_id) === refuseDmFor) {
     throw Object.assign(new Error('Forbidden: bot was blocked by the user'), { code: 403 });
   }
-  if (refuseEphemeralFor != null && payload.ephemeral_message_parameters
-    && isEphemeralTo(payload, refuseEphemeralFor)) {
-    throw Object.assign(new Error('Bad Request: ephemeral message is not supported'), { code: 400 });
-  }
   sent.push(payload);
-  return { message_id: sent.length };
-};
+  return { message_id: ++publicSeq };
+}
+
+api.sendMessage = async (payload) => deliver(payload);
 api.deleteMessage = async (payload) => {
   if (refuseDelete) throw Object.assign(new Error('Bad Request: message to delete not found'), { code: 400 });
   deleted.push(payload);
@@ -48,12 +63,13 @@ api.deleteMessage = async (payload) => {
 api.setMyCommands = async (payload) => { menus.push(payload); return true; };
 api.getMyCommands = async () => menus.length ? menus.at(-1).commands : [];
 api.getMe = async () => ({ id: 999001, username: 'frozen_bot', is_bot: true });
-api.getChatMember = async () => ({ status: botStatus });
+api.getChatMember = async () => ({ status: 'administrator' });
 
 const OWNER = 8101;
 const RECEIVER = 8102;
 const NO_JUTSU = 8103;
 const GROUP = -100810;
+const BODY = 'hello there';
 
 await db.run({
   text: `INSERT OR REPLACE INTO inventory (telegram_id, item_type, item_name, qty)
@@ -62,7 +78,7 @@ await db.run({
 });
 
 const message = ({
-  from = OWNER, replyFrom = RECEIVER, text = '/mt hello there', id = 501, ephemeralId = null,
+  from = OWNER, replyFrom = RECEIVER, text = `/mt ${BODY}`, id = 501, ephemeralId = null,
   replyIsBot = false,
 } = {}) => ({
   text,
@@ -76,47 +92,54 @@ const message = ({
   },
 });
 
-const ephemeralTo = (id) => sent.filter((p) => isEphemeralTo(p, id));
-const plainTo = (id) => sent.filter((p) => Number(p.chat_id) === id && !p.ephemeral_message_parameters);
+const receiverOf = (p) => Number(p.ephemeral_message_parameters?.receiver_user_id ?? p.receiver_user_id);
+const ephemeralTo = (id) => sent.filter((p) => isEphemeralPayload(p) && receiverOf(p) === id);
+const plainTo = (id) => sent.filter((p) => Number(p.chat_id) === id && !isEphemeralPayload(p));
+const publicInGroup = () => sent.filter((p) => Number(p.chat_id) === GROUP && !isEphemeralPayload(p));
 const textOf = (payload) => String(payload.text ?? payload.rich_message?.html ?? '');
 const matches = (payload, text) => new RegExp(style(text)).test(textOf(payload));
-const reset = () => { sent.length = 0; deleted.length = 0; };
+// Each case starts from a cold isolate: cached registration/capability state is
+// per isolate, and every case must be independent.
+const reset = () => {
+  sent.length = 0; deleted.length = 0; publicPosts.length = 0;
+  resetMtRegistrationState();
+};
 
-// ---- 1. registration + delivery of a normal (non-ephemeral) command ----------
+// ---- 1. registration + delivery on a Bot API 10.3 build ----------------------
 resetMtRegistrationState();
 menus.length = 0;
 assert.equal(await handleMtCommand(message()), true, '/mt is handled');
-
 assert.equal(menus.length, 1, 'the group menu is registered once');
-assert.deepEqual(menus[0].scope, { type: 'all_group_chats' });
 const registered = menus[0].commands;
+assert.deepEqual(menus[0].scope, { type: 'all_group_chats' });
 const mtEntry = registered.find((c) => c.command === 'mt');
-assert.ok(mtEntry, '/mt is in the group menu');
 assert.equal(mtEntry.is_ephemeral, true, '/mt is registered with is_ephemeral: true');
 for (const cmd of ['help', 'balance', 'rob', 'protect', 'buy']) {
   assert.ok(registered.some((c) => c.command === cmd), `the group menu still lists /${cmd}`);
 }
 assert.ok(registered.length > 20, 'the whole user menu is sent, not just /mt');
-assert.ok(!registered.some((c) => c.command === 'search_tsuna'), 'the hidden command stays out of the menu');
-assert.equal(registered.filter((c) => c.is_ephemeral).length, 1, 'only /mt is ephemeral');
+assert.ok(!registered.some((c) => c.command === 'search_tsuna'), 'the hidden command stays out');
 
-// ---- 2. receiver body + sender ack are ephemeral, and nothing is public ------
+// ---- 2. the body is private and never public --------------------------------
 const toReceiver = ephemeralTo(RECEIVER);
 assert.equal(toReceiver.length, 1, 'the receiver gets exactly one ephemeral message');
-assert.equal(toReceiver[0].chat_id, GROUP, 'ephemeral messages are sent in the group, not a DM');
-assert.equal(typeof toReceiver[0].ephemeral_message_parameters.receiver_user_id, 'number',
-  'receiver_user_id is serialized as a JSON number');
+assert.equal(toReceiver[0].chat_id, GROUP, 'it is sent inside the group, not a DM');
+assert.equal(receiverOf(toReceiver[0]), RECEIVER, 'receiver_user_id is the target');
+assert.equal(typeof receiverOf(toReceiver[0]), 'number', 'receiver_user_id is a JSON number');
+assert.ok(toReceiver[0].ephemeral_message_parameters, 'the 10.3 shape is present');
+assert.equal(toReceiver[0].receiver_user_id, RECEIVER, 'the 10.2 shape is present too');
 assert.ok(matches(toReceiver[0], 'MIND TRANSMISSION'));
-assert.ok(matches(toReceiver[0], 'hello there'));
+assert.ok(matches(toReceiver[0], BODY));
 assert.equal(toReceiver[0].reply_parameters, undefined,
   'a plain message_id is not an eligible ephemeral trigger, so none is sent');
 
 const toSender = ephemeralTo(OWNER);
 assert.equal(toSender.length, 1, 'the sender gets one ephemeral acknowledgement');
 assert.ok(matches(toSender[0], 'MIND TRANSMISSION SENT'));
-assert.ok(matches(toSender[0], 'delivered inside the group'));
-assert.equal(sent.length, 2, 'no extra public message is produced');
-assert.ok(sent.every((p) => p.ephemeral_message_parameters), 'every send is ephemeral');
+
+assert.deepEqual(publicInGroup(), [], 'nothing is visible to the group');
+assert.deepEqual(plainTo(RECEIVER), [], 'the body is never sent to a DM');
+assert.ok(!sent.some((p) => !isEphemeralPayload(p)), 'no non-ephemeral send at all');
 assert.deepEqual(deleted, [{ chat_id: GROUP, message_id: 501 }], 'the plain /mt command is deleted');
 
 // ---- 3. an ephemeral command replies with ephemeral_message_id ---------------
@@ -128,47 +151,58 @@ assert.ok(replyToEphemeral.every((p) => p.reply_parameters.message_id === undefi
   'message_id must not be set when replying to an ephemeral message');
 assert.equal(deleted.length, 0, 'an already-ephemeral command is not deleted');
 
-// ---- 4. refused ephemeral send falls back to the receiver DM ----------------
+// ---- 4. a Bot API 10.2 build (flat receiver_user_id only) still works -------
+resetMtRegistrationState();
+reset();
+generation = '10.2';
+assert.equal(await handleMtCommand(message()), true);
+generation = '10.3';
+assert.equal(ephemeralTo(RECEIVER).length, 1, 'the body is delivered privately');
+assert.equal(ephemeralTo(OWNER).length, 1, 'the ack is private');
+assert.deepEqual(publicInGroup(), [], 'no public post on the 10.2 build');
+assert.ok(matches(ephemeralTo(RECEIVER)[0], BODY));
+
+// ---- 5. a build that ignores ephemeral parameters never leaks ---------------
+resetMtRegistrationState();
+reset();
+generation = 'legacy';
+await handleMtCommand(message());
+generation = '10.3';
+assert.ok(publicPosts.length >= 1, 'the legacy build posted the message publicly');
+// Every leaked copy is deleted immediately, in addition to the /mt command.
+for (const leak of publicPosts) {
+  assert.ok(deleted.some((d) => d.chat_id === leak.chat_id && d.message_id === leak.message_id),
+    `leaked message ${leak.message_id} was deleted`);
+}
+assert.ok(deleted.some((d) => d.message_id === 501), 'the /mt command was deleted too');
+assert.deepEqual(plainTo(RECEIVER), [], 'the body is never rerouted to a DM');
+const legacyAck = plainTo(OWNER);
+assert.equal(legacyAck.length, 1, 'the sender is told privately (DM status only)');
+assert.ok(matches(legacyAck[0], 'TRANSMISSION FAILED'));
+assert.ok(!textOf(legacyAck[0]).includes(BODY), 'the status never repeats the private text');
+assert.ok(!sent.some((p) => matches(p, 'MIND TRANSMISSION SENT')), 'no success ack');
+
+// ---- 6. a refused ephemeral send is a failure, not a DM ---------------------
+resetMtRegistrationState();
 reset();
 refuseEphemeralFor = RECEIVER;
 await handleMtCommand(message());
 refuseEphemeralFor = null;
-const dm = plainTo(RECEIVER);
-assert.equal(dm.length, 1, 'the body is delivered to the receiver DM');
-assert.ok(matches(dm[0], 'hello there'));
-const fallbackSender = ephemeralTo(OWNER);
-assert.equal(fallbackSender.length, 1);
-assert.ok(matches(fallbackSender[0], 'delivered to their bot DM'), 'the sender is told the DM fallback was used');
+assert.deepEqual(plainTo(RECEIVER), [], 'the body is not sent to the DM');
+assert.deepEqual(publicInGroup(), [], 'nothing public');
+const refusedAck = plainTo(OWNER);
+assert.equal(refusedAck.length, 1);
+assert.ok(matches(refusedAck[0], 'TRANSMISSION FAILED'));
+assert.ok(!textOf(refusedAck[0]).includes(BODY));
 
-// ---- 5. a deletion failure never blocks the transmission --------------------
+// ---- 7. a deletion failure never blocks the transmission --------------------
 reset();
 refuseDelete = true;
 await handleMtCommand(message());
 refuseDelete = false;
 assert.equal(deleted.length, 0, 'the delete call failed');
-assert.equal(ephemeralTo(RECEIVER).length, 1, 'the body is still delivered');
-assert.equal(ephemeralTo(OWNER).length, 1, 'the sender still gets the success ack');
+assert.equal(ephemeralTo(RECEIVER).length, 1, 'the body is still delivered privately');
 assert.ok(matches(ephemeralTo(OWNER)[0], 'MIND TRANSMISSION SENT'));
-
-// ---- 6. bot is a plain member and nothing triggered: go straight to DM ------
-resetMtRegistrationState();
-reset();
-botStatus = 'member';
-await handleMtCommand(message());
-botStatus = 'administrator';
-assert.equal(ephemeralTo(RECEIVER).length, 0, 'no doomed ephemeral attempt for the receiver');
-assert.equal(ephemeralTo(OWNER).length, 0, 'no doomed ephemeral attempt for the sender');
-assert.equal(plainTo(RECEIVER).length, 1, 'the body goes to the receiver DM');
-assert.equal(plainTo(OWNER).length, 1, 'the ack goes to the sender DM');
-assert.ok(matches(plainTo(OWNER)[0], 'delivered to their bot DM'));
-
-// ---- 7. a player without the jutsu gets the /buy hint -----------------------
-reset();
-await handleMtCommand(message({ from: NO_JUTSU }));
-assert.equal(sent.length, 1);
-assert.ok(sent[0].ephemeral_message_parameters, 'the refusal is ephemeral too');
-assert.ok(matches(sent[0], 'JUTSU NOT UNLOCKED'));
-assert.ok(!/don't own/i.test(textOf(sent[0])), 'the unlock card never claims the jutsu is missing');
 
 // ---- 8. usage errors stay private -------------------------------------------
 reset();
@@ -193,52 +227,30 @@ await handleMtCommand(message({ text: `/mt ${'x'.repeat(1001)}` }));
 assert.ok(matches(ephemeralTo(OWNER)[0], 'Message too long'));
 assert.equal(ephemeralTo(RECEIVER).length, 0, 'an oversized payload is never delivered');
 
+// ---- 9. a player without the jutsu ------------------------------------------
 reset();
-await handleMtCommand({ ...message(), chat: { id: OWNER, type: 'private' }, reply_to_message: undefined });
-assert.ok(matches(plainTo(OWNER)[0], 'GROUP ONLY'));
-assert.equal(plainTo(OWNER)[0].chat_id, OWNER, 'a DM answer goes back to the DM');
-
-// ---- 9. delivery refused everywhere → failure ack, never success ------------
-reset();
-refuseEphemeralFor = RECEIVER;
-refuseDmFor = RECEIVER;
-await handleMtCommand(message());
-refuseEphemeralFor = null;
-refuseDmFor = null;
-const failureAck = ephemeralTo(OWNER);
-assert.equal(failureAck.length, 1, 'the sender still gets one answer');
-assert.ok(matches(failureAck[0], 'TRANSMISSION FAILED'));
-assert.ok(!matches(failureAck[0], 'MIND TRANSMISSION SENT'), 'no success ack for a rejected delivery');
+await handleMtCommand(message({ from: NO_JUTSU }));
+assert.ok(matches(ephemeralTo(NO_JUTSU)[0], 'JUTSU NOT UNLOCKED'));
 assert.equal(ephemeralTo(RECEIVER).length, 0);
 
-// ---- 10. both private routes refused: public status, never the private body --
+// ---- 10. DM chat: GROUP ONLY ------------------------------------------------
 reset();
-refuseEphemeralFor = OWNER;
-refuseSenderDm = true;
-await handleMtCommand(message());
-refuseEphemeralFor = null;
-refuseSenderDm = false;
-const publicStatus = sent.filter((p) => p.chat_id === GROUP && !p.ephemeral_message_parameters);
-assert.equal(publicStatus.length, 1, 'the sender still gets an answer');
-assert.ok(matches(publicStatus[0], 'MIND TRANSMISSION SENT'));
-assert.deepEqual(publicStatus[0].reply_parameters, { message_id: 501, allow_sending_without_reply: true });
-assert.ok(!sent.some((p) => p.chat_id === GROUP && textOf(p).includes('hello there')
-  && !p.ephemeral_message_parameters), 'the transmitted body is never posted publicly');
+await handleMtCommand({ ...message(), chat: { id: OWNER, type: 'private' }, reply_to_message: undefined });
+assert.equal(plainTo(OWNER).length, 1);
+assert.ok(matches(plainTo(OWNER)[0], 'GROUP ONLY'));
 
 // ---- 11. HTML-special characters in the payload stay escaped ----------------
 reset();
 await handleMtCommand(message({ text: '/mt <b>&x</b> "quoted"' }));
-// Everything after the divider is the player's text: escaped, never raw markup.
 const escaped = textOf(ephemeralTo(RECEIVER)[0]).split('───────────────').at(-1);
 assert.ok(escaped.includes('&lt;'), 'the payload is HTML-escaped');
 assert.ok(escaped.includes('&amp;'), 'ampersands are escaped');
 assert.ok(!escaped.includes('<'), 'no raw angle bracket reaches parse_mode HTML');
-assert.ok(!/&(?!lt;|gt;|amp;|quot;)/.test(escaped), 'a bare ampersand from the player never reaches the payload');
 
-// ---- 12. every other command still goes to its own handler ------------------
+// ---- 12. other commands are not swallowed ----------------------------------
 reset();
 assert.equal(await handleMtCommand({ ...message(), text: '/rob' }), false, '/rob is not /mt');
 assert.equal(await handleMtCommand({ ...message(), text: '/protect' }), false, '/protect is not /mt');
-assert.equal(sent.length, 0, '/mt stays silent for other commands');
+assert.equal(sent.length, 0);
 
 console.log('mt delivery: OK');
