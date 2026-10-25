@@ -33,7 +33,16 @@ db.select = () => ({
 });
 
 const sent = [];
-api.sendMessage = async (payload) => { sent.push(payload); return { message_id: sent.length }; };
+// Ephemeral sends are answered the way Telegram answers a private message
+// (`message_id: 0` + `ephemeral_message_id`), so /mt can verify delivery.
+let ephemeralSeq = 0;
+api.sendMessage = async (payload) => {
+  sent.push(payload);
+  if (payload.ephemeral_message_parameters || payload.receiver_user_id) {
+    return { message_id: 0, ephemeral_message_id: ++ephemeralSeq };
+  }
+  return { message_id: sent.length };
+};
 api.sendRichMessage = async (payload) => { sent.push(payload); return { message_id: 100 + sent.length }; };
 api.setMyCommands = async () => true;
 api.deleteMessage = async () => true;
