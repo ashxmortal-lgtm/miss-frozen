@@ -17,7 +17,7 @@ import { escapeHtml } from './texts.js';
 import { replyParametersFor } from './reply_target.js';
 import { extractQuote, quoteSourceOf } from './quote/extract.js';
 import { renderQuotePng } from './quote/render.js';
-import { fetchProfilePhoto, fetchChatPhoto } from './quote/avatar.js';
+import { resolveAvatar } from './quote/avatar.js';
 import { formatOfSticker, ownSticker, STICKER_LIMITS } from './quote/packs.js';
 
 export const QUOTE_COMMANDS = new Set(['q', 'own']);
@@ -82,6 +82,24 @@ async function reply(message, html) {
 
 const usageReply = (message, key) => reply(message, MESSAGES[key] || MESSAGES.reply_required);
 
+/**
+ * Build the sticker for an extracted quote. Pure: no API calls, no persistence,
+ * so tests can assert exactly what the card will say and show.
+ *
+ * @param {object} quote  result of `extractQuote`
+ * @param {object|null} avatar  decoded profile photo, or null for the lettered disc
+ */
+export function buildQuoteSticker(quote, avatar = null) {
+  return renderQuotePng({
+    text: quote.text,
+    name: quote.name,
+    userId: quote.senderId || quote.senderChatId || 0,
+    avatar,
+    kind: quote.kind,
+    subtitle: quote.handle,
+  });
+}
+
 /** `/q` — render and send the quote sticker (never creates a pack). */
 async function handleQuote(message) {
   const source = quoteSourceOf(message);
@@ -92,22 +110,13 @@ async function handleQuote(message) {
   }
 
   // The avatar belongs to the author of the *replied-to* message — never the
-  // person who invoked /q, and never the bot.
-  const photo = quote.senderId
-    ? await fetchProfilePhoto(quote.senderId)
-    : await fetchChatPhoto(quote.senderChatId);
-  const avatar = photo.ok ? photo.image : null;
+  // person who invoked /q. When Telegram will not hand over that photo, the
+  // bot's own photo stands in; the lettered disc is the last resort.
+  const photo = await resolveAvatar(quote);
 
   let rendered;
   try {
-    rendered = renderQuotePng({
-      text: quote.text,
-      name: quote.name,
-      userId: quote.senderId || quote.senderChatId || 0,
-      avatar,
-      kind: quote.kind,
-      subtitle: quote.handle,
-    });
+    rendered = buildQuoteSticker(quote, photo.image);
   } catch (e) {
     console.error('[quote render]', e?.message || e);
     await reply(message, MESSAGES.render);

@@ -283,7 +283,9 @@ export function renderQuote({
 
   // ---- the author's avatar, LEFT, centred against the bubble --------------
   const avatarCy = bubbleY + bubbleH / 2;
-  const initials = (normalizeText(name).trim()[0] || '?').toUpperCase();
+  // Lettered fallback — used only when the bot's own photo is unavailable too.
+  // A missing initial draws a plain disc rather than a literal "?".
+  const initials = (normalizeText(name).trim()[0] || '').toUpperCase();
   const drawFace = (image, cx, cy, radius, fontSize) => {
     if (image) {
       surface.circularImage(image, cx, cy, radius);
@@ -291,6 +293,7 @@ export function renderQuote({
     }
     // Honest fallback: a tinted disc with the initial. Never a fake person.
     surface.circle(cx, cy, radius, PALETTE.avatarFallback);
+    if (!initials) return;
     const width = measureLine(initials, fontSize);
     drawLine(surface, initials, cx - width / 2, cy + fontSize * 0.36, fontSize, PALETTE.avatarInk);
   };
@@ -336,6 +339,8 @@ export function renderQuote({
     label,
     unsupportedScript,
     hasAvatar: Boolean(avatar),
+    // What the card actually credits — lets tests assert the visible name.
+    drawnName: shownName,
   };
 }
 

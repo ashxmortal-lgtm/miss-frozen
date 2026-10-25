@@ -12,13 +12,16 @@ import { renderQuotePng, renderQuote, planLayout, nameColor } from '../../tgclou
 import { wrapText, measureLine, normalizeText, renderableShare } from '../../tgcloud/lib/quote/text.js';
 import { extractQuote, formatMessageTime } from '../../tgcloud/lib/quote/extract.js';
 import { decodeJpeg } from '../../tgcloud/lib/quote/jpeg.js';
-import { pickPhotoSize, decodeProfilePhoto, fetchProfilePhoto } from '../../tgcloud/lib/quote/avatar.js';
+import {
+  pickPhotoSize, decodeProfilePhoto, fetchProfilePhoto, fetchBotPhoto,
+  resolveAvatar, resetBotPhotoCache,
+} from '../../tgcloud/lib/quote/avatar.js';
 import {
   buildPackName, buildPackTitle, packSuffix, formatOfSticker, ownSticker,
   MAX_STATIC_STICKERS, STICKER_LIMITS,
 } from '../../tgcloud/lib/quote/packs.js';
 import {
-  handleQuoteCommand, parseQuoteCommand, addressedToUs,
+  handleQuoteCommand, parseQuoteCommand, addressedToUs, buildQuoteSticker,
 } from '../../tgcloud/lib/quote_stickers.js';
 
 void _unused;
@@ -62,8 +65,28 @@ function tinyPng() {
   return encodeRgbaPng({ width: 4, height: 4, rgba });
 }
 
+/** A solid square in one colour — lets tests prove *which* photo was drawn. */
+function solidPng(rgb, side = 32) {
+  const rgba = new Uint8Array(side * side * 4);
+  for (let i = 0; i < side * side; i += 1) {
+    rgba[i * 4] = rgb[0];
+    rgba[i * 4 + 1] = rgb[1];
+    rgba[i * 4 + 2] = rgb[2];
+    rgba[i * 4 + 3] = 255;
+  }
+  return encodeRgbaPng({ width: side, height: side, rgba });
+}
+
 const AVATAR_PNG = tinyPng();
 const AVATAR_IMAGE = decodePng(AVATAR_PNG);
+const AUTHOR_RGB = [200, 60, 90]; // AVATAR_PNG's colour
+const INVOKER_RGB = [20, 200, 90]; // a third colour: the /q sender
+const BOT_RGB = [30, 120, 220]; // MissFrozen's own photo
+const CHANNEL_RGB = [250, 180, 20]; // a channel photo
+const INVOKER_AVATAR_PNG = solidPng(INVOKER_RGB);
+const BOT_AVATAR_PNG = solidPng(BOT_RGB);
+const BOT_AVATAR_IMAGE = decodePng(BOT_AVATAR_PNG);
+const CHANNEL_AVATAR_PNG = solidPng(CHANNEL_RGB);
 
 // ---- mocked Bot API -------------------------------------------------------
 
@@ -74,6 +97,11 @@ const calls = {
 let profilePhotoResult = { photos: [] };
 let profilePhotoError = null;
 let fileBytes = null;
+// Per-user overrides so the *author's* photo and the *bot's* photo can be made
+// visibly different: Telegram is mocked, but the pixel check is real.
+const photosByUser = new Map();
+const bytesByFileId = new Map();
+const BOT_ID = 8888370613;
 let nextCreateError = null;
 let nextAddError = null;
 
@@ -89,11 +117,17 @@ api.sendMessage = async (payload) => {
 };
 api.getUserProfilePhotos = async (payload) => {
   calls.profilePhotoRequests.push(payload);
+  if (photosByUser.has(payload.user_id)) {
+    const override = photosByUser.get(payload.user_id);
+    if (override instanceof Error) throw override;
+    return override;
+  }
   if (profilePhotoError) throw profilePhotoError;
   return profilePhotoResult;
 };
 api.getFileContent = async (fileId) => {
   calls.fileRequests.push(fileId);
+  if (bytesByFileId.has(fileId)) return bytesByFileId.get(fileId);
   return fileBytes;
 };
 api.createNewStickerSet = async (payload) => {
@@ -137,7 +171,11 @@ api.getStickerSet = async ({ name }) => {
   if (!set) throw new BotApiError('Bad Request: STICKERSET_INVALID');
   return set;
 };
-api.getMe = async () => ({ id: 8888370613, username: 'missfrozen_bot' });
+let getMeError = null;
+api.getMe = async () => {
+  if (getMeError) throw getMeError;
+  return { id: BOT_ID, username: 'missfrozen_bot' };
+};
 api.getChat = async ({ chat_id }) => {
   calls.chatRequests.push(chat_id);
   return calls.chats[chat_id] || { id: chat_id, type: 'channel', title: 'Channel' };
@@ -155,6 +193,13 @@ const reset = async () => {
   fileBytes = null;
   nextCreateError = null;
   nextAddError = null;
+  getMeError = null;
+  photosByUser.clear();
+  bytesByFileId.clear();
+  resetBotPhotoCache();
+  // MissFrozen has a photo by default; individual tests override it.
+  photosByUser.set(BOT_ID, { photos: [[{ file_id: 'BOT_PFP', width: 160, height: 160 }]] });
+  bytesByFileId.set('BOT_PFP', BOT_AVATAR_PNG);
   await db.run(sql.raw('DELETE FROM sticker_pack_sets'));
 };
 
@@ -314,6 +359,257 @@ assert.equal(decodeProfilePhoto(TINY_JPEG).reason ?? 'ok', 'decode_failed');
 const jpegOk = decodeProfilePhoto(TINY_JPEG);
 assert.equal(typeof jpegOk.ok, 'boolean');
 void fetchProfilePhoto;
+
+// ---- 6b. avatar fallback chain: author → MissFrozen → lettered -----------
+// Scoped so the fixture names below cannot collide with later sections.
+{
+  // ---- 6b. avatar fallback chain: author → MissFrozen → lettered -----------
+  const countColor = (image, rgb) => {
+    let n = 0;
+    for (let i = 0; i < image.rgba.length; i += 4) {
+      if (image.rgba[i] === rgb[0] && image.rgba[i + 1] === rgb[1] && image.rgba[i + 2] === rgb[2]) n += 1;
+    }
+    return n;
+  };
+  /** Decode the sticker most recently handed to Telegram. */
+  const sentImage = (index = -1) => decodePng(calls.stickers.at(index).sticker.value);
+  const photoLookups = () => calls.profilePhotoRequests.map((r) => r.user_id);
+
+  // (a) A replied-to user with a PFP gets *their own* photo.
+  await reset();
+  photosByUser.set(7, { photos: [[{ file_id: 'AUTHOR_PFP', width: 160, height: 160 }]] });
+  bytesByFileId.set('AUTHOR_PFP', AVATAR_PNG);
+  assert.equal(await handleQuoteCommand(commandMessage({ text: '/q', reply: textReply('own photo') })), true);
+  const authorCard = sentImage();
+  assert.ok(countColor(authorCard, AUTHOR_RGB) > 1000, "the author's photo is drawn");
+  assert.equal(countColor(authorCard, BOT_RGB), 0, 'the bot photo is not used when the author has one');
+  assert.deepEqual(photoLookups(), [7], 'only the author is looked up — not the bot');
+  assert.equal(calls.fileRequests.at(-1), 'AUTHOR_PFP');
+
+  // (b) A user without a PFP gets MissFrozen's bot photo.
+  await reset();
+  assert.equal(await handleQuoteCommand(commandMessage({ text: '/q', reply: textReply('no photo') })), true);
+  const botCard = sentImage();
+  assert.ok(countColor(botCard, BOT_RGB) > 1000, "MissFrozen's photo stands in for a photo-less user");
+  assert.equal(countColor(botCard, AUTHOR_RGB), 0);
+  assert.deepEqual(photoLookups(), [7, BOT_ID], 'the author is tried first, then the bot');
+
+  // (c) A FAILED user-photo fetch (privacy / API error) also gets the bot photo.
+  for (const failure of [
+    new BotApiError('Forbidden: bot can\'t see user profile photos'),
+    new Error('network exploded'),
+  ]) {
+    await reset();
+    photosByUser.set(7, failure);
+    assert.equal(await handleQuoteCommand(commandMessage({ text: '/q', reply: textReply('hidden') })), true);
+    assert.ok(countColor(sentImage(), BOT_RGB) > 1000,
+      `a failed fetch (${failure.message}) falls back to the bot photo`);
+  }
+
+  // (d) The correct sender name is rendered — a real-shaped reply fixture.
+  await reset();
+  photosByUser.set(7, { photos: [[{ file_id: 'AUTHOR_PFP', width: 160, height: 160 }]] });
+  bytesByFileId.set('AUTHOR_PFP', AVATAR_PNG);
+  const namedReply = {
+    message_id: 950,
+    from: {
+      id: 7, is_bot: false, first_name: 'Sakura', last_name: 'Haruno', username: 'sakura_h',
+    },
+    text: 'Dattebayo!',
+    date: 1700000000,
+    chat: { id: -1001234, type: 'supergroup' },
+  };
+  assert.equal(await handleQuoteCommand(commandMessage({ text: '/q', reply: namedReply })), true);
+  const namedQuote = extractQuote(namedReply);
+  assert.equal(namedQuote.name, 'Sakura Haruno', 'first + last name');
+  assert.equal(namedQuote.handle, '@sakura_h');
+  const expectedCard = buildQuoteSticker(namedQuote, decodePng(AVATAR_PNG));
+  assert.equal(expectedCard.drawnName, 'Sakura Haruno', 'the card credits the real sender');
+  assert.equal(Buffer.compare(Buffer.from(expectedCard.bytes), Buffer.from(calls.stickers.at(-1).sticker.value)), 0,
+    'the sent sticker is exactly the card built from the sender identity');
+
+  // Only a first name → still a name, never "Unknown".
+  assert.equal(extractQuote({ ...namedReply, from: { id: 7, first_name: 'Sakura' } }).name, 'Sakura');
+  // Only a username → the username, never "Unknown".
+  assert.equal(extractQuote({ ...namedReply, from: { id: 7, username: 'sakura_h' } }).name, 'sakura_h');
+  // Only a last name → the last name.
+  assert.equal(extractQuote({ ...namedReply, from: { id: 7, last_name: 'Haruno' } }).name, 'Haruno');
+
+  // (e) The /q invoker's PFP is NEVER substituted for the quoted sender's.
+  await reset();
+  const quoteInvoker = { id: 999, is_bot: false, first_name: 'Invoker', username: 'invoker' };
+  photosByUser.set(7, { photos: [[{ file_id: 'AUTHOR_PFP', width: 160, height: 160 }]] });
+  photosByUser.set(999, { photos: [[{ file_id: 'INVOKER_PFP', width: 160, height: 160 }]] });
+  bytesByFileId.set('AUTHOR_PFP', AVATAR_PNG);
+  bytesByFileId.set('INVOKER_PFP', INVOKER_AVATAR_PNG);
+  assert.equal(await handleQuoteCommand(commandMessage({
+    text: '/q', from: quoteInvoker, reply: textReply('who wrote this?'),
+  })), true);
+  const notInvoker = sentImage();
+  assert.equal(countColor(notInvoker, INVOKER_RGB), 0, "the invoker's photo never appears on the card");
+  assert.ok(countColor(notInvoker, AUTHOR_RGB) > 1000, "the quoted author's photo does appear");
+  assert.ok(!photoLookups().includes(999), 'the invoker is never looked up');
+
+  // ... and when only the invoker has a photo, the card uses the BOT photo,
+  // not the invoker's.
+  await reset();
+  photosByUser.set(999, { photos: [[{ file_id: 'INVOKER_PFP', width: 160, height: 160 }]] });
+  bytesByFileId.set('INVOKER_PFP', INVOKER_AVATAR_PNG);
+  assert.equal(await handleQuoteCommand(commandMessage({
+    text: '/q', from: quoteInvoker, reply: textReply('silent sender'),
+  })), true);
+  assert.equal(countColor(sentImage(), INVOKER_RGB), 0, "still never the invoker's photo");
+  assert.ok(countColor(sentImage(), BOT_RGB) > 1000, 'the bot photo is used instead');
+
+  // (f) Channel posts and anonymous admins use the correct available identity.
+  await reset();
+  calls.chats[-1009] = {
+    id: -1009, type: 'channel', title: 'Konoha News',
+    photo: { big_file_id: 'CH_PFP', small_file_id: 'CH_PFP_SMALL' },
+  };
+  bytesByFileId.set('CH_PFP', CHANNEL_AVATAR_PNG);
+  const channelPost = {
+    message_id: 960,
+    sender_chat: { id: -1009, title: 'Konoha News', type: 'channel', username: 'konohanews' },
+    text: 'Breaking: the Hokage returns',
+    date: 1700000000,
+    chat: { id: -1009, type: 'channel' },
+  };
+  const channelQuote = extractQuote(channelPost);
+  assert.equal(channelQuote.name, 'Konoha News', 'the channel is credited, not "Unknown"');
+  assert.equal(channelQuote.handle, '@konohanews');
+  assert.equal(channelQuote.senderId, null, 'no user id to attribute');
+  assert.equal(channelQuote.senderChatId, -1009);
+
+  assert.equal(await handleQuoteCommand(commandMessage({ text: '/q', reply: channelPost })), true);
+  assert.equal(countColor(sentImage(), CHANNEL_RGB), 0 + countColor(sentImage(), CHANNEL_RGB));
+  assert.ok(countColor(sentImage(), CHANNEL_RGB) > 1000, "the channel's own photo is drawn");
+  assert.ok(!photoLookups().includes(-1009), 'channels use getChat, never getUserProfilePhotos');
+  assert.equal(calls.chatRequests.at(-1), -1009);
+
+  // Channel without a photo → MissFrozen's photo, still credited to the channel.
+  await reset();
+  calls.chats[-1009] = { id: -1009, type: 'channel', title: 'Konoha News' };
+  assert.equal(await handleQuoteCommand(commandMessage({ text: '/q', reply: channelPost })), true);
+  assert.ok(countColor(sentImage(), BOT_RGB) > 1000, 'the bot photo covers a photo-less channel');
+  assert.equal(extractQuote(channelPost).name, 'Konoha News', 'the name is still the channel');
+
+  // Anonymous admin → the group is credited; the group photo is used when it has
+  // one, otherwise MissFrozen's.
+  await reset();
+  const anonPost = {
+    message_id: 961,
+    from: { id: 1087968824, first_name: 'Group', is_bot: true, username: 'GroupAnonymousBot' },
+    text: 'Admin announcement',
+    date: 1700000000,
+    chat: { id: -1001234, type: 'supergroup', title: 'Konoha Village' },
+  };
+  const anonQuote = extractQuote(anonPost, { chat: { id: -1001234, title: 'Konoha Village' } });
+  assert.equal(anonQuote.name, 'Konoha Village', 'the group is credited');
+  assert.equal(anonQuote.anonymous, true);
+  assert.equal(anonQuote.senderId, null, 'the placeholder bot id is never treated as a person');
+  assert.equal(anonQuote.senderChatId, -1001234);
+
+  calls.chats[-1001234] = {
+    id: -1001234, type: 'supergroup', title: 'Konoha Village',
+    photo: { big_file_id: 'GROUP_PFP' },
+  };
+  bytesByFileId.set('GROUP_PFP', CHANNEL_AVATAR_PNG);
+  assert.equal(await handleQuoteCommand(commandMessage({
+    text: '/q', reply: anonPost, chatType: 'supergroup',
+  })), true);
+  assert.ok(countColor(sentImage(), CHANNEL_RGB) > 1000, "the group's photo is used for an anonymous admin");
+  assert.ok(!photoLookups().includes(1087968824), 'the placeholder id is never looked up as a user');
+
+  // Anonymous admin where the group has no photo → bot photo.
+  await reset();
+  calls.chats[-1001234] = { id: -1001234, type: 'supergroup', title: 'Konoha Village' };
+  assert.equal(await handleQuoteCommand(commandMessage({
+    text: '/q', reply: anonPost, chatType: 'supergroup',
+  })), true);
+  assert.ok(countColor(sentImage(), BOT_RGB) > 1000);
+
+  // (g) Neither missing fields nor failed API requests crash rendering.
+  await reset();
+  getMeError = new Error('getMe down');
+  assert.equal(await handleQuoteCommand(commandMessage({ text: '/q', reply: textReply('no bot identity') })), true);
+  assert.equal(calls.stickers.length, 1, 'a getMe failure still produces a sticker');
+
+  await reset();
+  profilePhotoResult = { total_count: 1, photos: [[{ file_id: 'f', width: 200, height: 200 }]] };
+  fileBytes = new Uint8Array(64); // undecodable
+  assert.equal(await handleQuoteCommand(commandMessage({ text: '/q', reply: textReply('bad bytes') })), true);
+  assert.equal(calls.stickers.length, 1, 'undecodable author bytes fall through to the bot photo');
+  assert.ok(countColor(sentImage(), BOT_RGB) > 1000, 'the bot photo covers a decode failure');
+
+  await reset();
+  profilePhotoResult = { total_count: 1, photos: [[{ /* no file_id at all */ width: 200, height: 200 }]] };
+  assert.equal(await handleQuoteCommand(commandMessage({ text: '/q', reply: textReply('no file id') })), true);
+  assert.equal(calls.stickers.length, 1, 'a malformed photo size does not crash');
+
+  await reset();
+  profilePhotoResult = { photos: [] }; // documented "no photo" shape
+  const noMetadata = { message_id: 962, sender_chat: { id: -77 }, text: 'titleless', date: 1700000000, chat: { id: -77 } };
+  assert.equal(extractQuote(noMetadata).name, 'Channel', 'a title-less channel still has an identity');
+  assert.equal(await handleQuoteCommand(commandMessage({ text: '/q', reply: noMetadata })), true);
+  assert.equal(calls.stickers.length, 1);
+
+  await reset();
+  api.__throwOnFile = null; // no-op marker; getFileContent failures are covered next
+  const originalGetFileContent = api.getFileContent;
+  api.getFileContent = async () => { throw new BotApiError('Bad Request: invalid file_id'); };
+  try {
+    assert.equal(await handleQuoteCommand(commandMessage({ text: '/q', reply: textReply('download dies') })), true);
+    assert.equal(calls.stickers.length, 1, 'a failed download still produces a sticker');
+  } finally {
+    api.getFileContent = originalGetFileContent;
+  }
+
+  // (h) Bot photo unavailable too → lettered disc, and the reason is logged.
+  await reset();
+  photosByUser.set(BOT_ID, { photos: [] });
+  const logLines = [];
+  const realError = console.error;
+  console.error = (...args) => logLines.push(args.join(' '));
+  try {
+    assert.equal(await handleQuoteCommand(commandMessage({ text: '/q', reply: textReply('nothing anywhere') })), true);
+  } finally {
+    console.error = realError;
+  }
+  const lettered = sentImage();
+  assert.equal(calls.stickers.length, 1, 'the sticker is still produced');
+  assert.equal(countColor(lettered, BOT_RGB), 0, 'no bot photo when the bot has none');
+  assert.equal(countColor(lettered, AUTHOR_RGB), 0, 'no author photo either');
+  assert.ok(logLines.some((line) => line.includes('lettered fallback') && line.includes('no_photo')),
+    `the real reason is logged (${JSON.stringify(logLines)})`);
+
+  // (i) A bot that only exposes a *chat* photo still gets a usable avatar.
+  await reset();
+  photosByUser.set(BOT_ID, { photos: [] });
+  calls.chats[BOT_ID] = { id: BOT_ID, type: 'private', photo: { big_file_id: 'BOT_CHAT_PFP' } };
+  bytesByFileId.set('BOT_CHAT_PFP', BOT_AVATAR_PNG);
+  assert.equal(await handleQuoteCommand(commandMessage({ text: '/q', reply: textReply('chat-photo bot') })), true);
+  assert.ok(countColor(sentImage(), BOT_RGB) > 1000,
+    "the bot's getChat photo is used when its user photos are empty");
+
+  // (j) resolveAvatar reports its source, and never trusts a stale author photo.
+  const directQuote = { senderId: 7, senderChatId: null };
+  await reset();
+  photosByUser.set(7, { photos: [[{ file_id: 'AUTHOR_PFP', width: 160, height: 160 }]] });
+  bytesByFileId.set('AUTHOR_PFP', AVATAR_PNG);
+  const first = await resolveAvatar(directQuote);
+  assert.equal(first.source, 'user');
+  const second = await resolveAvatar(directQuote); // same user, photo changed server-side
+  assert.equal(second.source, 'user');
+  assert.equal(photoLookups().length, 2, 'the author photo is re-fetched, never cached');
+
+  // The bot photo IS cached (it is this app's own photo, not user data).
+  const botFirst = await fetchBotPhoto();
+  const botSecond = await fetchBotPhoto();
+  assert.equal(botFirst.ok, true);
+  assert.equal(botSecond.cached, true, "the bot's own photo is cached");
+  assert.equal(BOT_AVATAR_IMAGE.width, 32);
+}
 
 // ---- 7. /own only accepts stickers --------------------------------------
 await reset();
