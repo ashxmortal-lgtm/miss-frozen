@@ -6,7 +6,8 @@
  * quoted (see `isSelfReply`).
  *
  * Sender resolution, in order — never invented:
- *   1. `message.from`            → a normal user (first + last name, @username)
+ *   1. `message.from`            → a normal user. The name shown is `first_name`,
+ *                                  exactly what a `{mention}` renders as
  *   2. `message.sender_chat`     → a channel post / anonymous admin posting as
  *                                  the channel; the channel title is the name
  *   3. anonymous group admin     → Telegram's GroupAnonymousBot placeholder;
@@ -65,15 +66,17 @@ export function resolveSender(message, chat = null) {
   }
 
   // A real user (never the bot itself — handled by the caller).
+  //
+  // The display name is `first_name` alone — the same string a `{mention}`
+  // renders (`<a href="tg://user?id=…">First</a>`), so the card matches what
+  // members see in chat. The @username is kept for diagnostics only and is
+  // never drawn.
   if (from && !ANONYMOUS_ADMIN_IDS.has(from.id)) {
-    const name = [from.first_name, from.last_name]
-      .map((part) => String(part || '').trim())
-      .filter(Boolean)
-      .join(' ');
+    const first = String(from.first_name || '').trim();
     return {
       id: from.id ?? null,
       chatId: null,
-      name: (name || from.username || GENERIC_AUTHOR).slice(0, MAX_NAME),
+      name: (first || String(from.username || '').trim() || GENERIC_AUTHOR).slice(0, MAX_NAME),
       username: from.username ? `@${from.username}` : '',
       isChannel: false,
       anonymous: false,

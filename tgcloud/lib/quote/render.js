@@ -31,6 +31,8 @@ export const PALETTE = {
   meta: [150, 138, 168],
   avatarFallback: [58, 47, 78],
   avatarInk: [138, 122, 168],
+  nestedBg: [44, 33, 62],      // the quoted block, a shade above the bubble
+  nestedText: [196, 186, 212],
 };
 
 const MARGIN = 4;        // outer transparent padding
@@ -40,6 +42,19 @@ const BUBBLE_RADIUS = 38;
 const TEXT_PADDING = 24;
 /** Small repeat of the avatar inside the bubble, next to the name (QuotLy). */
 const BADGE = 34;
+
+// ---- nested quote (`/q r`) -------------------------------------------------
+/** The message being replied to, shown inside the bubble above the main text. */
+const NESTED = {
+  pad: 12,          // inner padding of the quoted block
+  bar: 4,           // accent bar on the left
+  barGap: 10,       // bar → quoted content
+  nameSize: 15,
+  nameHeight: 20,
+  textSize: 17,
+  maxLines: 3,
+  gapAfter: 12,     // quoted block → main text
+};
 
 // ---- surface ---------------------------------------------------------------
 
@@ -184,7 +199,7 @@ const FONT_STEPS = [40, 36, 33, 30, 27, 24, 21, 19, 17];
  */
 export function planLayout({
   text = '', name = '', hasAvatar = true, width = STICKER_SIZE, maxHeight = MAX_SIDE,
-  badge = false,
+  badge = false, nested = null,
 }) {
   const avatarSpace = hasAvatar ? AVATAR + GAP : 0;
   const bubbleWidth = width - MARGIN * 2 - avatarSpace;
@@ -193,10 +208,21 @@ export function planLayout({
   // The name shares its row with the small badge, so the row is taller.
   const nameLineHeight = Math.max(Math.round(nameSize * 1.3), badge ? BADGE + 6 : 0);
 
+  // The nested quote (`/q r`) has a fixed, small type size, so its size does not
+  // depend on the main text and is measured once.
+  const nestedLines = nested && nested.text
+    ? clampLines(wrapText(normalizeText(nested.text), nestedContentWidth(innerWidth), NESTED.textSize),
+      NESTED.maxLines, nestedContentWidth(innerWidth), NESTED.textSize).lines
+    : [];
+  const nestedBoxHeight = nestedLines.length
+    ? NESTED.pad * 2 + NESTED.nameHeight + nestedLines.length * lineHeightOf(NESTED.textSize) + 3
+    : 0;
+  const nestedBlock = nestedBoxHeight ? nestedBoxHeight + NESTED.gapAfter : 0;
+
   for (const size of FONT_STEPS) {
     const lines = text ? wrapText(normalizeText(text), innerWidth, size) : [];
     const lineHeight = lineHeightOf(size);
-    const bubbleHeight = TEXT_PADDING * 2 + nameLineHeight + 10
+    const bubbleHeight = TEXT_PADDING * 2 + nameLineHeight + 10 + nestedBlock
       + (lines.length ? lines.length * lineHeight : lineHeight);
     const height = Math.max(bubbleHeight + MARGIN * 2 + (hasAvatar ? 16 : 0),
       hasAvatar ? AVATAR + MARGIN * 2 : 0);
@@ -204,6 +230,7 @@ export function planLayout({
       return {
         fontSize: size, lines, lineHeight, bubbleWidth, bubbleHeight, innerWidth,
         nameSize, nameLineHeight, height: Math.min(maxHeight, Math.round(height)), clipped: false,
+        nestedLines, nestedBoxHeight,
       };
     }
   }
@@ -211,15 +238,20 @@ export function planLayout({
   // Even the smallest size overflows: clip to the available rows.
   const size = FONT_STEPS[FONT_STEPS.length - 1];
   const lineHeight = lineHeightOf(size);
-  const room = Math.floor((maxHeight - MARGIN * 2 - TEXT_PADDING * 2 - nameLineHeight - 10)
+  const room = Math.floor((maxHeight - MARGIN * 2 - TEXT_PADDING * 2 - nameLineHeight - 10 - nestedBlock)
     / lineHeight);
   const wrapped = wrapText(normalizeText(text), innerWidth, size);
   const { lines, clipped } = clampLines(wrapped, Math.max(1, room), innerWidth, size);
-  const bubbleHeight = TEXT_PADDING * 2 + nameLineHeight + 10 + lines.length * lineHeight;
+  const bubbleHeight = TEXT_PADDING * 2 + nameLineHeight + 10 + nestedBlock + lines.length * lineHeight;
   return {
     fontSize: size, lines, lineHeight, bubbleWidth, bubbleHeight, innerWidth,
-    nameSize, nameLineHeight, height: maxHeight, clipped,
+    nameSize, nameLineHeight, height: maxHeight, clipped, nestedLines, nestedBoxHeight,
   };
+}
+
+/** Width available to the quoted text: block − padding − accent bar − bar gap. */
+function nestedContentWidth(innerWidth) {
+  return Math.max(40, innerWidth - NESTED.pad * 2 - NESTED.bar - NESTED.barGap);
 }
 
 // ---- sticker ---------------------------------------------------------------
@@ -234,9 +266,11 @@ export function planLayout({
  * @param {number} [options.userId]    seeds the name colour
  * @param {object|null} [options.avatar]  decoded RGBA image for the profile photo
  * @param {string} [options.kind]      label when the message had no text
+ * @param {{name:string,text:string,userId?:number}} [options.nested]
+ *        the message this one was replying to (`/q r`), drawn inside the bubble
  */
 export function renderQuote({
-  text = '', name = '', userId = 0, avatar = null, kind = '', subtitle = '',
+  text = '', name = '', userId = 0, avatar = null, kind = '', nested = null,
 }) {
   loadAtlas(); // fail fast if the atlas is unusable
 
@@ -249,7 +283,7 @@ export function renderQuote({
   // that makes the card read as a QuotLy sticker rather than a text box.
   const badge = true;
 
-  const plan = planLayout({ text: drawableText || '', name, hasAvatar: true, badge });
+  const plan = planLayout({ text: drawableText || '', name, hasAvatar: true, badge, nested });
   const height = plan.height;
   const surface = new Surface(STICKER_SIZE, height);
 
@@ -265,8 +299,9 @@ export function renderQuote({
   const textX = bubbleX + TEXT_PADDING;
   const nameRowTop = bubbleY + TEXT_PADDING;
   const nameBaseline = nameRowTop + Math.round(BADGE / 2 + plan.nameSize * 0.34);
-  const firstLineBaseline = nameRowTop + plan.nameLineHeight + 10 + plan.lineHeight
-    - Math.round((plan.lineHeight - plan.nameSize) / 2);
+  const nestedTop = nameRowTop + plan.nameLineHeight + 10;
+  const firstLineBaseline = nestedTop + (plan.nestedBoxHeight ? plan.nestedBoxHeight + NESTED.gapAfter : 0)
+    + plan.lineHeight - Math.round((plan.lineHeight - plan.nameSize) / 2);
 
   // Blank lines shrink to a paragraph gap instead of a full line box.
   const baselineOf = (index) => {
@@ -309,10 +344,32 @@ export function renderQuote({
   const shownName = ellipsize(normalizeText(name).trim() || 'Unknown', nameWidth, plan.nameSize);
   drawLine(surface, shownName, nameX, nameBaseline, plan.nameSize, nameColor(userId));
 
-  if (subtitle) {
-    const subSize = 15;
-    const shownSub = ellipsize(normalizeText(subtitle), nameWidth, subSize);
-    drawLine(surface, shownSub, nameX, nameBaseline + subSize + 3, subSize, PALETTE.meta);
+  // ---- the quoted message, inside the bubble (`/q r`) --------------------
+  if (plan.nestedLines.length) {
+    const boxX = textX;
+    const boxW = plan.innerWidth;
+    const boxH = plan.nestedBoxHeight;
+    surface.roundRect(boxX, nestedTop, boxW, boxH, 10, PALETTE.nestedBg);
+
+    // Accent bar, in the quoted author's colour, like Telegram's reply strip.
+    const accent = nameColor(nested?.userId || userId);
+    surface.roundRect(boxX + NESTED.pad, nestedTop + NESTED.pad, NESTED.bar,
+      boxH - NESTED.pad * 2, NESTED.bar / 2, accent);
+
+    const contentX = boxX + NESTED.pad + NESTED.bar + NESTED.barGap;
+    const contentW = nestedContentWidth(plan.innerWidth);
+    const nestedName = ellipsize(normalizeText(nested?.name || '').trim(), contentW, NESTED.nameSize);
+    if (nestedName) {
+      drawLine(surface, nestedName, contentX,
+        nestedTop + NESTED.pad + NESTED.nameSize, NESTED.nameSize, accent);
+    }
+    const nestedLineHeight = lineHeightOf(NESTED.textSize);
+    plan.nestedLines.forEach((line, index) => {
+      drawLine(surface, line, contentX,
+        nestedTop + NESTED.pad + NESTED.nameHeight + (index + 1) * nestedLineHeight
+          - Math.round((nestedLineHeight - NESTED.textSize) / 2),
+        NESTED.textSize, PALETTE.nestedText);
+    });
   }
 
   // ---- quoted text -------------------------------------------------------
@@ -341,6 +398,7 @@ export function renderQuote({
     hasAvatar: Boolean(avatar),
     // What the card actually credits — lets tests assert the visible name.
     drawnName: shownName,
+    nestedLines: plan.nestedLines,
   };
 }
 
