@@ -1,6 +1,6 @@
 import { db } from 'sdk';
 import { api } from './message_api.js';
-import { eq, and } from 'sdk/db';
+import { eq, and, sql } from 'sdk/db';
 import { users, inventory } from '../schema.js';
 
 export const GIFTS = [
@@ -175,27 +175,32 @@ async function getBalance(uid) {
   return u ? u.balance : 0;
 }
 
+// The balance check and the debit must be one statement: a read-then-write
+// pair lets two concurrent gifts both pass the check and pay once, and it also
+// overwrites any coins credited in between with a stale balance.
 async function deduct(uid, amount) {
-  const u = await db.select().from(users).where(eq(users.telegramId, uid)).get();
-  if (!u || u.balance < amount) return false;
-  await db.update(users).set({ balance: u.balance - amount }).where(eq(users.telegramId, uid)).run();
-  return true;
+  const paid = await db.run(sql`
+    UPDATE users SET balance = balance - ${amount}
+    WHERE telegram_id = ${uid} AND balance >= ${amount}
+  `);
+  return !!paid?.rowsAffected;
 }
 
+// Insert-then-increment keeps the quantity correct when two gifts land at the
+// same time; the old read-then-write lost one of the increments.
 async function addGiftToInventory(uid, gift) {
   const itemName = `${gift.emoji} ${gift.name}`;
-  const existing = await db.select().from(inventory)
+  await db.run(sql`
+    INSERT OR IGNORE INTO inventory (telegram_id, item_type, item_name, qty)
+    VALUES (${uid}, 'gift', ${itemName}, 0)
+  `);
+  await db.run(sql`
+    UPDATE inventory SET qty = qty + 1
+    WHERE telegram_id = ${uid} AND item_name = ${itemName}
+  `);
+  const row = await db.select().from(inventory)
     .where(and(eq(inventory.telegramId, uid), eq(inventory.itemName, itemName))).get();
-  if (existing) {
-    await db.update(inventory)
-      .set({ qty: (existing.qty || 1) + 1 })
-      .where(eq(inventory.id, existing.id)).run();
-    return (existing.qty || 1) + 1;
-  }
-  await db.insert(inventory).values({
-    telegramId: uid, itemType: 'gift', itemName, qty: 1,
-  }).run();
-  return 1;
+  return Number(row?.qty || 1);
 }
 
 export async function handleGiftCommand(message) {

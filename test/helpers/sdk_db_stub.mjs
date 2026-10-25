@@ -32,34 +32,39 @@ export const index = (name, ...cols) => ({ kind: 'index', name, cols, on: () => 
 export const uniqueIndex = (name, ...cols) => ({ kind: 'uniqueIndex', name, cols, on: () => ({ kind: 'uniqueIndex', name, cols }) });
 export const primaryKey = (...cols) => ({ kind: 'primaryKey', cols });
 
-// Schema-DSL shims: schema.js is imported for module-graph parity, but only the
-// hand-written DDL in each feature module touches the in-memory database.
-const mockColumn = () => {
-  const column = {};
+// Schema-DSL shims: schema.js declares the real tables, and this shim keeps the
+// declared DB column name so `db.select()...where(eq(users.telegramId, id))`
+// reads (e.g. getBalance) resolve against the in-memory database.
+const mockColumn = (name) => {
+  const column = { __column: true, name };
   for (const method of ['notNull', 'default', 'primaryKey', 'deprecated', 'references', 'autoIncrement']) {
     column[method] = () => column;
   }
   return column;
 };
-export const eq = () => ({});
-export const ne = () => ({});
-export const gt = () => ({});
-export const gte = () => ({});
-export const lt = () => ({});
-export const lte = () => ({});
-export const and = () => ({});
-export const or = () => ({});
-export const like = () => ({});
-export const asc = () => ({});
-export const desc = () => ({});
-export const inArray = () => ({});
-export const integer = () => mockColumn();
-export const text = () => mockColumn();
-export const table = (name, _cols, extra) => {
+// Comparisons carry the column and value so the tiny query builder below can
+// turn them into SQL instead of hard-coding call order in every test.
+export const eq = (column, value) => ({ __cmp: 'eq', column: column?.name ?? column, value });
+export const ne = (column, value) => ({ __cmp: 'ne', column: column?.name ?? column, value });
+export const gt = (column, value) => ({ __cmp: 'gt', column: column?.name ?? column, value });
+export const gte = (column, value) => ({ __cmp: 'gte', column: column?.name ?? column, value });
+export const lt = (column, value) => ({ __cmp: 'lt', column: column?.name ?? column, value });
+export const lte = (column, value) => ({ __cmp: 'lte', column: column?.name ?? column, value });
+export const like = (column, value) => ({ __cmp: 'like', column: column?.name ?? column, value });
+export const and = (...parts) => ({ __cmp: 'and', parts: parts.flat() });
+export const or = (...parts) => ({ __cmp: 'or', parts: parts.flat() });
+export const asc = (column) => ({ __dir: 'asc', column: column?.name ?? column });
+export const desc = (column) => ({ __dir: 'desc', column: column?.name ?? column });
+export const inArray = (column, values) => ({ __cmp: 'in', column: column?.name ?? column, values });
+export const integer = (name) => mockColumn(name);
+export const text = (name) => mockColumn(name);
+export const table = (name, cols, extra) => {
   if (typeof extra === 'function') {
-    try { extra(new Proxy({}, { get: () => mockColumn() })); } catch (_) { /* test-only shape */ }
+    try {
+      extra(new Proxy({}, { get: (_t, key) => mockColumn(String(key)) }));
+    } catch (_) { /* test-only shape */ }
   }
-  return { kind: 'table', name };
+  return { __table: true, tableName: name, ...(cols || {}) };
 };
 
 function queryOf(query) {
@@ -68,7 +73,71 @@ function queryOf(query) {
   return { text: query.text, params: query.params || [] };
 }
 
+const tableNameOf = (target) => {
+  if (typeof target === 'string') return target;
+  return target?.tableName || target?.name || String(target);
+};
+
+function renderWhere(clause, params) {
+  if (!clause) return '';
+  if (clause.__cmp === 'and' || clause.__cmp === 'or') {
+    const joiner = clause.__cmp === 'and' ? ' AND ' : ' OR ';
+    const inner = (clause.parts || []).map((p) => renderWhere(p, params)).filter(Boolean);
+    if (!inner.length) return '';
+    return `(${inner.join(joiner)})`;
+  }
+  if (clause.__cmp === 'in') {
+    const values = clause.values || [];
+    if (!values.length) return '0';
+    params.push(...values.map(normalize));
+    return `${clause.column} IN (${values.map(() => '?').join(', ')})`;
+  }
+  const operator = {
+    eq: '=', ne: '!=', gt: '>', gte: '>=', lt: '<', lte: '<=', like: 'LIKE',
+  }[clause.__cmp];
+  if (!operator) return '';
+  params.push(normalize(clause.value));
+  return `${clause.column} ${operator} ?`;
+}
+
+// Tiny stand-in for the SDK query builder: only the shapes the bot actually
+// uses (select/from/where/orderBy/limit) are supported.
+function selectBuilder(columns) {
+  const state = { from: null, where: null, order: [], limit: null };
+  const build = () => {
+    const params = [];
+    const cols = columns
+      ? Object.values(columns).map((c) => c?.name ?? String(c)).join(', ')
+      : '*';
+    let text = `SELECT ${cols} FROM ${tableNameOf(state.from)}`;
+    const where = renderWhere(state.where, params);
+    if (where) text += ` WHERE ${where}`;
+    if (state.order.length) {
+      text += ` ORDER BY ${state.order.map((o) => `${o.column} ${o.__dir.toUpperCase()}`).join(', ')}`;
+    }
+    if (state.limit !== null) text += ` LIMIT ${Number(state.limit)}`;
+    return { text, params };
+  };
+  const builder = {
+    from(target) { state.from = target; return builder; },
+    where(clause) { state.where = clause; return builder; },
+    orderBy(...orders) { state.order = orders.flat(); return builder; },
+    limit(value) { state.limit = value; return builder; },
+    async get() {
+      const { text, params } = build();
+      return database.prepare(text).get(...params) || null;
+    },
+    async all() {
+      const { text, params } = build();
+      return database.prepare(text).all(...params);
+    },
+    async run() { return db.run(build()); },
+  };
+  return builder;
+}
+
 export const db = {
+  select(columns) { return selectBuilder(columns); },
   async run(query) {
     const { text, params } = queryOf(query);
     const statement = database.prepare(text);
