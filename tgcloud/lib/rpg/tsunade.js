@@ -30,6 +30,9 @@ import {
 const TSUNADE_MEDIA_CHAT_ID = -1003889508991;
 const TSUNADE_MEDIA_MESSAGE_ID = 31;
 
+/** The discovery line exactly as it is sent (styled on the way out). */
+export const TSUNADE_DISCOVERY_TEXT = '🐌 Lady Tsunade was found drinking sake and gambling 🤣';
+
 const now = () => Math.floor(Date.now() / 1000);
 
 async function ownedSet(telegramId) {
@@ -244,7 +247,7 @@ async function resolveSearch(id, row, user) {
   await exhaustJiraiya(id);
   await exhaustTsunade(id);
 
-  await sendDiscoveryMessage(id, user || { id, first_name: 'Shinobi' });
+  await sendTsunadeDiscovery(id, user || { id, first_name: 'Shinobi' });
   return `🐌 Lady Tsunade was found drinking sake and gambling 🤣\n\n🐸 Jiraiya is exhausted — ready at ${dueText(now() + EXHAUSTION_RECOVERY_SEC)}.\n🐌 Tsunade is exhausted — ready at ${dueText(now() + EXHAUSTION_RECOVERY_SEC)}.\n🍥 Naruto is available again.`;
 }
 
@@ -264,9 +267,12 @@ async function exhaustTsunade(id) {
   `);
 }
 
-/** Discovery media post (storage channel copy strategy, same as map photos). */
-async function sendDiscoveryMessage(chatId, user) {
-  const text = render(user, '🐌 Lady Tsunade was found drinking sake and gambling 🤣');
+/**
+ * Discovery media post (storage channel copy strategy, same as map photos).
+ * Exported so the owner preview (`/testT`) sends the identical message.
+ */
+export async function sendTsunadeDiscovery(chatId, user) {
+  const text = render(user, TSUNADE_DISCOVERY_TEXT);
   const fileId = await getMapPhotoFileId(chatId, TSUNADE_MEDIA_MESSAGE_ID);
   if (fileId) {
     try {
@@ -276,16 +282,18 @@ async function sendDiscoveryMessage(chatId, user) {
         caption: style(text),
         parse_mode: 'HTML',
       });
-      return;
+      return true;
     } catch (e) {
       console.error('[tsunade media]', e?.description || e);
     }
   }
   try {
     await send(chatId, { text, parse_mode: 'HTML' });
+    return true;
   } catch (e) {
     console.error('[tsunade discovery]', e?.description || e);
   }
+  return false;
 }
 
 export async function sweepTsunadeSearches() {

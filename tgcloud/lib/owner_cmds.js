@@ -1,5 +1,7 @@
-// MissFrozen owner commands: /stats, /groups, coupons.
+// MissFrozen owner commands: /stats, /groups, coupons, discovery previews.
 import { handleCreateCoupon, handleListCoupons, handleEditCoupon, handleCouponWizardCallback } from "./coupons.js";
+import { sendTsunadeDiscovery } from './rpg/tsunade.js';
+import { sendJiraiyaDiscovery } from './rpg/jiraiya_discovery.js';
 import { db, BotApiError } from 'sdk';
 import { api } from './message_api.js';
 import { eq } from 'sdk/db';
@@ -236,6 +238,45 @@ async function handleGroupsList(message) {
   return true;
 }
 
+/**
+ * `/testT` · `/testJ` — owner preview of a discovery announcement.
+ *
+ * Nothing is granted and no state is written: this only runs the real sender
+ * for the discovery message (same caption, same photo, same rich button) in the
+ * chat where the owner typed the command, so the exact delivery can be checked.
+ */
+async function handleDiscoveryPreview(message, kind) {
+  const from = message.from;
+  if (!from) return true;
+  if (from.id !== OWNER_ID) {
+    await sayRich(message.chat.id, deniedBlocks(from), '⛔ Only the bot owner can use this command.');
+    return true;
+  }
+  const chatId = message.chat.id;
+  const label = kind === 'jiraiya' ? 'Jiraiya' : 'Tsunade';
+  let delivered = false;
+  try {
+    delivered = kind === 'jiraiya'
+      // Same targets as production: this chat first, the owner's DM as fallback.
+      ? await sendJiraiyaDiscovery(from, chatId)
+      : await sendTsunadeDiscovery(chatId, from);
+  } catch (e) {
+    console.error(`[test ${kind}]`, e?.description || e?.message || e);
+  }
+  if (!delivered) {
+    await sayRich(
+      message.chat.id,
+      [
+        para(mention(from)),
+        head('⚠️ TEST FAILED'),
+        para(`${label} discovery could not be delivered. Check the logs for the Bot API error.`),
+      ],
+      `⚠️ ${label} discovery could not be delivered. Check the logs.`,
+    );
+  }
+  return true;
+}
+
 export async function handleOwnerCommand(message) {
   const text = message.text || '';
   if (!text.startsWith('/')) return false;
@@ -245,6 +286,10 @@ export async function handleOwnerCommand(message) {
   if (cmd === '/create_cc') return handleCreateCoupon(message, text);
   if (cmd === '/list_cc') return handleListCoupons(message);
   if (cmd === '/edit_cc') return handleEditCoupon(message, text);
+  // Discovery previews: /testT (Tsunade) · /testJ (Jiraiya). Telegram lowercases
+  // nothing, so both spellings are matched case-insensitively.
+  if (cmd === '/testt' || cmd === '/test_t') return handleDiscoveryPreview(message, 'tsunade');
+  if (cmd === '/testj' || cmd === '/test_j') return handleDiscoveryPreview(message, 'jiraiya');
   return false;
 }
 

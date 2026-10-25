@@ -54,6 +54,8 @@ export const COMMANDS = [
   { cmd: '/create_cc', desc: 'Create a coupon code', access: 'owner' },
   { cmd: '/list_cc', desc: 'List active coupon codes', access: 'owner' },
   { cmd: '/edit_cc', desc: 'Edit a coupon code', access: 'owner' },
+  { cmd: '/testT', desc: 'Preview the Tsunade discovery message (owner)', access: 'owner' },
+  { cmd: '/testJ', desc: 'Preview the Jiraiya discovery message (owner)', access: 'owner' },
 ];
 
 export const ALIASES = {

@@ -16,6 +16,10 @@ Gaming features only: `/games` `/xoxo` `/rps` (+ cancels/stats), `/map`
 `/search_tsuna`, coupons (`/redeem` `/create_cc` `/list_cc` `/edit_cc`),
 `/addcoins`, plus common commands. No study features, no `/imfrozen`.
 
+Owner-only previews `/testT` (Tsunade) and `/testJ` (Jiraiya) replay the real
+discovery message in the chat where they are typed — same photo, caption and
+rich button — so the delivery can be checked without granting anything.
+
 **`/eco on|off`** is available to the bot owner and to **Telegram group admins**
 (verified live with `getChatMember`) — no `/imfrozen` registration is needed
 or read. Ordinary users cannot change it. While economy is off in a group, the
