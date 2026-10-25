@@ -16,6 +16,7 @@ import { reducedActivitySeconds, reducedCooldownSeconds } from './pet/defs.js';
 import { activityCompleteText } from './pet/text.js';
 import { notifyDailyProgress } from './daily.js';
 import { restingShinobi, applyBbqRecovery } from './map/bbq.js';
+import { sendJiraiyaDiscovery } from './rpg/jiraiya_discovery.js';
 
 const H = 3600;
 export const KINDS = {
@@ -189,6 +190,17 @@ async function finish(a) {
       if (jiraiyaFound(cnt ? cnt.n : 0)) {
         const g = await db.run(sql`INSERT OR IGNORE INTO inventory (telegram_id, item_type, item_name, qty) VALUES (${id}, 'shinobi', 'Jiraiya', 1)`);
         found = g.rowsAffected > 0;
+        if (found) {
+          // Same moment as finding Tsunade: a photo announcement with the
+          // discovery caption + the Check ❄️ ability button (DM first, then
+          // the group this patrol ran in).
+          try {
+            await sendJiraiyaDiscovery(
+              { id, first_name: (u && u.first_name) || 'Shinobi', username: u ? u.username : null },
+              a.chat_id,
+            );
+          } catch (e) { console.error('[jiraiya announcement]', e); }
+        }
       }
     }
   }
