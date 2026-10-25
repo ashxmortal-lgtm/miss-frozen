@@ -25,6 +25,23 @@ test('both preview commands are registered as owner commands', () => {
   assert.match(mt, /if \(entry\.access !== 'user' \|\| entry\.hidden\) continue;/, 'menu filters by user access');
 });
 
+test('Tsunade discovery carries the ability button, like Jiraiya', () => {
+  const tsunade = read('tgcloud/lib/rpg/tsunade.js');
+  assert.match(tsunade, /import \{ abilityCheckKeyboard \} from '\.\.\/ability\.js';/);
+  assert.match(tsunade, /export function tsunadeDiscoveryRich\(user, fileId = null\)/);
+  assert.match(tsunade, /abilityCheckKeyboard\('Tsunade'\)/, 'the frozenblooded/13 button');
+  assert.match(tsunade, /<figure><img src="tg:\/\/photo\?id=\$\{TSUNADE_PHOTO_ID\}"\/><\/figure>/,
+    'the photo is embedded in the rich message');
+  assert.match(tsunade, /api\.sendRichMessage\(/, 'sent as a rich message, so the button is rich');
+  // The rich send happens before the classic photo fallback.
+  assert.ok(
+    tsunade.indexOf('api.sendRichMessage') < tsunade.indexOf('await api.sendPhoto('),
+    'rich first, classic photo as fallback',
+  );
+  // Compact layout: the caption must not be split into an empty paragraph per line.
+  assert.doesNotMatch(tsunade, /<p><br\/><\/p>/);
+});
+
 test('the previews reuse the production senders and grant nothing', () => {
   const owner = read('tgcloud/lib/owner_cmds.js');
   assert.match(owner, /import \{ sendTsunadeDiscovery \} from '\.\/rpg\/tsunade\.js';/);

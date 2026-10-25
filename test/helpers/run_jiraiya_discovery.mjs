@@ -83,13 +83,16 @@ assert.match(withPhoto.html, /^<figure><img src="tg:\/\/photo\?id=jiraiya_photo"
 assert.deepEqual(withPhoto.media, [
   { id: 'jiraiya_photo', media: { type: 'photo', media: 'JIRAIYA_PHOTO' } },
 ], 'the photo travels inside the rich message, like /map');
-// 3 blank paragraphs after the mention, then the 🥀 line.
-assert.match(withPhoto.html, /<p>🐸 [\s\S]*?<\/p>(<p><br\/><\/p>){3}<p>🥀 /,
+// ONE compact paragraph: blank lines are <br/>, never their own paragraph
+// (a paragraph per blank line added margins and blew the message up).
+assert.match(withPhoto.html, /<p>🐸 [\s\S]*?<br\/><br\/><br\/><br\/>🥀 /,
   'exactly three blank lines between the mention and the snake line');
-// exactly one blank paragraph before the last line.
-assert.match(withPhoto.html, /<\/p><p><br\/><\/p><p> ʜᴇ ᴡᴀꜱ ʙᴜꜱʏ/,
+assert.match(withPhoto.html, /ꜱᴘʀɪɴɢꜱ!<br\/><br\/> ʜᴇ ᴡᴀꜱ ʙᴜꜱʏ/,
   'exactly one blank line before the last line');
-assert.equal((withPhoto.html.match(/<p><br\/><\/p>/g) || []).length, 4, 'four blank lines in total');
+assert.equal((withPhoto.html.match(/<p><br\/><\/p>/g) || []).length, 0,
+  'no empty paragraph is emitted — they carry margins');
+assert.equal((withPhoto.html.match(/<p>/g) || []).length, 1, 'the caption is a single paragraph');
+assert.equal((withPhoto.html.match(/<br\/>/g) || []).length, 6, 'four + two line breaks');
 assert.match(withPhoto.html, /<span class="tg-spoiler">ʀᴇꜱᴇᴀʀᴄʜ<\/span>/, 'styled spoiler');
 assert.match(withPhoto.html, rawButton, 'a real rich tg-button, not an inline keyboard');
 
@@ -198,7 +201,8 @@ assert.ok(settled.blocks.some((b) => /Jiraiya has joined your shinobi roster/i.t
 assert.equal(rich.length, 1, 'exactly one discovery announcement');
 assert.equal(rich[0].chat_id, group.id, 'the patrol group, not the DM');
 assert.match(htmlOf(rich[0]), /<figure><img src="tg:\/\/photo\?id=jiraiya_photo"\/><\/figure>/);
-assert.equal((htmlOf(rich[0]).match(/<p><br\/><\/p>/g) || []).length, 4);
+assert.equal((htmlOf(rich[0]).match(/<p><br\/><\/p>/g) || []).length, 0, 'no empty paragraphs');
+assert.equal((htmlOf(rich[0]).match(/<br\/>/g) || []).length, 6, 'compacted line breaks');
 assert.match(htmlOf(rich[0]), sentButton);
 const owned = await db.get(sql`
   SELECT qty FROM inventory WHERE telegram_id = ${HERO} AND item_name = 'Jiraiya'

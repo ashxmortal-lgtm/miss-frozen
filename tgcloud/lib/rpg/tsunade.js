@@ -16,6 +16,8 @@ import { api } from '../message_api.js';
 import { render, style, escapeHtml, mention } from '../texts.js';
 import { send } from '../chat.js';
 import { getMapPhotoFileId } from '../map/media.js';
+import { richHtml } from '../map/rich.js';
+import { abilityCheckKeyboard } from '../ability.js';
 import { todayKey } from '../economy.js';
 import { dueText, istDateTime, istHm, isToday, inRemaining } from './time.js';
 import { P, quote } from '../rich.js';
@@ -267,13 +269,63 @@ async function exhaustTsunade(id) {
   `);
 }
 
+/** Rich-message media id used for the embedded figure. */
+const TSUNADE_PHOTO_ID = 'tsunade_photo';
+
+/**
+ * Discovery message: the storage-channel photo embedded in a rich message
+ * (`<figure>` + `media`, exactly like /map) with the `Check ❄️ ability` button
+ * for Tsunade's guide post. The single `<p>` keeps the caption on one line with
+ * no paragraph margins — the same compact layout as the Jiraiya discovery.
+ */
+export function tsunadeDiscoveryRich(user, fileId = null) {
+  const caption = render(user, TSUNADE_DISCOVERY_TEXT);
+  const body = `<p>${String(caption).split('\n').join('<br/>')}</p>`;
+  const figure = fileId
+    ? `<figure><img src="tg://photo?id=${TSUNADE_PHOTO_ID}"/></figure>`
+    : '';
+  return {
+    html: `${figure}${richHtml(body, abilityCheckKeyboard('Tsunade'))}`,
+    ...(fileId ? { media: [{ id: TSUNADE_PHOTO_ID, media: { type: 'photo', media: fileId } }] } : {}),
+  };
+}
+
+const log = (label, e) => console.error(`[${label}]`, e?.description || e?.message || e);
+
 /**
  * Discovery media post (storage channel copy strategy, same as map photos).
  * Exported so the owner preview (`/testT`) sends the identical message.
+ *
+ * Per chat: rich message with the embedded photo + rich click button, then the
+ * same rich message without the photo, then a classic photo with an inline
+ * button, then plain text. Returns true when something was delivered.
  */
 export async function sendTsunadeDiscovery(chatId, user) {
   const text = render(user, TSUNADE_DISCOVERY_TEXT);
+  const keyboard = abilityCheckKeyboard('Tsunade');
+  const button = keyboard ? { reply_markup: keyboard } : {};
   const fileId = await getMapPhotoFileId(chatId, TSUNADE_MEDIA_MESSAGE_ID);
+
+  if (fileId) {
+    try {
+      await api.sendRichMessage({
+        chat_id: chatId,
+        rich_message: tsunadeDiscoveryRich(user, fileId),
+      });
+      return true;
+    } catch (e) {
+      log('tsunade rich media', e);
+    }
+  }
+  try {
+    await api.sendRichMessage({
+      chat_id: chatId,
+      rich_message: tsunadeDiscoveryRich(user),
+    });
+    return true;
+  } catch (e) {
+    log('tsunade rich', e);
+  }
   if (fileId) {
     try {
       await api.sendPhoto({
@@ -281,17 +333,18 @@ export async function sendTsunadeDiscovery(chatId, user) {
         photo: fileId,
         caption: style(text),
         parse_mode: 'HTML',
+        ...button,
       });
       return true;
     } catch (e) {
-      console.error('[tsunade media]', e?.description || e);
+      log('tsunade media', e);
     }
   }
   try {
-    await send(chatId, { text, parse_mode: 'HTML' });
+    await send(chatId, { text, parse_mode: 'HTML', ...button });
     return true;
   } catch (e) {
-    console.error('[tsunade discovery]', e?.description || e);
+    log('tsunade discovery', e);
   }
   return false;
 }

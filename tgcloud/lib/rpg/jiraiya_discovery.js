@@ -40,12 +40,16 @@ export function jiraiyaDiscoveryCaption(mentionHtml) {
     + ' he was busy with his “<span class="tg-spoiler">research</span>”...🤫';
 }
 
-/** One rich paragraph per line; blank lines become an empty `<p><br/></p>`. */
+/**
+ * One single paragraph with `<br/>` line breaks.
+ *
+ * Blank lines must NOT become separate paragraphs: every paragraph carries its
+ * own margin, so four empty paragraphs turned a three-line message into a huge
+ * block of empty space. `<br/>` keeps each blank line exactly one line tall.
+ */
 export function captionParagraphs(caption) {
-  return String(caption).split('\n').map((line) => {
-    const text = line.replace(/[ \t]+$/, '');
-    return text ? `<p>${text}</p>` : '<p><br/></p>';
-  }).join('');
+  const lines = String(caption).split('\n').map((line) => line.replace(/[ \t]+$/, ''));
+  return `<p>${lines.join('<br/>')}</p>`;
 }
 
 /** Rich photo (as `<figure>`) + caption paragraphs + the rich ability button. */

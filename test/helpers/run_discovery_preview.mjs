@@ -49,16 +49,23 @@ const message = (text, from, chat = { id: GROUP, type: 'supergroup', title: 'Lea
 
 const reset = () => { rich.length = 0; texts.length = 0; photos.length = 0; forwards.length = 0; };
 
-// ---- 1. /testT sends the real Tsunade discovery photo + caption ------------
+// ---- 1. /testT sends the real rich Tsunade discovery (photo + button) ------
 reset();
 assert.equal(await handleOwnerCommand(message('/testT', OWNER)), true);
-assert.equal(photos.length, 1, 'one discovery photo');
-assert.equal(photos[0].chat_id, GROUP, 'sent in the chat where the owner typed it');
-assert.equal(photos[0].photo, 'PHOTO_31', 'the storage-channel Tsunade photo (message 31)');
-assert.equal(photos[0].parse_mode, 'HTML');
-assert.equal(photos[0].caption, style(TSUNADE_DISCOVERY_TEXT), 'the exact production caption');
-assert.equal(rich.length, 0);
+assert.equal(rich.length, 1, 'one rich discovery message');
+assert.equal(photos.length, 0, 'no classic sendPhoto');
 assert.equal(texts.length, 0, 'no extra wrapper message');
+assert.equal(rich[0].chat_id, GROUP, 'sent in the chat where the owner typed it');
+assert.deepEqual(rich[0].rich_message.media, [
+  { id: 'tsunade_photo', media: { type: 'photo', media: 'PHOTO_31' } },
+], 'the storage-channel Tsunade photo (message 31)');
+const tHtml = String(rich[0].rich_message.html);
+assert.match(tHtml, /<figure><img src="tg:\/\/photo\?id=tsunade_photo"\/><\/figure>/);
+assert.match(tHtml, new RegExp(style(TSUNADE_DISCOVERY_TEXT)), 'the exact production caption');
+assert.match(tHtml, /<tg-button[^>]*type="url"[^>]*url="https:\/\/t\.me\/frozenblooded\/13"[^>]*style="success"/,
+  'the Tsunade ability button is attached');
+assert.equal((tHtml.match(/<p><br\/><\/p>/g) || []).length, 0, 'no empty paragraphs');
+assert.equal(rich[0].reply_markup, undefined, 'no inline keyboard alongside the rich button');
 
 // ---- 2. /testJ sends the real rich Jiraiya discovery ----------------------
 reset();
@@ -70,7 +77,8 @@ assert.deepEqual(rich[0].rich_message.media, [
 ], 'the storage-channel Jiraiya photo (message 581)');
 const html = String(rich[0].rich_message.html);
 assert.match(html, /<figure><img src="tg:\/\/photo\?id=jiraiya_photo"\/><\/figure>/);
-assert.equal((html.match(/<p><br\/><\/p>/g) || []).length, 4, 'the exact blank-line spacing');
+assert.equal((html.match(/<p><br\/><\/p>/g) || []).length, 0, 'no empty paragraphs (they blow the layout up)');
+assert.equal((html.match(/<br\/>/g) || []).length, 6, 'compact line breaks: 3 + 1 blank lines');
 assert.match(html, /<tg-button[^>]*type="url"[^>]*url="https:\/\/t\.me\/frozenblooded\/14"/, 'rich ability button');
 assert.match(html, new RegExp(style(jiraiyaDiscoveryCaption('')).split('\n').pop().trim().slice(0, 8).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
   'the discovery caption body');
@@ -80,7 +88,7 @@ assert.equal(photos.length, 0);
 reset();
 const DM = { id: OWNER_ID, type: 'private' };
 assert.equal(await handleOwnerCommand(message('/testT', OWNER, DM)), true);
-assert.equal(photos.at(-1).chat_id, OWNER_ID, 'DM delivery');
+assert.equal(rich.at(-1).chat_id, OWNER_ID, 'DM delivery');
 reset();
 assert.equal(await handleOwnerCommand(message('/testj', OWNER, DM)), true);
 assert.equal(rich.at(-1).chat_id, OWNER_ID, 'lowercase spelling resolves too');
@@ -99,6 +107,7 @@ for (const cmd of ['/testT', '/testJ']) {
   assert.equal(await handleOwnerCommand(message(cmd, STRANGER)), true, `${cmd} is consumed`);
   assert.equal(rich.length, 1, `${cmd}: one denial card`);
   assert.equal(photos.length, 0, `${cmd}: no discovery photo leaks`);
+  assert.doesNotMatch(String(rich[0].rich_message.html || ''), /tg-button/, `${cmd}: no discovery button leaks`);
   const denial = JSON.stringify(rich[0].rich_message.blocks || []);
   assert.match(denial, /⛔/, 'the denial card is shown');
   assert.match(denial, /ᴏᴡɴᴇʀ/, 'it names the owner restriction (small caps)');
@@ -107,7 +116,7 @@ for (const cmd of ['/testT', '/testJ']) {
 // ---- 6. the @bot suffix used in groups still resolves -------------------
 reset();
 assert.equal(await handleOwnerCommand(message('/testT@missfrozen_bot', OWNER)), true);
-assert.equal(photos.length, 1, '/testT@bot works in a group');
+assert.equal(rich.length, 1, '/testT@bot works in a group');
 
 // ---- 7. unrelated owner commands are untouched --------------------------
 assert.equal(await handleOwnerCommand(message('/not_a_command', OWNER)), false);
