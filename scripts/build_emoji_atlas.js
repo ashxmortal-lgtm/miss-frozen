@@ -57,16 +57,13 @@ const ALWAYS = [
   0x1f409, 0x1f996, 0x1f989, 0x1f43e, 0x1f984,
 ];
 
-const GROUPS = [
-  { category: 'Smileys & Emotion', cap: 34 },
-  { category: 'Animals & Nature', cap: 34 },
-  { category: 'Food & Drink', cap: 14 },
-  { category: 'Activities', cap: 14 },
-  { category: 'Travel & Places', cap: 12 },
-  { category: 'Objects', cap: 14 },
-  { category: 'Symbols', cap: 34 },
-  { category: 'People & Body', subcategories: ['hand-fingers-open', 'hand-fingers-partial', 'hand-single-finger'], cap: 12 },
-];
+/**
+ * The baked atlas is an OFFLINE CORE only. The long tail is fetched at render
+ * time from the Twemoji CDN (quote/emoji.js) and cached per isolate, so baking
+ * every emoji would be dead repo weight. Empty here on purpose: the list above
+ * already covers what people actually put in a first name.
+ */
+const GROUPS = [];
 
 const pickEmoji = (catalogue) => {
   const picked = [];
@@ -82,9 +79,8 @@ const pickEmoji = (catalogue) => {
     picked.push(entry);
   }
 
-  // 2. Fill each category with its most-established emoji. `sort_order` follows
-  //    Unicode's original ordering (older = far more common in names), which is
-  //    a much better popularity proxy than an even spread.
+  // 2. Optionally top up by category. Empty by default — the runtime fetch
+  //    covers everything else, so the baked atlas stays small.
   for (const group of GROUPS) {
     const pool = catalogue.filter((entry) => {
       if (!entry.has_img_google || !entry.image) return false;

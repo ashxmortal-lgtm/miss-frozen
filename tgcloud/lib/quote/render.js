@@ -14,7 +14,7 @@
  */
 
 import { encodeRgbaPng } from './png.js';
-import { drawEmoji, emojiLuminance, firstEmojiOf } from './emoji.js';
+import { nameIsEmojiOnly } from './emoji.js';
 import {
   loadAtlas, drawLine, measureLine, normalizeText, renderableShare,
   wrapText, clampLines, ellipsize, lineHeightOf,
@@ -128,12 +128,16 @@ export class Surface {
    * from its centre like Telegram does, then masked by the circle's coverage.
    *
    * @param {{width:number,height:number,rgba:Uint8Array}} image
+   * @param {number} [artScale]  artwork size relative to the mask (1 = fills it).
+   *        Emoji artwork is drawn slightly inside the disc so its edges are not
+   *        clipped by the circle; photos keep the default full bleed.
    */
-  circularImage(image, cx, cy, radius) {
+  circularImage(image, cx, cy, radius, artScale = 1) {
     const { width, height, rgba } = image;
     const side = Math.min(width, height);
     const offsetX = (width - side) / 2;
     const offsetY = (height - side) / 2;
+    const artRadius = radius * artScale;
 
     for (let py = Math.floor(cy - radius) - 1; py <= Math.ceil(cy + radius) + 1; py += 1) {
       for (let px = Math.floor(cx - radius) - 1; px <= Math.ceil(cx + radius) + 1; px += 1) {
@@ -144,8 +148,8 @@ export class Surface {
         if (coverage <= 0) continue;
 
         // Map the pixel into the source square.
-        const u = (px + 0.5 - (cx - radius)) / (radius * 2);
-        const v = (py + 0.5 - (cy - radius)) / (radius * 2);
+        const u = (px + 0.5 - (cx - artRadius)) / (artRadius * 2);
+        const v = (py + 0.5 - (cy - artRadius)) / (artRadius * 2);
         if (u < 0 || v < 0 || u >= 1 || v >= 1) continue;
         const sx = Math.min(width - 1, Math.floor(offsetX + u * side));
         const sy = Math.min(height - 1, Math.floor(offsetY + v * side));
@@ -270,9 +274,12 @@ function nestedContentWidth(innerWidth) {
  * @param {string} [options.kind]      label when the message had no text
  * @param {{name:string,text:string,userId?:number}} [options.nested]
  *        the message this one was replying to (`/q r`), drawn inside the bubble
+ * @param {boolean} [options.emojiAvatar]  the avatar is emoji artwork, so the
+ *        disc behind it must be light for the artwork to read
  */
 export function renderQuote({
   text = '', name = '', userId = 0, avatar = null, kind = '', nested = null,
+  emojiAvatar = false,
 }) {
   loadAtlas(); // fail fast if the atlas is unusable
 
@@ -320,34 +327,27 @@ export function renderQuote({
 
   // ---- the author's avatar, LEFT, centred against the bubble --------------
   const avatarCy = bubbleY + bubbleH / 2;
-  // Avatar fallback order when Telegram gives us no photo:
-  //   1. an emoji from the author's name (🕸️ IS their picture, in effect)
-  //   2. the first letter of the name
-  // A name with neither draws a plain disc rather than a literal "?".
+  // The avatar arrives as an image in every case — a photo, an emoji tile, or an
+  // emoji downloaded from the CDN. Only a total miss reaches the lettered disc.
   const initials = (normalizeText(name).trim()[0] || '').toUpperCase();
-  const nameEmoji = firstEmojiOf(name);
-  // Dark artwork on a dark disc is invisible (the Noto spider web), so pick the
-  // disc that gives the emoji contrast.
-  const emojiDisc = nameEmoji && emojiLuminance(nameEmoji) < 110
-    ? PALETTE.avatarFallbackLight
-    : PALETTE.avatarFallback;
+  // Emoji artwork is mostly transparent around the glyph, so it needs a light
+  // disc to read against (the Noto spider web is dark grey on nothing).
+  const emojiDisc = emojiAvatar ? PALETTE.avatarFallbackLight : PALETTE.avatarFallback;
   const drawFace = (image, cx, cy, radius, fontSize) => {
     if (image) {
-      surface.circularImage(image, cx, cy, radius);
+      // Emoji artwork is mostly transparent around the glyph, so it needs the
+      // disc painted underneath it. A photo covers the disc completely.
+      if (emojiAvatar) surface.circle(cx, cy, radius, PALETTE.avatarFallbackLight);
+      surface.circularImage(image, cx, cy, radius, emojiAvatar ? 0.94 : 1);
       return;
     }
-    // No photo: a name that is an emoji gets that emoji as its picture.
-    if (nameEmoji) {
-      surface.circle(cx, cy, radius, emojiDisc);
-      if (drawEmoji(surface, nameEmoji, cx, cy, radius)) return;
-    }
-    surface.circle(cx, cy, radius, PALETTE.avatarFallback);
+    // No photo and no emoji: an honest disc with the initial.
+    surface.circle(cx, cy, radius, emojiDisc);
     if (!initials) return;
     const width = measureLine(initials, fontSize);
     drawLine(surface, initials, cx - width / 2, cy + fontSize * 0.36, fontSize, PALETTE.avatarInk);
   };
   drawFace(avatar, avatarCx, avatarCy, avatarRadius, 52);
-  const usedEmojiAvatar = !avatar && Boolean(nameEmoji);
 
   // ---- badge + display name inside the bubble ---------------------------
   const badgeCx = textX + BADGE / 2;
@@ -357,18 +357,13 @@ export function renderQuote({
   const nameX = textX + BADGE + 12;
   const nameWidth = plan.innerWidth - BADGE - 12;
   const cleanName = normalizeText(name).trim();
-  // A name that is only an emoji (🕸️) is drawn AS that emoji. Calling it
-  // "Unknown" was wrong: the emoji is the name, and we can draw it now.
-  const emojiOnlyName = !cleanName && Boolean(nameEmoji);
+  // A name that is only an emoji (🕸️) is drawn AS that emoji, on the badge
+  // beside it. Calling it "Unknown" was wrong: the emoji IS the name.
+  const emojiOnlyName = nameIsEmojiOnly(name);
   const shownName = emojiOnlyName
     ? String(name).trim()
     : ellipsize(cleanName || 'Unknown', nameWidth, plan.nameSize);
-  if (emojiOnlyName) {
-    // The badge beside the name is already this emoji — drawing it again here
-    // would show it twice. The badge IS the name in this case.
-    void nameX;
-    void drawEmoji;
-  } else {
+  if (!emojiOnlyName) {
     drawLine(surface, shownName, nameX, nameBaseline, plan.nameSize, nameColor(userId));
   }
 
@@ -424,8 +419,8 @@ export function renderQuote({
     label,
     unsupportedScript,
     hasAvatar: Boolean(avatar),
-    // True when the disc shows an emoji instead of a photo or a letter.
-    emojiAvatar: usedEmojiAvatar ? nameEmoji : 0,
+    // True when the disc shows emoji artwork instead of a photo.
+    emojiAvatar: Boolean(avatar) && Boolean(emojiAvatar),
     // What the card actually credits — lets tests assert the visible name.
     drawnName: shownName,
     nestedLines: plan.nestedLines,

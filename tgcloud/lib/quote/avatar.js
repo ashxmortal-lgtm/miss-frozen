@@ -13,12 +13,15 @@
  *   1. the quoted author's own photo — `getUserProfilePhotos`, then the
  *      `getChat` copy for users whose privacy setting hides the list;
  *      `getChat` for a channel or an anonymous admin
- *   2. a lettered disc, with the real reason logged
+ *   2. the emoji from their name, when that name IS an emoji (🕸️): the baked
+ *      tile if it is in the core set, otherwise the Twemoji CDN
+ *   3. a lettered disc, with the real reason logged
  *
  * There is no bot-photo substitute: MissFrozen's face on someone else's message
  * misattributes the quote. Telegram does not expose every photo to a bot — a
  * privacy setting, a hidden channel photo and a genuine "no photo" all look the
- * same over the API — so the failure is logged and the initial is drawn.
+ * same over the API — and it has no API at all for "the emoji Telegram draws as
+ * this user's avatar", which is why step 2 re-creates it from the name.
  *
  * Nothing is cached: a profile photo can change at any moment, and the card is
  * built from the message being quoted right now.
@@ -27,6 +30,7 @@
 import { api, BotApiError } from 'sdk';
 import { decodePng, isPng } from './png.js';
 import { decodeJpeg, isJpeg } from './jpeg.js';
+import { emojiCodepointOf, emojiTileImage, fetchEmojiImage, nameIsEmojiOnly } from './emoji.js';
 
 /** Telegram returns up to this many sizes; a mid size decodes fast and is crisp. */
 const PHOTO_SIZE_INDEX = 1;
@@ -176,29 +180,47 @@ export async function fetchProfilePhoto(userId) {
  *
  * @param {object} quote  the result of `extractQuote`
  * @returns {Promise<{ok:boolean, image:object|null,
- *   source:'user'|'channel'|'group'|'initial', reason:string}>}
+ *   source:'user'|'channel'|'group'|'emoji'|'emoji-fetched'|'initial',
+ *   emojiOnly:boolean, reason:string}>}
  */
 export async function resolveAvatar(quote = {}) {
   const attempts = [];
+  const emojiCodepoint = emojiCodepointOf(quote.name);
+  const emojiOnly = nameIsEmojiOnly(quote.name);
 
   if (quote.senderChatId) {
     // A channel post, or an anonymous admin posting as the group.
     const chat = await fetchChatPhoto(quote.senderChatId);
     if (chat.ok) {
-      return { ok: true, image: chat.image, source: quote.isChannel ? 'channel' : 'group', reason: '' };
+      return { ok: true, image: chat.image, source: quote.isChannel ? 'channel' : 'group', emojiOnly, reason: '' };
     }
     attempts.push(`chat:${chat.reason}`);
   } else if (quote.senderId) {
     const user = await fetchProfilePhoto(quote.senderId);
-    if (user.ok) return { ok: true, image: user.image, source: 'user', reason: '' };
+    if (user.ok) return { ok: true, image: user.image, source: 'user', emojiOnly, reason: '' };
     attempts.push(`user:${user.reason}`);
   } else {
     attempts.push('user:no_user');
+  }
+
+  // No photo, but the name is (or contains) an emoji — that emoji is the
+  // closest thing this person has to a profile picture. The baked tile first,
+  // so the common case never touches the network.
+  if (emojiCodepoint) {
+    const tile = emojiTileImage(emojiCodepoint);
+    if (tile) {
+      return { ok: true, image: tile, source: 'emoji', emojiOnly, reason: attempts.join(', ') };
+    }
+    const downloaded = await fetchEmojiImage(emojiCodepoint);
+    if (downloaded) {
+      return { ok: true, image: downloaded, source: 'emoji-fetched', emojiOnly, reason: attempts.join(', ') };
+    }
+    attempts.push(`emoji:unavailable`);
   }
 
   // Last resort: the renderer draws the author's initial. Log why, so a missing
   // photo is diagnosable rather than a silent blank disc.
   const reason = attempts.join(', ');
   console.error('[quote avatar] lettered fallback —', reason);
-  return { ok: false, image: null, source: 'initial', reason };
+  return { ok: false, image: null, source: 'initial', emojiOnly, reason };
 }
