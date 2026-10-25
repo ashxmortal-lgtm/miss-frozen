@@ -19,6 +19,7 @@ import { extractQuote, quoteSourceOf } from './quote/extract.js';
 import { renderQuotePng } from './quote/render.js';
 import { resolveAvatar } from './quote/avatar.js';
 import { formatOfSticker, ownSticker, STICKER_LIMITS } from './quote/packs.js';
+import { emojiCodepointOf } from './quote/emoji.js';
 
 export const QUOTE_COMMANDS = new Set(['q', 'own']);
 
@@ -99,6 +100,7 @@ const usageReply = (message, key) => reply(message, MESSAGES[key] || MESSAGES.re
  * @param {string} [avatarSource]  where the avatar came from (`user`, `emoji`, …)
  */
 export function buildQuoteSticker(quote, avatar = null, nested = null, avatarSource = '') {
+  const emojiAvatar = avatarSource === 'emoji' || avatarSource === 'emoji-fetched';
   return renderQuotePng({
     text: quote.text,
     name: quote.name,
@@ -106,8 +108,9 @@ export function buildQuoteSticker(quote, avatar = null, nested = null, avatarSou
     avatar,
     kind: quote.kind,
     nested,
-    // Emoji artwork needs a light disc behind it to read against.
-    emojiAvatar: avatarSource === 'emoji' || avatarSource === 'emoji-fetched',
+    // Emoji artwork is painted as a single-tone glyph on a tinted disc.
+    emojiAvatar,
+    emojiCodepoint: emojiAvatar ? emojiCodepointOf(quote.name) : 0,
   });
 }
 

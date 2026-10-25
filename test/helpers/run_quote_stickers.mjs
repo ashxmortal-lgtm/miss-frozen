@@ -15,7 +15,7 @@ import {
 } from '../../tgcloud/lib/quote/text.js';
 import {
   emojiCount, firstEmojiOf, emojiTileImage, fetchEmojiImage, resetEmojiCache,
-  emojiCodepointOf, nameIsEmojiOnly,
+  emojiCodepointOf, nameIsEmojiOnly, emojiTint,
 } from '../../tgcloud/lib/quote/emoji.js';
 import { extractQuote, formatMessageTime } from '../../tgcloud/lib/quote/extract.js';
 import { decodeJpeg } from '../../tgcloud/lib/quote/jpeg.js';
@@ -904,26 +904,47 @@ void fetchProfilePhoto;
   assert.notEqual(webCard.drawnName, 'Unknown');
   assert.equal(webCard.hasAvatar, true, 'the emoji is the avatar');
 
-  // It is actually PAINTED. The artwork sits on a light disc; the spider web's
-  // strokes are mid-grey. Counting those proves the emoji was drawn and not
-  // merely sized — removing the draw call leaves a bare disc.
+  // It is actually PAINTED, and painted the way Telegram paints it: a bright
+  // tinted disc with a near-white glyph, the look `needs_repainting` gives
+  // custom emoji. Probe the disc and the glyph separately.
   const avatarCx = 4 + 62;
   const avatarCy = Math.floor(webCard.height / 2);
-  let discLight = 0;
-  let webStrokes = 0;
+  const tint = emojiTint(0x1f578);
+  let discPixels = 0;
+  let glyphPixels = 0;
   for (let y = avatarCy - 45; y <= avatarCy + 45; y += 1) {
     for (let x = avatarCx - 45; x <= avatarCx + 45; x += 1) {
       if (Math.hypot(x + 0.5 - avatarCx, y + 0.5 - avatarCy) > 55) continue;
       const i = (y * webCard.width + x) * 4;
       const [r, g, b, a] = [webCard.rgba[i], webCard.rgba[i + 1], webCard.rgba[i + 2], webCard.rgba[i + 3]];
       if (a < 200) continue;
-      const spread = Math.max(r, g, b) - Math.min(r, g, b);
-      if (r > 200 && spread < 25) discLight += 1;
-      if (r >= 100 && r <= 185 && spread < 25) webStrokes += 1;
+      // The disc tone, allowing for anti-aliasing.
+      if (Math.abs(r - tint.bg[0]) < 12 && Math.abs(g - tint.bg[1]) < 12
+        && Math.abs(b - tint.bg[2]) < 12) discPixels += 1;
+      // The glyph: closer to the ink tone than to the disc tone. Tint-independent,
+      // so this fails on "wrong colour" rather than on one hard-coded hex.
+      const toInk = Math.abs(r - tint.ink[0]) + Math.abs(g - tint.ink[1]) + Math.abs(b - tint.ink[2]);
+      const toDisc = Math.abs(r - tint.bg[0]) + Math.abs(g - tint.bg[1]) + Math.abs(b - tint.bg[2]);
+      if (toInk < toDisc && toInk < 60) glyphPixels += 1;
     }
   }
-  assert.ok(discLight > 500, `the light disc is painted for emoji artwork (${discLight})`);
-  assert.ok(webStrokes > 80, `the emoji artwork is painted into the disc (${webStrokes} stroke pixels)`);
+  assert.ok(discPixels > 300, `the tinted disc is painted (${discPixels} px)`);
+  assert.ok(glyphPixels > 60, `the glyph is painted in a light tone (${glyphPixels} px)`);
+
+  // The glyph is lighter than the disc overall — the reference draws it white,
+  // not dark. Compared on the sum: a bright disc can share one channel with the
+  // glyph (peach is 255 in both), so a per-channel test would reject valid tints.
+  const sumOf = ([r, g, b]) => r + g + b;
+  assert.ok(sumOf(tint.ink) > sumOf(tint.bg) + 80,
+    'the glyph tone is lighter than the disc it sits on');
+  for (const t of [0x1f578, 0x1f525, 0x1f338, 0x1f451, 0x2764].map(emojiTint)) {
+    assert.ok(sumOf(t.ink) > sumOf(t.bg) + 80, 'every tint keeps the glyph lighter');
+  }
+
+  // Stable per emoji, and not all one colour.
+  assert.deepEqual(emojiTint(0x1f578), emojiTint(0x1f578), 'the tint is stable');
+  const tints = new Set([0x1f578, 0x1f525, 0x1f338, 0x1f451, 0x2764].map((cp) => emojiTint(cp).bg.join()));
+  assert.ok(tints.size >= 3, `different emoji get different tints (${tints.size} distinct)`);
 
   // A plain name still gets its initial, not an emoji.
   const plainCard = renderQuote({ text: 'hi', name: 'Sakura', avatar: null });

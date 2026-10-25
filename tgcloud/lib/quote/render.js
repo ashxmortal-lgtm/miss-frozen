@@ -14,7 +14,7 @@
  */
 
 import { encodeRgbaPng } from './png.js';
-import { nameIsEmojiOnly } from './emoji.js';
+import { emojiTint, nameIsEmojiOnly } from './emoji.js';
 import {
   loadAtlas, drawLine, measureLine, normalizeText, renderableShare,
   wrapText, clampLines, ellipsize, lineHeightOf,
@@ -32,6 +32,8 @@ export const PALETTE = {
   meta: [150, 138, 168],
   avatarFallback: [58, 47, 78],
   avatarFallbackLight: [232, 226, 242], // for emoji artwork that is itself dark
+  badgeDisc: [48, 40, 64],              // dim disc behind the name-row emoji
+  badgeInk: [176, 168, 192],
   avatarInk: [138, 122, 168],
   nestedBg: [44, 33, 62],      // the quoted block, a shade above the bubble
   nestedText: [196, 186, 212],
@@ -47,6 +49,13 @@ const BADGE = 34;
 
 // ---- nested quote (`/q r`) -------------------------------------------------
 /** The message being replied to, shown inside the bubble above the main text. */
+/**
+ * How much of the avatar radius the emoji glyph fills.
+ * Measured on the render: 0.55 puts the drawn glyph at ~46% of the disc
+ * diameter, which is what the reference sticker shows.
+ */
+const EMOJI_GLYPH_SCALE = 0.55;
+
 const NESTED = {
   pad: 12,          // inner padding of the quoted block
   bar: 4,           // accent bar on the left
@@ -119,6 +128,44 @@ export class Surface {
         const distance = Math.sqrt(dx * dx + dy * dy) - radius;
         const coverage = Math.min(1, Math.max(0, 0.5 - distance));
         if (coverage > 0) this.blend(px, py, cr, cg, cb, coverage * alpha);
+      }
+    }
+  }
+
+  /**
+   * Draw an image's *shape* in one colour, masked by a circle.
+   *
+   * Emoji avatars are drawn this way — a single-tone glyph over a tinted disc —
+   * which is how Telegram paints custom emoji (`needs_repainting`, Bot API 6.6)
+   * and why the native avatar looks clean rather than like flat artwork.
+   *
+   * @param {{width:number,height:number,rgba:Uint8Array}} image  alpha is the mask
+   * @param {number[]} color  the single tone to paint
+   */
+  circularImageTinted(image, cx, cy, radius, color, artScale = 1) {
+    const { width, height, rgba } = image;
+    const [cr, cg, cb] = color;
+    const side = Math.min(width, height);
+    const offsetX = (width - side) / 2;
+    const offsetY = (height - side) / 2;
+    const artRadius = radius * artScale;
+
+    for (let py = Math.floor(cy - radius) - 1; py <= Math.ceil(cy + radius) + 1; py += 1) {
+      for (let px = Math.floor(cx - radius) - 1; px <= Math.ceil(cx + radius) + 1; px += 1) {
+        const dx = px + 0.5 - cx;
+        const dy = py + 0.5 - cy;
+        const coverage = Math.min(1, Math.max(0, 0.5 - (Math.sqrt(dx * dx + dy * dy) - radius)));
+        if (coverage <= 0) continue;
+
+        const u = (px + 0.5 - (cx - artRadius)) / (artRadius * 2);
+        const v = (py + 0.5 - (cy - artRadius)) / (artRadius * 2);
+        if (u < 0 || v < 0 || u >= 1 || v >= 1) continue;
+
+        const sx = Math.min(width - 1, Math.floor(offsetX + u * side));
+        const sy = Math.min(height - 1, Math.floor(offsetY + v * side));
+        const alpha = rgba[(sy * width + sx) * 4 + 3] / 255;
+        if (alpha <= 0) continue;
+        this.blend(px, py, cr, cg, cb, coverage * alpha);
       }
     }
   }
@@ -274,12 +321,13 @@ function nestedContentWidth(innerWidth) {
  * @param {string} [options.kind]      label when the message had no text
  * @param {{name:string,text:string,userId?:number}} [options.nested]
  *        the message this one was replying to (`/q r`), drawn inside the bubble
- * @param {boolean} [options.emojiAvatar]  the avatar is emoji artwork, so the
- *        disc behind it must be light for the artwork to read
+ * @param {boolean} [options.emojiAvatar]  the avatar is emoji artwork, drawn as a
+ *        single-tone glyph on a tinted disc the way Telegram paints it
+ * @param {number} [options.emojiCodepoint]  which emoji, to pick its tint
  */
 export function renderQuote({
   text = '', name = '', userId = 0, avatar = null, kind = '', nested = null,
-  emojiAvatar = false,
+  emojiAvatar = false, emojiCodepoint = 0,
 }) {
   loadAtlas(); // fail fast if the atlas is unusable
 
@@ -330,19 +378,21 @@ export function renderQuote({
   // The avatar arrives as an image in every case — a photo, an emoji tile, or an
   // emoji downloaded from the CDN. Only a total miss reaches the lettered disc.
   const initials = (normalizeText(name).trim()[0] || '').toUpperCase();
-  // Emoji artwork is mostly transparent around the glyph, so it needs a light
-  // disc to read against (the Noto spider web is dark grey on nothing).
-  const emojiDisc = emojiAvatar ? PALETTE.avatarFallbackLight : PALETTE.avatarFallback;
+  // Emoji avatars are painted as one tone on a tinted disc, matching Telegram.
+  const tint = emojiAvatar ? emojiTint(emojiCodepoint) : null;
   const drawFace = (image, cx, cy, radius, fontSize) => {
     if (image) {
-      // Emoji artwork is mostly transparent around the glyph, so it needs the
-      // disc painted underneath it. A photo covers the disc completely.
-      if (emojiAvatar) surface.circle(cx, cy, radius, PALETTE.avatarFallbackLight);
-      surface.circularImage(image, cx, cy, radius, emojiAvatar ? 0.94 : 1);
+      if (tint) {
+        // Tinted disc + single-tone glyph: the native avatar look.
+        surface.circle(cx, cy, radius, tint.bg);
+        surface.circularImageTinted(image, cx, cy, radius, tint.ink, EMOJI_GLYPH_SCALE);
+        return;
+      }
+      surface.circularImage(image, cx, cy, radius);
       return;
     }
     // No photo and no emoji: an honest disc with the initial.
-    surface.circle(cx, cy, radius, emojiDisc);
+    surface.circle(cx, cy, radius, PALETTE.avatarFallback);
     if (!initials) return;
     const width = measureLine(initials, fontSize);
     drawLine(surface, initials, cx - width / 2, cy + fontSize * 0.36, fontSize, PALETTE.avatarInk);
@@ -352,7 +402,14 @@ export function renderQuote({
   // ---- badge + display name inside the bubble ---------------------------
   const badgeCx = textX + BADGE / 2;
   const badgeCy = nameRowTop + BADGE / 2;
-  drawFace(avatar, badgeCx, badgeCy, BADGE / 2, 18);
+  if (tint && avatar) {
+    // The badge is the same glyph in a neutral tone, on a dimmed disc — the
+    // reference shows a small grey web on a barely-visible circle.
+    surface.circle(badgeCx, badgeCy, BADGE / 2, PALETTE.badgeDisc);
+    surface.circularImageTinted(avatar, badgeCx, badgeCy, BADGE / 2, PALETTE.badgeInk, 0.92);
+  } else {
+    drawFace(avatar, badgeCx, badgeCy, BADGE / 2, 18);
+  }
 
   const nameX = textX + BADGE + 12;
   const nameWidth = plan.innerWidth - BADGE - 12;
