@@ -3,21 +3,35 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
-// Round 12 — Jiraiya found on a Naruto patrol.
+// Round 12 → round 19 — Jiraiya found on a Naruto patrol.
 //
-// Same moment as finding Tsunade: an image from the private storage channel
-// (t.me/c/3889508991/581) with the discovery caption, "research" behind a
-// Telegram spoiler, and the Check ❄️ ability button (frozenblooded/14).
+// Same moment as finding Tsunade: the storage-channel photo (t.me/c/3889508991/581)
+// plus the discovery caption, delivered with the /map rich-message method — the
+// photo embedded as a <figure> (rich_message.media) and a real rich ❄️ button
+// (frozenblooded/14) instead of a classic inline keyboard.
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
-test('Jiraiya discovery caption, spoiler and ability button', () => {
+test('Jiraiya discovery keeps the exact caption spacing', () => {
   const source = read('tgcloud/lib/rpg/jiraiya_discovery.js');
   assert.match(source, /JIRAIYA_MEDIA_MESSAGE_ID = 581/, 'the storage-channel photo');
-  assert.match(source, /🐸 \$\{mentionHtml\}\\n\\n\\n/, 'mention block');
-  assert.match(source, /🥀 you spotted master jiraiya near the hot springs!/);
-  assert.match(source, /“<span class="tg-spoiler">research<\/span>”\.\.\.🤫/, 'research is spoilered');
-  assert.match(source, /abilityCheckKeyboard\('Jiraiya'\)/, 'the ability button comes from the shared map');
+  assert.match(source, /🐸 \$\{mentionHtml\}\\n\\n\\n\\n/, 'three blank lines after the mention');
+  assert.match(source, /near the hot springs!\\n\\n/, 'one blank line before the last line');
+  assert.match(source, /' he was busy with his “<span class="tg-spoiler">research<\/span>”\.\.\.🤫'/, 'tail line');
+});
+
+test('the Jiraiya button is a rich tg-button inside the rich photo message', () => {
+  const source = read('tgcloud/lib/rpg/jiraiya_discovery.js');
+  assert.match(source, /import \{ richHtml \} from '\.\.\/map\/rich\.js';/, 'reuses the /map rich helpers');
+  assert.match(source, /abilityCheckKeyboard\('Jiraiya'\)/, 'the ability post keyboard');
+  assert.match(source, /<figure><img src="tg:\/\/photo\?id=\$\{PHOTO_ID\}"\/><\/figure>/,
+    'the photo is embedded in the rich message, exactly like /map');
+  assert.match(source, /media: \[\{ id: PHOTO_ID, media: \{ type: 'photo', media: fileId \} \}\]/);
+  assert.match(source, /api\.sendRichMessage\(/, 'sent as a rich message');
   assert.match(source, /getMapPhotoFileId\(chatId, JIRAIYA_MEDIA_MESSAGE_ID\)/);
+  // Classic inline buttons remain only as a last-resort fallback.
+  const richCall = source.indexOf('api.sendRichMessage');
+  const photoFallback = source.indexOf('api.sendPhoto(');
+  assert.ok(richCall > 0 && photoFallback > richCall, 'the rich send is tried before the classic photo');
 });
 
 test('discovery fires exactly once when Naruto brings Jiraiya home', () => {
@@ -34,7 +48,7 @@ test('discovery fires exactly once when Naruto brings Jiraiya home', () => {
   assert.match(block, /a\.chat_id/, 'the patrol group is the fallback');
 });
 
-test('Jiraiya announcement end to end (photo, spoiler, button, once)', () => {
+test('Jiraiya announcement end to end (rich photo, exact spacing, rich button, once)', () => {
   const output = execFileSync(
     process.execPath,
     ['--experimental-loader', './test/helpers/sdk-loader.mjs', 'test/helpers/run_jiraiya_discovery.mjs'],

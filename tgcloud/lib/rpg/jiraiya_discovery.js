@@ -9,34 +9,69 @@
  *
  * Private t.me/c/… links are not HTTP photo URLs, so the image is resolved
  * through the shared storage-channel file_id cache (map/media.js).
+ *
+ * Delivery uses the map layer's rich-message method: the photo is embedded in
+ * the message itself (`<figure><img src="tg://photo?id=…"/>` + a `media` entry)
+ * and the button is a real rich `<tg-button>`, not a classic inline keyboard —
+ * so the caption keeps its exact line spacing and the button stays rich.
  */
 
 import { api } from '../message_api.js';
 import { style, mention } from '../texts.js';
 import { getMapPhotoFileId } from '../map/media.js';
 import { abilityCheckKeyboard } from '../ability.js';
+import { richHtml } from '../map/rich.js';
 
 /** Storage-channel message holding the Jiraiya hot-springs photo. */
 export const JIRAIYA_MEDIA_MESSAGE_ID = 581;
 
+/** Rich-message media id used for the embedded figure. */
+const PHOTO_ID = 'jiraiya_photo';
+
 /**
- * Caption exactly as specified. `research` is hidden behind a Telegram spoiler;
+ * Caption exactly as specified. `research` stays behind a Telegram spoiler;
  * every plain letter is converted to the bot's small-caps style on send.
+ * The blank lines are part of the design: three after the mention, one before
+ * the last line.
  */
 export function jiraiyaDiscoveryCaption(mentionHtml) {
-  return `🐸 ${mentionHtml}\n\n\n`
-    + '🥀 you spotted master jiraiya near the hot springs!\n\n\n'
+  return `🐸 ${mentionHtml}\n\n\n\n`
+    + '🥀 you spotted master jiraiya near the hot springs!\n\n'
     + ' he was busy with his “<span class="tg-spoiler">research</span>”...🤫';
 }
 
+/** One rich paragraph per line; blank lines become an empty `<p><br/></p>`. */
+export function captionParagraphs(caption) {
+  return String(caption).split('\n').map((line) => {
+    const text = line.replace(/[ \t]+$/, '');
+    return text ? `<p>${text}</p>` : '<p><br/></p>';
+  }).join('');
+}
+
+/** Rich photo (as `<figure>`) + caption paragraphs + the rich ability button. */
+export function jiraiyaDiscoveryRich(mentionHtml, fileId = null) {
+  const body = captionParagraphs(style(jiraiyaDiscoveryCaption(mentionHtml)));
+  const figure = fileId
+    ? `<figure><img src="tg://photo?id=${PHOTO_ID}"/></figure>`
+    : '';
+  return {
+    html: `${figure}${richHtml(body, abilityCheckKeyboard('Jiraiya'))}`,
+    ...(fileId ? { media: [{ id: PHOTO_ID, media: { type: 'photo', media: fileId } }] } : {}),
+  };
+}
+
+const log = (label, e) => console.error(`[${label}]`, e?.description || e?.message || e);
+
 /**
  * Announce the discovery where the patrol happened: the patrol group first, the
- * player's DM only as a fallback (the group may have the bot restricted), and a
- * text message with the same caption + button when the photo cannot be sent.
- * Returns true when something was delivered.
+ * player's DM only as a fallback (the group may have the bot restricted).
+ *
+ * Per target the order is: rich message with the embedded photo, rich message
+ * without it (the rich button still works), classic photo + inline button, then
+ * plain text + inline button. Returns true when something was delivered.
  */
 export async function sendJiraiyaDiscovery(user, groupChatId = null) {
-  const caption = style(jiraiyaDiscoveryCaption(mention(user)));
+  const mentionHtml = mention(user);
   const keyboard = abilityCheckKeyboard('Jiraiya');
   const button = keyboard ? { reply_markup: keyboard } : {};
   const uniqueIds = (ids) => ids
@@ -53,9 +88,30 @@ export async function sendJiraiyaDiscovery(user, groupChatId = null) {
     fileId = await getMapPhotoFileId(chatId, JIRAIYA_MEDIA_MESSAGE_ID);
     if (fileId) break;
   }
+  const caption = style(jiraiyaDiscoveryCaption(mentionHtml));
 
-  if (fileId) {
-    for (const chatId of targets) {
+  for (const chatId of targets) {
+    if (fileId) {
+      try {
+        await api.sendRichMessage({
+          chat_id: chatId,
+          rich_message: jiraiyaDiscoveryRich(mentionHtml, fileId),
+        });
+        return true;
+      } catch (e) {
+        log('jiraiya rich media', e);
+      }
+    }
+    try {
+      await api.sendRichMessage({
+        chat_id: chatId,
+        rich_message: jiraiyaDiscoveryRich(mentionHtml),
+      });
+      return true;
+    } catch (e) {
+      log('jiraiya rich', e);
+    }
+    if (fileId) {
       try {
         await api.sendPhoto({
           chat_id: chatId,
@@ -66,12 +122,9 @@ export async function sendJiraiyaDiscovery(user, groupChatId = null) {
         });
         return true;
       } catch (e) {
-        console.error('[jiraiya media]', e?.description || e?.message || e);
+        log('jiraiya media', e);
       }
     }
-  }
-
-  for (const chatId of targets) {
     try {
       await api.sendMessage({
         chat_id: chatId,
@@ -81,7 +134,7 @@ export async function sendJiraiyaDiscovery(user, groupChatId = null) {
       });
       return true;
     } catch (e) {
-      console.error('[jiraiya discovery]', e?.description || e?.message || e);
+      log('jiraiya discovery', e);
     }
   }
   return false;
