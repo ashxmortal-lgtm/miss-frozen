@@ -30,33 +30,44 @@ export function jiraiyaDiscoveryCaption(mentionHtml) {
 }
 
 /**
- * DM the discovery card (photo + caption + ability button).
- * Falls back to the group where the patrol ran when the DM is unreachable, and
- * to a text message when the photo cannot be resolved. Returns true when
- * something was delivered.
+ * Announce the discovery where the patrol happened: the patrol group first, the
+ * player's DM only as a fallback (the group may have the bot restricted), and a
+ * text message with the same caption + button when the photo cannot be sent.
+ * Returns true when something was delivered.
  */
-export async function sendJiraiyaDiscovery(user, fallbackChatId = null) {
+export async function sendJiraiyaDiscovery(user, groupChatId = null) {
   const caption = style(jiraiyaDiscoveryCaption(mention(user)));
   const keyboard = abilityCheckKeyboard('Jiraiya');
   const button = keyboard ? { reply_markup: keyboard } : {};
-  const targets = [user?.id, fallbackChatId]
+  const uniqueIds = (ids) => ids
     .map((id) => Number(id))
     .filter((id, i, all) => id && all.indexOf(id) === i);
+  // Delivery order: the group where the Naruto patrol was dispatched, then DM.
+  const targets = uniqueIds([groupChatId, user?.id]);
+  // Resolve the storage-channel file_id in the DM when possible: the cold cache
+  // forwards the photo and deletes it again, which should not flash in the group.
+  const resolveTargets = uniqueIds([user?.id, groupChatId]);
 
-  for (const chatId of targets) {
-    const fileId = await getMapPhotoFileId(chatId, JIRAIYA_MEDIA_MESSAGE_ID);
-    if (!fileId) continue;
-    try {
-      await api.sendPhoto({
-        chat_id: chatId,
-        photo: fileId,
-        caption,
-        parse_mode: 'HTML',
-        ...button,
-      });
-      return true;
-    } catch (e) {
-      console.error('[jiraiya media]', e?.description || e?.message || e);
+  let fileId = null;
+  for (const chatId of resolveTargets) {
+    fileId = await getMapPhotoFileId(chatId, JIRAIYA_MEDIA_MESSAGE_ID);
+    if (fileId) break;
+  }
+
+  if (fileId) {
+    for (const chatId of targets) {
+      try {
+        await api.sendPhoto({
+          chat_id: chatId,
+          photo: fileId,
+          caption,
+          parse_mode: 'HTML',
+          ...button,
+        });
+        return true;
+      } catch (e) {
+        console.error('[jiraiya media]', e?.description || e?.message || e);
+      }
     }
   }
 

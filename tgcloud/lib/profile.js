@@ -89,11 +89,22 @@ export async function profileData(user) {
   let botAvatar = '';
   try { botAvatar = await botAvatarDataUri(); } catch (_) { /* optional */ }
 
+  // Equipped list — the SAME call /inventory and /equip use, through the static
+  // import above (a dynamic import here silently swallowed failures and left the
+  // Mini App slots empty). Never return an empty list: the Mini App renders one
+  // card per entry, so an empty array shows three "Empty slot" cards even though
+  // the bot knows what is equipped. Fall back to the primary equip, then the
+  // starter, exactly like getEquippedList() does.
   let equippedList = [];
   try {
-    const { getEquippedList } = await import('./rpg/state.js');
     equippedList = await getEquippedList(id);
-  } catch (_) {}
+  } catch (_) { /* fall back to the primary equip below */ }
+  if (!Array.isArray(equippedList)) equippedList = [];
+  equippedList = equippedList.filter((name) => typeof name === 'string' && name.trim());
+  if (!equippedList.length) {
+    const primary = life && typeof life.equipped === 'string' ? life.equipped.trim() : '';
+    equippedList = [primary || 'Starter Shinobi'];
+  }
   let globalRank = 1;
   try {
     const gr = await db.get(sql`

@@ -152,10 +152,15 @@
     return ((p && p.jutsu) || []).map((x) => (typeof x === 'string' ? x : x && x.name)).filter(Boolean);
   }
 
+  // Equipped shinobi, in slot order (max 3). Sent by the bot as
+  // profile.equippedList; if an older payload omits it, fall back to the primary
+  // equip the bot reports in profile.life.equipped so the slots are never blank.
   function equipped() {
     const p = currentProfile();
-    const list = (p && p.equippedList) || [];
-    return Array.isArray(list) ? list.filter(Boolean) : [];
+    const raw = p && p.equippedList;
+    let list = Array.isArray(raw) ? raw.filter(Boolean) : [];
+    if (!list.length && p && p.life && p.life.equipped) list = [String(p.life.equipped)];
+    return list.slice(0, 3);
   }
 
   function ownsSakura() {
@@ -1073,12 +1078,40 @@
     }
   }
 
+  // ------------------------------------------------------- foreground sync --
+  // Equipping happens in the bot. A Telegram WebView keeps this page (and the
+  // payload it booted with) alive between visits, so re-fetch whenever the Mini
+  // App comes back to the foreground. Without this the equipped slots can show
+  // a stale — often still empty — list after /equip in the chat.
+  let lastSyncAt = 0;
+  function syncOnReturn() {
+    if (!serverlessAvailable()) return;
+    const now = Date.now();
+    if (now - lastSyncAt < 2000) return;
+    lastSyncAt = now;
+    refresh();
+  }
+
+  function watchForeground() {
+    if (tg && typeof tg.onEvent === 'function') {
+      try { tg.onEvent('activated', syncOnReturn); } catch (_) {}
+      try { tg.onEvent('viewportChanged', () => { if (tg.isExpanded) syncOnReturn(); }); } catch (_) {}
+    }
+    if (document && typeof document.addEventListener === 'function') {
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') syncOnReturn();
+      });
+      try { window.addEventListener('focus', syncOnReturn); } catch (_) {}
+    }
+  }
+
   function boot() {
     root = document.getElementById('app');
     if (!root || root.dataset.booted === '1') return;
     root.dataset.booted = '1';
     openDeepLink();
     render();
+    watchForeground();
     if (serverlessAvailable()) refresh();
     else {
       state.error = Object.assign(new Error('Open this Mini App from the bot inside Telegram.'), { type: 'UNAVAILABLE', status: 0 });

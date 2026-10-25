@@ -65,11 +65,11 @@ assert.match(caption, /“<span class="tg-spoiler">research<\/span>”\.\.\.🤫
 assert.doesNotMatch(caption.replace(/<span class="tg-spoiler">research<\/span>/, ''), /research/,
   'the word only appears inside the spoiler');
 
-// ---- 2. the announcement goes to the DM with the ability button ------------
+// ---- 2. the announcement goes to the PATROL GROUP with the ability button ---
 const ok = await sendJiraiyaDiscovery(USER, -100777);
 assert.equal(ok, true);
 assert.equal(photos.length, 1, 'one photo announcement');
-assert.equal(photos[0].chat_id, USER.id, 'DM first, like the Tsunade discovery');
+assert.equal(photos[0].chat_id, -100777, 'the group where the Naruto patrol was sent');
 assert.equal(photos[0].photo, 'JIRAIYA_PHOTO', 'file_id resolved from the storage channel');
 assert.equal(photos[0].parse_mode, 'HTML');
 assert.match(photos[0].caption, /tg:\/\/user\?id=4242/);
@@ -83,25 +83,23 @@ assert.deepEqual(photos[0].reply_markup, {
 }, 'the Jiraiya ability post');
 assert.equal(forwardCalls[0].from_chat_id, -1003889508991, 'storage channel');
 assert.equal(forwardCalls[0].message_id, 581);
+assert.equal(forwardCalls[0].chat_id, USER.id, 'resolved quietly in the DM, not the group');
+assert.ok(forwardCalls.every((call) => call.chat_id !== -100777), 'no forward flashes in the group');
 
-// ---- 3. a blocked DM falls back to the patrol's group ----------------------
-const blocked = [];
-api.forwardMessage = async (payload) => {
-  if (payload.chat_id === USER.id) throw new Error('bot was blocked by the user');
-  return { message_id: 78, photo: [{ file_id: 'JIRAIYA_PHOTO_GROUP' }] };
-};
+// ---- 3. a group that refuses photos falls back to the DM --------------------
+const dmOnly = [];
 api.sendPhoto = async (payload) => {
-  if (payload.chat_id === USER.id) throw new Error('bot was blocked by the user');
-  blocked.push(payload);
+  if (payload.chat_id === -100777) throw new Error('not enough rights to send photos');
+  dmOnly.push(payload);
   return { message_id: 1 };
 };
 const fellBack = await sendJiraiyaDiscovery(USER, -100777);
 assert.equal(fellBack, true);
-assert.equal(blocked.length, 1);
-assert.equal(blocked[0].chat_id, -100777, 'the group where the patrol ran');
-assert.equal(blocked[0].reply_markup.inline_keyboard[0][0].url, 'https://t.me/frozenblooded/14');
+assert.equal(dmOnly.length, 1);
+assert.equal(dmOnly[0].chat_id, USER.id, 'the DM is the fallback');
+assert.equal(dmOnly[0].reply_markup.inline_keyboard[0][0].url, 'https://t.me/frozenblooded/14');
 
-// ---- 4. no photo available → the same caption + button as text -------------
+// ---- 4. no photo available → the same caption + button as text in the group -
 api.forwardMessage = async () => { throw new Error('no photo'); };
 api.sendPhoto = async () => { throw new Error('no photo'); };
 const texts = [];
@@ -110,7 +108,7 @@ api.sendMessage = async (payload) => { texts.push(payload); return { message_id:
 api.sendRichMessage = async (payload) => { texts.push(payload); return { message_id: 1 }; };
 assert.equal(await sendJiraiyaDiscovery(USER, -100777), true);
 assert.equal(texts.length, 1);
-assert.equal(texts[0].chat_id, USER.id, 'text fallback still goes to the DM');
+assert.equal(texts[0].chat_id, -100777, 'text fallback also prefers the group');
 const fallbackText = texts[0].text || texts[0].rich_message?.html || '';
 assert.match(fallbackText, /ʏᴏᴜ ꜱᴘᴏᴛᴛᴇᴅ ᴍᴀꜱᴛᴇʀ ᴊɪʀᴀɪʏᴀ/);
 assert.match(fallbackText, /<span class="tg-spoiler">ʀᴇꜱᴇᴀʀᴄʜ<\/span>/);
@@ -143,7 +141,7 @@ await db.run(sql`
 const settled = await settleOwn({ id: HERO });
 assert.ok(settled.blocks.some((b) => /Jiraiya has joined your shinobi roster/i.test(b)), 'the card says he joined');
 assert.equal(announced.length, 1, 'exactly one discovery announcement');
-assert.equal(announced[0].chat_id, HERO, 'DM');
+assert.equal(announced[0].chat_id, group.id, 'the patrol group, not the DM');
 assert.match(announced[0].caption, /<span class="tg-spoiler">ʀᴇꜱᴇᴀʀᴄʜ<\/span>/);
 assert.equal(announced[0].reply_markup.inline_keyboard[0][0].url, 'https://t.me/frozenblooded/14');
 const owned = await db.get(sql`
