@@ -117,6 +117,7 @@ const HELP_BLOCK_ONE = [
 ];
 const HELP_BLOCK_TWO = [
   '/kill', '/rob', '/protect', '/transfer', '/leaderboard', '/equip', '/unequip', '/redeem',
+  '/q', '/own',
 ];
 const HELP_FOOTER = ['/start', '/help', '/owner'];
 

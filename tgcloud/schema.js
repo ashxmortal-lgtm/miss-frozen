@@ -610,3 +610,20 @@ export const dailyMissions = table('daily_missions', {
   pk: uniqueIndex('uidx_daily_missions').on(t.userId, t.cycleDate),
   statusIdx: index('idx_daily_missions_status').on(t.status),
 }));
+
+// ---- Quote stickers (/q, /own) -------------------------------------------
+// One personal pack per user. The row is claimed before the Telegram call so
+// concurrent /own requests cannot create two sets (unique telegram_id).
+// status: creating | ready | full
+export const quoteStickerPacks = table('quote_sticker_packs', {
+  telegramId: integer('telegram_id').primaryKey(),
+  setName: text('set_name').notNull(),
+  title: text('title').notNull(),
+  stickerCount: integer('sticker_count').notNull().default(0),
+  status: text('status').notNull().default('creating'),
+  lastError: text('last_error'),
+  createdAt: integer('created_at').notNull().default(0),
+  updatedAt: integer('updated_at').notNull().default(0),
+}, (t) => ({
+  nameUnique: uniqueIndex('uidx_quote_pack_name').on(t.setName),
+}));

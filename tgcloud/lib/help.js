@@ -13,6 +13,7 @@ const BLOCK_ONE = [
 ];
 const BLOCK_TWO = [
   '/kill', '/rob', '/protect', '/transfer', '/leaderboard', '/equip', '/unequip', '/redeem',
+  '/q', '/own',
 ];
 const BLOCK_THREE = ['/start', '/help', '/owner'];
 

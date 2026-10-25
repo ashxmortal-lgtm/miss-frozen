@@ -25,6 +25,7 @@ import { sweepClones } from '../lib/rpg/combat.js';
 import { sweepProtectionReminders } from '../lib/rpg/protect_reminder.js';
 import { rememberInbound } from '../lib/reply_target.js';
 import { restorePetsOnFirstInteraction } from '../lib/pet/migration.js';
+import { handleQuoteCommand, parseQuoteCommand } from '../lib/quote_stickers.js';
 
 const PROTECT_SWEEP_INTERVAL_MS = 60 * 1000;
 let lastProtectSweepAt = 0;
@@ -80,6 +81,9 @@ export default async function (message, ctx) {
   if (supportMessageHandled && message.chat?.type === 'private') return;
 
   await notifyNewUser(message);
+
+  // /q and /own — Classic QuotLy quote stickers (standalone, no economy state).
+  if (parseQuoteCommand(message.text) && await handleQuoteCommand(message)) return;
 
   const gameCmd = (message.text || '')
     .trim()

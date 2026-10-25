@@ -64,7 +64,7 @@ assert.match(tHtml, /<figure><img src="tg:\/\/photo\?id=tsunade_photo"\/><\/figu
 assert.match(tHtml, new RegExp(style(TSUNADE_DISCOVERY_TEXT)), 'the exact production caption');
 assert.match(tHtml, /<tg-button[^>]*type="url"[^>]*url="https:\/\/t\.me\/frozenblooded\/13"[^>]*style="success"/,
   'the Tsunade ability button is attached');
-assert.equal((tHtml.match(/<p><br\/><\/p>/g) || []).length, 0, 'no empty paragraphs');
+assert.doesNotMatch(tHtml, /<br\s*\/?>/, 'no <br> tags in rich HTML');
 assert.equal(rich[0].reply_markup, undefined, 'no inline keyboard alongside the rich button');
 
 // ---- 2. /testJ sends the real rich Jiraiya discovery ----------------------
@@ -77,8 +77,8 @@ assert.deepEqual(rich[0].rich_message.media, [
 ], 'the storage-channel Jiraiya photo (message 581)');
 const html = String(rich[0].rich_message.html);
 assert.match(html, /<figure><img src="tg:\/\/photo\?id=jiraiya_photo"\/><\/figure>/);
-assert.equal((html.match(/<p><br\/><\/p>/g) || []).length, 0, 'no empty paragraphs (they blow the layout up)');
-assert.equal((html.match(/<br\/>/g) || []).length, 6, 'compact line breaks: 3 + 1 blank lines');
+assert.doesNotMatch(html, /<br\s*\/?>/, 'no <br> tags (unsupported — they blow the layout up)');
+assert.equal((html.match(/\n/g) || []).length, 6, 'compact line breaks: 3 + 1 blank lines');
 assert.match(html, /<tg-button[^>]*type="url"[^>]*url="https:\/\/t\.me\/frozenblooded\/14"/, 'rich ability button');
 assert.match(html, new RegExp(style(jiraiyaDiscoveryCaption('')).split('\n').pop().trim().slice(0, 8).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
   'the discovery caption body');

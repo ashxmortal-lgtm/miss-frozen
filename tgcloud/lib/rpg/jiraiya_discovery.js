@@ -41,15 +41,19 @@ export function jiraiyaDiscoveryCaption(mentionHtml) {
 }
 
 /**
- * One single paragraph with `<br/>` line breaks.
+ * ONE paragraph, real newlines — exactly the caption as typed.
  *
- * Blank lines must NOT become separate paragraphs: every paragraph carries its
- * own margin, so four empty paragraphs turned a three-line message into a huge
- * block of empty space. `<br/>` keeps each blank line exactly one line tall.
+ * Two earlier attempts made the message enormous:
+ *   - a `<p>` per line: every blank line became an empty paragraph, and every
+ *     paragraph carries its own margin;
+ *   - `<br/>` separators: Telegram's rich HTML has no `<br>` in its supported
+ *     tag list, so each one inflates the gap instead of being a plain break.
+ * Rich HTML follows classic HTML rules, where a newline inside `<p>` IS the
+ * line break, so the caption is kept verbatim inside a single paragraph.
  */
 export function captionParagraphs(caption) {
-  const lines = String(caption).split('\n').map((line) => line.replace(/[ \t]+$/, ''));
-  return `<p>${lines.join('<br/>')}</p>`;
+  const text = String(caption).split('\n').map((line) => line.replace(/[ \t]+$/, '')).join('\n');
+  return `<p>${text}</p>`;
 }
 
 /** Rich photo (as `<figure>`) + caption paragraphs + the rich ability button. */

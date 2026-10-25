@@ -38,6 +38,8 @@ export const COMMANDS = [
   { cmd: '/xoxo_cancel', desc: 'Cancel XOXO lobby (alias /cancel_xoxo)', access: 'user' },
   { cmd: '/rps_cancel', desc: 'Cancel RPS lobby (alias /cancel_rps)', access: 'user' },
   { cmd: '/rps_stats', desc: 'Your RPS stats', access: 'user' },
+  { cmd: '/q', desc: 'Quote a replied message as a sticker', access: 'user' },
+  { cmd: '/own', desc: 'Save a quote sticker to your own pack', access: 'user' },
   { cmd: '/transfer', desc: 'Transfer coins to a user (reply in group)', access: 'user' },
   { cmd: '/leaderboard', desc: 'Top balances (alias /lb)', access: 'user' },
   { cmd: '/equip', desc: 'Equip a pet or shinobi (max 3 shinobi)', access: 'user' },
