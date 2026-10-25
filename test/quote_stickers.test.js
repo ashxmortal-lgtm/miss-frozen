@@ -62,8 +62,10 @@ test('the schema keeps one pack per (user, format) with unique short names', () 
   assert.match(schema, /export const quoteStickerPacks = table\('quote_sticker_packs'/);
   assert.match(schema, /telegramId: integer\('telegram_id'\)\.notNull\(\)/);
   assert.match(schema, /stickerFormat: text\('sticker_format'\)/, 'format is part of the key');
-  assert.match(schema, /pk: primaryKey\(t\.telegramId, t\.stickerFormat\)/,
-    'composite key: a static and a video pack coexist');
+  assert.match(schema, /uniqueIndex\('uidx_quote_pack_owner'\)\.on\(t\.telegramId, t\.stickerFormat\)/,
+    'owner uniqueness: a static and a video pack coexist');
+  assert.doesNotMatch(schema.slice(schema.indexOf("table('quote_sticker_packs'")),
+    /primaryKey\s*\(/, 'no variadic primaryKey() — it is not imported and breaks deploy');
   assert.match(schema, /uniqueIndex\('uidx_quote_pack_name'\)\.on\(t\.setName\)/, 'unique short name');
   assert.match(schema, /stickerCount: integer\('sticker_count'\)/, 'sticker count for the pack limit');
 });

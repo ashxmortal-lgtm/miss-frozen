@@ -629,6 +629,9 @@ export const quoteStickerPacks = table('quote_sticker_packs', {
   createdAt: integer('created_at').notNull().default(0),
   updatedAt: integer('updated_at').notNull().default(0),
 }, (t) => ({
-  pk: primaryKey(t.telegramId, t.stickerFormat),
+  // One row per (user, format). A table-level unique index — the same mechanism
+  // `daily_missions` uses — is the SQLite conflict target for
+  // `ON CONFLICT(telegram_id, sticker_format)` in quote/packs.js.
+  owner: uniqueIndex('uidx_quote_pack_owner').on(t.telegramId, t.stickerFormat),
   nameUnique: uniqueIndex('uidx_quote_pack_name').on(t.setName),
 }));

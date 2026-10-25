@@ -58,14 +58,30 @@ export const desc = (column) => ({ __dir: 'desc', column: column?.name ?? column
 export const inArray = (column, values) => ({ __cmp: 'in', column: column?.name ?? column, values });
 export const integer = (name) => mockColumn(name);
 export const text = (name) => mockColumn(name);
+// Constraint-callback failures are recorded instead of swallowed. The platform
+// compiles schema.js at deploy time, so a ReferenceError there breaks the whole
+// deployment while a permissive stub would keep the tests green.
+export const schemaErrors = [];
+
 export const table = (name, cols, extra) => {
   if (typeof extra === 'function') {
     try {
       extra(new Proxy({}, { get: (_t, key) => mockColumn(String(key)) }));
-    } catch (_) { /* test-only shape */ }
+    } catch (error) {
+      schemaErrors.push({ table: name, error });
+    }
   }
   return { __table: true, tableName: name, ...(cols || {}) };
 };
+
+/** Throw if any table() constraint callback failed (used by schema tests). */
+export function assertSchemaCallbacksClean() {
+  if (!schemaErrors.length) return;
+  const detail = schemaErrors
+    .map(({ table: name, error }) => `${name}: ${error?.constructor?.name || 'Error'}: ${error?.message || error}`)
+    .join('; ');
+  throw new Error(`schema.js constraint callbacks failed: ${detail}`);
+}
 
 function queryOf(query) {
   if (typeof query === 'string') return { text: query, params: [] };
