@@ -22,6 +22,11 @@ function istParts(unixSec) {
   };
 }
 
+/** IST hour of day as a number (0–23). */
+export function istHour(unixSec = Math.floor(Date.now() / 1000)) {
+  return Number(istParts(unixSec).hh);
+}
+
 /** "18:45" */
 export function istHm(unixSec) {
   const p = istParts(unixSec);

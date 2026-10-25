@@ -16,7 +16,11 @@ function findPet(words) {
 }
 
 
-// Returns the message body (no mention; reply() adds it) or null to stay silent.
+/**
+ * Returns the message body (no mention; reply() adds it) or null to stay
+ * silent. A shinobi/pet purchase returns `{ text, ability }` so the caller can
+ * attach the `Check ❄️ ability` button for that exact item.
+ */
 export async function handleBuy(user, text, updateId) {
   const args = text.trim().split(/\s+/).slice(1);
   if (args.length === 0) {
@@ -41,9 +45,12 @@ export async function handleBuy(user, text, updateId) {
       const r = await buyPet(user.id, pet.id, `buy:${updateId ?? ''}:${pet.id}`);
       if (r.code === 'duplicate') return null;
       if (r.code === 'ok') {
-        return `${buySuccessText(pet.name)}\n\nᴇǫᴜɪᴘ ᴡɪᴛʜ /equip ${pet.name}`;
+        return {
+          text: `${buySuccessText(pet.name)}\n\nᴇǫᴜɪᴘ ᴡɪᴛʜ /equip ${pet.name}`,
+          ability: pet.name,
+        };
       }
-      if (r.code === 'already_owned') return alreadyOwnedText(pet.name);
+      if (r.code === 'already_owned') return { text: alreadyOwnedText(pet.name), ability: pet.name };
       if (r.code === 'insufficient') {
         return insufficientCoinsText(fmt(r.price ?? pet.price), fmt(r.balance ?? 0));
       }
@@ -60,9 +67,13 @@ export async function handleBuy(user, text, updateId) {
 
   if (r.status === 'duplicate') return null;
   if (r.status === 'owned') {
-    return req.type === 'jutsu'
-      ? `⚠️ 𝐉𝐔𝐓𝐒𝐔 𝐀𝐋𝐑𝐄𝐀𝐃𝐘 𝐔𝐍𝐋𝐎𝐂𝐊𝐄𝐃\n\nʏᴏᴜ ᴀʟʀᴇᴀᴅʏ ᴘᴏssᴇss ᴛʜɪs ᴊᴜᴛsᴜ.\n\nᴄᴏɪɴs ʀᴇᴍᴀɪɴ ᴜɴᴛᴏᴜᴄʜᴇᴅ.`
-      : `⚠️ 𝐀𝐋𝐑𝐄𝐀𝐃𝐘 𝐑𝐄𝐂𝐑𝐔𝐈𝐓𝐄𝐃\n\nʏᴏᴜ ᴀʟʀᴇᴀᴅʏ ᴏᴡɴ ᴛʜɪs sʜɪɴᴏʙɪ.\n\nᴄᴏɪɴs ʀᴇᴍᴀɪɴ ᴜɴᴛᴏᴜᴄʜᴇᴅ.`;
+    if (req.type === 'jutsu') {
+      return `⚠️ 𝐉𝐔𝐓𝐒𝐔 𝐀𝐋𝐑𝐄𝐀𝐃𝐘 𝐔𝐍𝐋𝐎𝐂𝐊𝐄𝐃\n\nʏᴏᴜ ᴀʟʀᴇᴀᴅʏ ᴘᴏssᴇss ᴛʜɪs ᴊᴜᴛsᴜ.\n\nᴄᴏɪɴs ʀᴇᴍᴀɪɴ ᴜɴᴛᴏᴜᴄʜᴇᴅ.`;
+    }
+    return {
+      text: `⚠️ 𝐀𝐋𝐑𝐄𝐀𝐃𝐘 𝐑𝐄𝐂𝐑ᴜ𝐈𝐓𝐄𝐃\n\nʏᴏᴜ ᴀʟʀᴇᴀᴅʏ ᴏᴡɴ ᴛʜɪs sʜɪɴᴏʙɪ.\n\nᴄᴏɪɴs ʀᴇᴍᴀɪɴ ᴜɴᴛᴏᴜᴄʜᴇᴅ.`,
+      ability: req.name,
+    };
   }
   if (r.status === 'insufficient') {
     return `❌ 𝐈𝐍𝐒𝐔𝐅𝐅𝐈𝐂𝐈𝐄𝐍𝐓 𝐂𝐎𝐈𝐍𝐒\n\nʏᴏᴜ ɴᴇᴇᴅ ${fmt(req.cost)} 🍥\nʏᴏᴜ ʜᴀᴠᴇ ${fmt(r.balance)} 🍥\n\nɴᴇᴇᴅ ${fmt(req.cost - r.balance)} 🍥 ᴍᴏʀᴇ.`;
@@ -80,5 +91,8 @@ export async function handleBuy(user, text, updateId) {
   if (req.type === 'jutsu') {
     return `✅ 𝐉𝐔𝐓𝐒𝐔 𝐔𝐍𝐋𝐎𝐂𝐊𝐄𝐃\n\n${req.name} ${req.emoji}\n\n${tail}`;
   }
-  return `✅ 𝐏𝐔𝐑𝐂𝐇𝐀𝐒𝐄 𝐒𝐔𝐂𝐂𝐄𝐒𝐒𝐅𝐔𝐋\n\nᴜɴʟᴏᴄᴋᴇᴅ: ${req.name} ${req.emoji}\n\n${tail}`;
+  return {
+    text: `✅ 𝐏𝐔𝐑𝐂𝐇𝐀𝐒𝐄 𝐒𝐔𝐂𝐂𝐄𝐒𝐒𝐅𝐔𝐋\n\nᴜɴʟᴏᴄᴋᴇᴅ: ${req.name} ${req.emoji}\n\n${tail}`,
+    ability: req.name,
+  };
 }

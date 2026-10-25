@@ -243,7 +243,12 @@ test('claim routes to Mini App rather than claiming in chat; group link is handl
   // DM: Mini App button · group: link that opens the bot DM (the text asks for it).
   const prompt = source.slice(source.indexOf('async function replyClaimPrompt'), source.indexOf('// Everything that touches coins'));
   assert.match(prompt, /web_app: \{ url: MINI_APP_URL \}/);
-  assert.match(prompt, /start=mini_claim/);
+  // The group button lives in claim_reminder.js and is shared with the daily
+  // reminder so /claim and the reminder can never drift.
+  assert.match(prompt, /reply_markup: \{ inline_keyboard: \[\[\{ \.\.\.CLAIM_GROUP_BUTTON \}\]\] \}/);
+  const reminders = read('tgcloud/lib/claim_reminder.js');
+  assert.match(reminders, /\?start=mini_claim/);
+  assert.match(reminders, /export const CLAIM_GROUP_BUTTON/);
   assert.match(prompt, /message\.chat\.type === 'private'/);
   assert.match(prompt, /CLAIM_ALREADY_TEXT/);
   assert.match(read('tgcloud/handlers/message.js'), /if \(key === 'mini_claim'\)/);

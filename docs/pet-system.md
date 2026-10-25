@@ -66,6 +66,11 @@ exactly like this; `/buy` and `/equip` keep their real spelling):
 ʙᴜʏ ᴡɪᴛʜ: "/buy ᴘᴇᴛ ɴᴀᴍᴇ" ᴇǫᴜɪᴘ ᴡɪᴛʜ: /equip ᴘᴇᴛ ɴᴀᴍᴇ
 ```
 
+Every successful `/buy <shinobi|pet>` and `/equip <shinobi|pet>` reply carries
+one `Check ❄️ ability` URL button that opens that item's own guide post
+(shinobi 9–15, Axofly 26, Capycorn 27 — see `ability.js`); jutsu, chakra and
+refused purchases get no button.
+
 `/pet_store` never shows purchase buttons. Its only buttons are
 `[Pet 🍖 food] [Pet abilities]` and `[⬅️ Back]`; food opens the existing Ichiraku
 pet-food menu, abilities opens the store-wide guide

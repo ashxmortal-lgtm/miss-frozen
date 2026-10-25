@@ -180,7 +180,7 @@ test('/buy and /equip serve both catalogues with multi-word names', () => {
   assert.match(buy, /if \(!item\) \{\n      return ITEM_NOT_FOUND_TEXT;/);
   // Duplicate taps stay silent, ownership and balance errors have dialogues.
   assert.match(buy, /if \(r\.code === 'duplicate'\) return null;/);
-  assert.match(buy, /if \(r\.code === 'already_owned'\) return alreadyOwnedText\(pet\.name\);/);
+  assert.match(buy, /if \(r\.code === 'already_owned'\) return \{ text: alreadyOwnedText\(pet\.name\), ability: pet\.name \};/);
   assert.match(buy, /insufficientCoinsText\(fmt\(r\.price \?\? pet\.price\), fmt\(r\.balance \?\? 0\)\)/);
 
   const eq = read('tgcloud/lib/economy_handler.js');
