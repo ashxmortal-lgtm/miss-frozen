@@ -53,21 +53,37 @@ test('the pack module never caches or stores message content', () => {
   const touched = [...code.matchAll(/(?:FROM|INTO|UPDATE)\s+([a-z_]+)/gi)].map((m) => m[1].toLowerCase());
   assert.ok(touched.length > 0);
   for (const table of new Set(touched)) {
-    assert.equal(table, 'quote_sticker_packs', `unexpected table touched: ${table}`);
+    assert.equal(table, 'sticker_pack_sets', `unexpected table touched: ${table}`);
   }
 });
 
-test('the schema keeps one pack per (user, format) with unique short names', () => {
+test('packs live in one row per (user, format) in the additive table', () => {
   const schema = read('tgcloud/schema.js');
-  assert.match(schema, /export const quoteStickerPacks = table\('quote_sticker_packs'/);
-  assert.match(schema, /telegramId: integer\('telegram_id'\)\.notNull\(\)/);
-  assert.match(schema, /stickerFormat: text\('sticker_format'\)/, 'format is part of the key');
-  assert.match(schema, /uniqueIndex\('uidx_quote_pack_owner'\)\.on\(t\.telegramId, t\.stickerFormat\)/,
+  const setBlock = schema.slice(
+    schema.indexOf("export const stickerPackSets = table("),
+    schema.indexOf('}));', schema.indexOf("export const stickerPackSets = table(")) + 4,
+  );
+  assert.match(setBlock, /telegramId: integer\('telegram_id'\)\.notNull\(\)/);
+  assert.match(setBlock, /stickerFormat: text\('sticker_format'\)/, 'format is part of the key');
+  assert.match(setBlock, /uniqueIndex\('uidx_sticker_pack_owner'\)\.on\(t\.telegramId, t\.stickerFormat\)/,
     'owner uniqueness: a static and a video pack coexist');
-  assert.doesNotMatch(schema.slice(schema.indexOf("table('quote_sticker_packs'")),
-    /primaryKey\s*\(/, 'no variadic primaryKey() — it is not imported and breaks deploy');
-  assert.match(schema, /uniqueIndex\('uidx_quote_pack_name'\)\.on\(t\.setName\)/, 'unique short name');
-  assert.match(schema, /stickerCount: integer\('sticker_count'\)/, 'sticker count for the pack limit');
+  assert.doesNotMatch(setBlock, /(^|[^.\w])primaryKey\s*\(/m,
+    'no variadic primaryKey() — it is not imported and breaks deploy');
+  assert.match(setBlock, /uniqueIndex\('uidx_sticker_pack_name'\)\.on\(t\.setName\)/, 'unique short name');
+  assert.match(setBlock, /stickerCount: integer\('sticker_count'\)/, 'sticker count for the pack limit');
+});
+
+test('the deployed pack table is left untouched so no column change is requested', () => {
+  const schema = read('tgcloud/schema.js');
+  const liveBlock = schema.slice(
+    schema.indexOf("export const quoteStickerPacks = table("),
+    schema.indexOf('}));', schema.indexOf("export const quoteStickerPacks = table(")) + 4,
+  );
+  // SQLite cannot ALTER a column: redeclaring this one as NOT NULL makes the
+  // platform demand a destructive migration and blocks the deploy.
+  assert.match(liveBlock, /telegramId: integer\('telegram_id'\)\.primaryKey\(\)/,
+    'telegram_id keeps its deployed PRIMARY KEY shape');
+  assert.doesNotMatch(liveBlock, /uidx_sticker_pack_owner/, 'no new indexes on the live table');
 });
 
 test('/q and /own are dispatched before the economy handlers and never consume other text', () => {

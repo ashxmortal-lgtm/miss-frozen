@@ -58,6 +58,8 @@ export const COMMANDS = [
   { cmd: '/edit_cc', desc: 'Edit a coupon code', access: 'owner' },
   { cmd: '/testT', desc: 'Preview the Tsunade discovery message (owner)', access: 'owner' },
   { cmd: '/testJ', desc: 'Preview the Jiraiya discovery message (owner)', access: 'owner' },
+  // Hidden diagnostic: reports each step of the /q avatar pipeline.
+  { cmd: '/qdebug', desc: 'Diagnose the /q avatar pipeline (owner)', access: 'owner', hidden: true },
 ];
 
 export const ALIASES = {
