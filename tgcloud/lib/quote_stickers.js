@@ -96,8 +96,9 @@ const usageReply = (message, key) => reply(message, MESSAGES[key] || MESSAGES.re
  * @param {object|null} avatar  decoded profile photo, or null for the lettered disc
  * @param {{name:string,text:string,userId:number}|null} [nested]  the parent
  *        message, for `/q r`
+ * @param {string} [avatarSource]  where the avatar came from (`user`, `emoji`, …)
  */
-export function buildQuoteSticker(quote, avatar = null, nested = null) {
+export function buildQuoteSticker(quote, avatar = null, nested = null, avatarSource = '') {
   return renderQuotePng({
     text: quote.text,
     name: quote.name,
@@ -105,6 +106,8 @@ export function buildQuoteSticker(quote, avatar = null, nested = null) {
     avatar,
     kind: quote.kind,
     nested,
+    // Emoji artwork needs a light disc behind it to read against.
+    emojiAvatar: avatarSource === 'emoji' || avatarSource === 'emoji-fetched',
   });
 }
 
@@ -150,7 +153,7 @@ async function handleQuote(message, mode = null) {
 
   let rendered;
   try {
-    rendered = buildQuoteSticker(quote, photo.image, nested);
+    rendered = buildQuoteSticker(quote, photo.image, nested, photo.source);
   } catch (e) {
     console.error('[quote render]', e?.message || e);
     await reply(message, MESSAGES.render);

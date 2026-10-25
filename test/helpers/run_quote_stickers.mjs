@@ -4,12 +4,19 @@
 // Covers extraction, rendering, the avatar pipeline, the sticker-copy workflow,
 // pack persistence, and every failure path (timeout, full pack, duplicates).
 import assert from 'node:assert/strict';
-import { api, BotApiError } from 'sdk';
+import { readFileSync } from 'node:fs';
+import { api, BotApiError, setFetch } from 'sdk';
 import { db, sql } from './sdk_db_stub.mjs';
 import { readPngHeader, encodeRgbaPng, decodePng } from '../../tgcloud/lib/quote/png.js';
 import { encodeRgbaPng as _unused } from '../../tgcloud/lib/quote/png.js';
 import { renderQuotePng, renderQuote, planLayout, nameColor } from '../../tgcloud/lib/quote/render.js';
-import { wrapText, measureLine, normalizeText, renderableShare } from '../../tgcloud/lib/quote/text.js';
+import {
+  wrapText, measureLine, normalizeText, renderableShare, isPictograph,
+} from '../../tgcloud/lib/quote/text.js';
+import {
+  emojiCount, firstEmojiOf, emojiTileImage, fetchEmojiImage, resetEmojiCache,
+  emojiCodepointOf, nameIsEmojiOnly,
+} from '../../tgcloud/lib/quote/emoji.js';
 import { extractQuote, formatMessageTime } from '../../tgcloud/lib/quote/extract.js';
 import { decodeJpeg } from '../../tgcloud/lib/quote/jpeg.js';
 import {
@@ -24,6 +31,9 @@ import {
 } from '../../tgcloud/lib/quote_stickers.js';
 
 void _unused;
+
+/** Read a repo file as text (used for source assertions). */
+const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
 
 await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS sticker_pack_sets (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -762,6 +772,180 @@ void fetchProfilePhoto;
   const channelNested = buildQuoteSticker(childQuote, AVATAR_IMAGE,
     { name: channelParentQuote.name, text: channelParentQuote.text, userId: 0 });
   assert.deepEqual(channelNested.nestedLines, ['Breaking: the Hokage returns']);
+}
+
+// ---- 6d. fancy fonts and emoji avatars ------------------------------------
+{
+  // --- styled alphabets fold back to plain letters ------------------------
+  const folds = [
+    ['ᴅᴇʙᴜɢ', 'DEBUG', 'small caps'],
+    ['𝐒𝐚𝐤𝐮𝐫𝐚', 'Sakura', 'math bold'],
+    ['𝕊𝕒𝕜𝕦𝕣𝕒', 'Sakura', 'double-struck'],
+    ['𝓢𝓪𝓴𝓾𝓻𝓪', 'Sakura', 'script'],
+    ['𝔖𝔞𝔨𝔲𝔯𝔞', 'Sakura', 'fraktur'],
+    ['Ｓａｋｕｒａ', 'Sakura', 'fullwidth'],
+    ['Ⓢⓐⓚⓤⓡⓐ', 'Sakura', 'circled'],
+    ['ᴊɪʀᴀɪʏᴀ', 'JIRAIYA', 'small caps word'],
+    ['𝐃𝐡𝐝𝐣𝐣𝐬𝐣𝐬𝐣𝐞', 'Dhdjjsjsje', "the reporter's own name"],
+  ];
+  for (const [input, expected, label] of folds) {
+    assert.equal(normalizeText(input), expected, `${label} folds to ASCII`);
+  }
+
+  // Accents decompose; the Latin letter underneath survives.
+  assert.equal(normalizeText('José'), 'Jose');
+  assert.equal(normalizeText('Ünal'), 'Unal');
+  assert.equal(normalizeText('Nguyễn'), 'Nguyen', 'Vietnamese folds too');
+  assert.equal(normalizeText('ѕαкυяα'), 'sakura', 'Cyrillic/Greek lookalikes read as Latin');
+
+  // The rendered card shows the folded name, never "?" or "Unknown".
+  const bold = renderQuote({ text: 'hi', name: '𝐒𝐚𝐤𝐮𝐫𝐚', avatar: null });
+  assert.equal(bold.drawnName, 'Sakura', 'a styled name is drawn, not "?"');
+
+  // --- astral-plane TEXT is no longer mistaken for emoji ------------------
+  assert.equal(isPictograph(0x1d412), false, 'math bold S is text, not a pictograph');
+  assert.equal(isPictograph(0x1f525), true, 'fire is a pictograph');
+  assert.equal(isPictograph(0x2728), true, 'sparkles is a pictograph');
+
+  // --- the baked offline core -------------------------------------------
+  assert.ok(emojiCount() >= 40, `an offline emoji core is baked (${emojiCount()})`);
+  for (const [ch, cp] of [['🕸️', 0x1f578], ['🔥', 0x1f525], ['✨', 0x2728], ['🌸', 0x1f338],
+    ['💀', 0x1f480], ['👑', 0x1f451], ['⭐', 0x2b50], ['❤️', 0x2764]]) {
+    assert.equal(firstEmojiOf(ch), cp, `${ch} is in the baked core`);
+  }
+  assert.equal(firstEmojiOf('Sakura'), 0, 'plain text has no emoji');
+  // The core is small on purpose: the long tail is fetched, not committed.
+  assert.ok(emojiCount() < 80, 'the baked set stays small');
+
+  // Range detection is independent of the baked set.
+  assert.equal(emojiCodepointOf('🛸'), 0x1f6f8, 'an un-baked emoji is still detected');
+  assert.equal(emojiCodepointOf('Sakura'), 0);
+  assert.ok(nameIsEmojiOnly('🛸'), 'an un-baked emoji name is still emoji-only');
+  assert.equal(nameIsEmojiOnly('Sakura'), false);
+
+  // --- runtime fetch covers everything else ------------------------------
+  assert.equal(firstEmojiOf('🛸'), 0, 'the flying saucer is not baked');
+
+  // A working CDN: the emoji is downloaded and becomes the avatar.
+  const saucerPng = encodeRgbaPng({
+    width: 72, height: 72, rgba: (() => {
+      const px = new Uint8Array(72 * 72 * 4);
+      for (let i = 0; i < 72 * 72; i += 1) {
+        px[i * 4] = 90; px[i * 4 + 1] = 200; px[i * 4 + 2] = 255; px[i * 4 + 3] = 255;
+      }
+      return px;
+    })(),
+  });
+  const fetchedUrls = [];
+  resetEmojiCache();
+  setFetch(async (url) => {
+    fetchedUrls.push(url);
+    return {
+      ok: true,
+      status: 200,
+      // The SDK documents both a chunk stream and body readers; the fetcher
+      // prefers `.bytes()` when present.
+      bytes: async () => saucerPng,
+      body: (async function* chunks() { yield saucerPng; })(),
+    };
+  });
+  const downloaded = await fetchEmojiImage(0x1f6f8);
+  assert.ok(downloaded, 'the CDN image is decoded');
+  assert.equal(downloaded.width, 72);
+  assert.equal(fetchedUrls.length, 1);
+  assert.match(fetchedUrls[0], /twemoji.*1f6f8\.png$/, 'the URL is built from the codepoint');
+
+  // Cached: a second call does not hit the network again.
+  await fetchEmojiImage(0x1f6f8);
+  assert.equal(fetchedUrls.length, 1, 'a fetched emoji is cached per isolate');
+
+  // An emoji-only name that is NOT baked still renders, using the download.
+  const saucerQuote = extractQuote({ from: { id: 5, first_name: '🛸' }, text: 'take me' });
+  const saucerAvatar = await resolveAvatar(saucerQuote);
+  assert.equal(saucerAvatar.source, 'emoji-fetched', 'the CDN supplied the avatar');
+  assert.ok(saucerAvatar.image);
+  const saucerCard = buildQuoteSticker(saucerQuote, saucerAvatar.image, null, saucerAvatar.source);
+  assert.ok(saucerCard.hasAvatar, 'the fetched emoji is drawn');
+  assert.equal(saucerCard.drawnName, '🛸', 'the name is the emoji, not "Unknown"');
+
+  // A broken CDN must never break the card.
+  for (const broken of [
+    // A 404 that still carries decodable bytes: the status must be honoured,
+    // not just "did something decode".
+    async () => ({ ok: false, status: 404, bytes: async () => saucerPng }),
+    async () => { throw new TypeError('getaddrinfo ENOTFOUND'); },
+    async () => ({ ok: true, bytes: async () => new Uint8Array(8) }),
+    async () => ({ ok: true, body: undefined, bytes: undefined }),
+  ]) {
+    resetEmojiCache();
+    setFetch(broken);
+    assert.equal(await fetchEmojiImage(0x1f6f8), null, 'a failed fetch yields no image');
+  }
+  resetEmojiCache();
+  setFetch(async () => ({ ok: false, status: 404 }));
+  const offlineAvatar = await resolveAvatar(saucerQuote);
+  assert.equal(offlineAvatar.source, 'initial', 'an unreachable CDN falls back to the initial');
+  // ... and the sticker is still produced.
+  const offlineCard = buildQuoteSticker(saucerQuote, offlineAvatar.image, null, offlineAvatar.source);
+  assert.equal(offlineCard.hasAvatar, false);
+  setFetch(null);
+  resetEmojiCache();
+
+  // --- an emoji-only name uses that emoji as its avatar ------------------
+  await reset(); // section 6b left a mocked photo on user 7
+  const webAvatar = await resolveAvatar(extractQuote({ from: { id: 7, first_name: '🕸️' }, text: 'Dhdjjsjsje' }));
+  assert.equal(webAvatar.source, 'emoji', 'the baked tile is used, no network needed');
+  const webCard = buildQuoteSticker(
+    extractQuote({ from: { id: 7, first_name: '🕸️' }, text: 'Dhdjjsjsje' }),
+    webAvatar.image, null, webAvatar.source,
+  );
+  assert.equal(webCard.emojiAvatar, true, 'the disc knows it holds emoji artwork');
+  assert.equal(webCard.drawnName, '🕸️', 'the name is the emoji, never "Unknown"');
+  assert.notEqual(webCard.drawnName, 'Unknown');
+  assert.equal(webCard.hasAvatar, true, 'the emoji is the avatar');
+
+  // It is actually PAINTED. The artwork sits on a light disc; the spider web's
+  // strokes are mid-grey. Counting those proves the emoji was drawn and not
+  // merely sized — removing the draw call leaves a bare disc.
+  const avatarCx = 4 + 62;
+  const avatarCy = Math.floor(webCard.height / 2);
+  let discLight = 0;
+  let webStrokes = 0;
+  for (let y = avatarCy - 45; y <= avatarCy + 45; y += 1) {
+    for (let x = avatarCx - 45; x <= avatarCx + 45; x += 1) {
+      if (Math.hypot(x + 0.5 - avatarCx, y + 0.5 - avatarCy) > 55) continue;
+      const i = (y * webCard.width + x) * 4;
+      const [r, g, b, a] = [webCard.rgba[i], webCard.rgba[i + 1], webCard.rgba[i + 2], webCard.rgba[i + 3]];
+      if (a < 200) continue;
+      const spread = Math.max(r, g, b) - Math.min(r, g, b);
+      if (r > 200 && spread < 25) discLight += 1;
+      if (r >= 100 && r <= 185 && spread < 25) webStrokes += 1;
+    }
+  }
+  assert.ok(discLight > 500, `the light disc is painted for emoji artwork (${discLight})`);
+  assert.ok(webStrokes > 80, `the emoji artwork is painted into the disc (${webStrokes} stroke pixels)`);
+
+  // A plain name still gets its initial, not an emoji.
+  const plainCard = renderQuote({ text: 'hi', name: 'Sakura', avatar: null });
+  assert.equal(plainCard.emojiAvatar, false);
+  assert.equal(plainCard.drawnName, 'Sakura');
+
+  // A real photo still wins over any emoji in the name.
+  const photoWins = renderQuote({ text: 'hi', name: '🌸 Sakura', avatar: AVATAR_IMAGE });
+  assert.equal(photoWins.emojiAvatar, false, 'the photo is used when one exists');
+  assert.equal(photoWins.hasAvatar, true);
+
+  // A real profile photo always beats the name's emoji.
+  await reset();
+  photosByUser.set(7, { photos: [[{ file_id: 'AUTHOR_PFP', width: 160, height: 160 }]] });
+  bytesByFileId.set('AUTHOR_PFP', AVATAR_PNG);
+  const photoFirst = await resolveAvatar(extractQuote({ from: { id: 7, first_name: '🌸 Sakura' }, text: 'x' }));
+  assert.equal(photoFirst.source, 'user', 'the photo wins over the name emoji');
+
+  // --- the atlas fits the deploy budget ----------------------------------
+  const atlasSource = read('tgcloud/lib/quote/emoji_atlas.js');
+  assert.ok(Buffer.byteLength(atlasSource, 'utf8') < 700 * 1024,
+    'the atlas fits the snapshot module budget');
 }
 
 // ---- 7. /own only accepts stickers --------------------------------------
