@@ -76,9 +76,10 @@ function killLine(attackerUser, targetUser) {
   return `${mention(attackerUser)} killed ${mention(targetUser)} using itachi`;
 }
 
-function alreadyDeadLine(targetUser, reviveAt = 0) {
-  const when = Number(reviveAt) > 0 ? `\n\n🕊️ revives at ${dueText(reviveAt)}.` : '';
-  return `☠️ ${mention(targetUser)} is already dead.${when}`;
+// Timers (revive + protection) are private knowledge: only /byakugan reveals
+// them, as an ephemeral message. Group replies must never show them.
+function alreadyDeadLine(targetUser) {
+  return `☠️ ${mention(targetUser)} is already dead.`;
 }
 
 async function dmKilled(targetUser, attackerUser, groupTitle) {
@@ -193,7 +194,7 @@ async function applyKillPetBonus(attackerId, targetId, targetShinobi, r) {
 }
 
 function killResultText(attackerUser, targetUser, r) {
-  if (r.code === 'already_dead') return alreadyDeadLine(targetUser, r.reviveAt);
+  if (r.code === 'already_dead') return alreadyDeadLine(targetUser);
   return killLine(attackerUser, targetUser);
 }
 
@@ -364,13 +365,14 @@ export async function handleKill(message) {
   const shinobi = await getEquipped(target.id);
   const skills = await getUserSkills(target.id);
   if ((skills.protectedUntil || 0) > now()) {
+    // No end time here — /byakugan is the only way to learn it.
     await replyText(message,
-      `🛡️ ${escapeHtml(target.first_name || 'The target')} is protected by Jiraiya.\n\n⏳ protection ends at ${dueText(skills.protectedUntil)}.`);
+      `🛡️ ${escapeHtml(target.first_name || 'The target')} is protected by Jiraiya.\n\n» The kill cannot land while the shield is up.`);
     return true;
   }
   // One kill per account per 24h — a shinobi is never the death target.
   if (isAccountDead(skills, now())) {
-    await replyHtml(message, alreadyDeadLine(target, skills.deadUntil));
+    await replyHtml(message, alreadyDeadLine(target));
     return true;
   }
 
@@ -621,12 +623,13 @@ export async function handleProtect(message) {
   }
   const r = await activateProtection(user.id);
   if (!r.ok) {
+    // The countdown is never printed in chat (a group sees this message).
     await replyText(message,
-      `🛡️ Protection is already active.\n\n⏳ ends at ${dueText(r.protectedUntil)} — it cannot be refreshed early.`);
+      '🛡️ Protection is already active.\n\n» It cannot be refreshed early — check the exact time with /byakugan.');
     return true;
   }
   await replyText(message,
-    `🛡️ 𝐏𝐑𝐎𝐓𝐄𝐂𝐓𝐈𝐎𝐍 𝐀𝐂𝐓𝐈𝐕𝐄\n\nJiraiya shields you for 24 hours.\n\n⏳ protection ends at ${dueText(r.protectedUntil)}.\n» Itachi's /kill cannot succeed while protected.`);
+    '🛡️ 𝐏𝐑𝐎𝐓𝐄𝐂𝐓𝐈𝐎𝐍 𝐀𝐂𝐓𝐈𝐕𝐄\n\nJiraiya shields you for 24 hours.\n\n» Itachi\'s /kill cannot succeed while protected.\n» You will get a reminder when it is about to end.');
 }
 
 // ---- /byakugan ----
@@ -679,10 +682,20 @@ export async function handleByakugan(message) {
     await api.sendMessage(payload);
   } catch (e) {
     console.error('[byakugan ephemeral]', e?.description || e);
+    let delivered = false;
     try {
       await api.sendMessage({ chat_id: user.id, text: style(report), parse_mode: 'HTML' });
-    } catch (_) {
-      await replyHtml(message, report);
+      delivered = true;
+    } catch (_) { /* the scanner never opened the bot in DM */ }
+    if (!delivered) {
+      // Never fall back to the group: that would publish the very timer this
+      // command is supposed to keep private. Refund the cooldown instead.
+      await db.run(sql`
+        UPDATE user_skills SET byakugan_at = ${t - BYAKUGAN_COOLDOWN_SEC}
+        WHERE telegram_id = ${user.id}
+      `);
+      await replyText(message,
+        '👁️ Byakugan report could not be delivered privately.\n\n» Open the bot in DM once, then use /byakugan again — the cooldown was refunded.');
     }
   }
   // Notify target that their protection was exposed

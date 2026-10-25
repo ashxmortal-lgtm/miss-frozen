@@ -1,5 +1,7 @@
 import { sweepTsunadeSearches } from "./rpg/tsunade.js";
+import { sweepProtectionReminders } from "./rpg/protect_reminder.js";
 import { handleRedeemCoupon } from "./coupons.js";
+import { sweepClaimReminders, CLAIM_GROUP_BUTTON } from './claim_reminder.js';
 // Economy commands + store/level-up buttons, restored from the old handlers.
 // /start /help /claim /balance /inventory /shinobi_store /buy /mission /patrol /ability /addcoins /backup
 import { runBackup, runFullBackup } from "./backup.js";
@@ -20,7 +22,7 @@ import { addCoins, OWNER_ID } from './admin.js';
 import { runActivity, sweepActivities } from './activities.js';
 import { grantStarter, STARTER_NOTICE } from './starter.js';
 import { balanceText, trackGroup } from './balance.js';
-import { abilityText, abilityKeyboard, backKeyboard } from './ability.js';
+import { abilityText, abilityKeyboard, backKeyboard, abilityCheckKeyboard } from './ability.js';
 import { levelsText, levelsContent } from './levels.js';
 import { economyLocked, ECO_LOCKED_TEXT } from './groupadmin.js';
 import { richOr, editRichOr, storeContent, abilityContent, groupOnlyContent, table } from './rich.js';
@@ -71,8 +73,14 @@ function claimBody(r) {
 }
 
 // Finished missions/patrols: group reminder + short DM + claim button.
-async function announceDone() {
+async function announceDone(chat = null, skipClaimIds = []) {
   try { await sweepTsunadeSearches(); } catch (e) { console.error(e); }
+  // Private "shield expires soon" DM — timers never appear in group messages.
+  try { await sweepProtectionReminders(); } catch (e) { console.error(e); }
+  // "You haven't claimed today" mention for this group (once per user per day).
+  if (chat) {
+    try { await sweepClaimReminders(chat, undefined, { skip: skipClaimIds }); } catch (e) { console.error(e); }
+  }
   for (const r of await sweepActivities()) {
     const who = { id: r.id, first_name: r.name };
     const claimKb = {
@@ -136,12 +144,7 @@ async function replyClaimPrompt(message, cmd) {
     return;
   }
   await reply(message, CLAIM_GROUP_TEXT[cmd] || CLAIM_GROUP_TEXT.claim, {
-    reply_markup: {
-      inline_keyboard: [[{
-        text: '📩 Open bot DM',
-        url: `https://t.me/${BOT_USERNAME}?start=mini_claim`,
-      }]],
-    },
+    reply_markup: { inline_keyboard: [[{ ...CLAIM_GROUP_BUTTON }]] },
   });
 }
 
@@ -172,7 +175,11 @@ export async function handleEconomyCommand(message, ctx) {
   // ===== end /backup =====
   // No scheduler: cleanup, reminders and expired clone windows run on every incoming message.
   try { await sweepMessages(); } catch (e) { console.error(e); }
-  try { await announceDone(); } catch (e) { console.error(e); }
+  // A member typing /claim right now gets no reminder double-tap.
+  const claimingNow = /^\/(?:claim|daily)(?:@\w+)?(?:\s|$)/i.test(String(message.text || ''))
+    ? [message.from?.id]
+    : [];
+  try { await announceDone(message.chat, claimingNow); } catch (e) { console.error(e); }
   try { await sweepClones(); } catch (e) { console.error(e); }
 
   const text = message.text;
@@ -276,10 +283,14 @@ export async function handleEconomyCommand(message, ctx) {
         }
       }
     } else if (cmd === 'buy') {
-      const body = await handleBuy(user, text, ctx?.update?.update_id);
-      if (body) {
+      const out = await handleBuy(user, text, ctx?.update?.update_id);
+      if (out) {
+        // Shinobi / pet purchases carry `Check ❄️ ability` for that exact item.
+        const body = typeof out === 'string' ? out : out.text;
+        const abilityKb = typeof out === 'object' ? abilityCheckKeyboard(out.ability) : undefined;
         await reply(message, body, {
           reply_parameters: { message_id: message.message_id },
+          ...(abilityKb ? { reply_markup: abilityKb } : {}),
         });
       }
     } else if (cmd === 'addcoins') {
@@ -647,6 +658,12 @@ async function sendGlobalLeaderboard(chatId, options = {}) {
 }
 
 
+// `Check ❄️ ability` for the item a reply is about (nothing for jutsu/chakra).
+function abilityExtra(name) {
+  const keyboard = abilityCheckKeyboard(name);
+  return keyboard ? { reply_markup: keyboard } : {};
+}
+
 async function handleEquip(message, text) {
   const args = text.trim().split(/\s+/).slice(1).join(' ').trim();
   if (!args) {
@@ -660,7 +677,7 @@ async function handleEquip(message, text) {
   if (petDef) {
     const r = await equipPet(message.from.id, petDef.id);
     if (r.code === 'ok' || r.code === 'already_equipped') {
-      await reply(message, equipSuccessText(petDef.name));
+      await reply(message, equipSuccessText(petDef.name), abilityExtra(petDef.name));
     } else {
       await reply(message, notOwnedText(petDef.name));
     }
@@ -672,7 +689,7 @@ async function handleEquip(message, text) {
     return;
   }
   if (r.code === 'already') {
-    await reply(message, `<b>${escapeHtml(args)}</b> is already equipped.\n\nEquipped: ${(r.list || []).map(escapeHtml).join(', ') || 'none'}\nCheck /inventory`);
+    await reply(message, `<b>${escapeHtml(args)}</b> is already equipped.\n\nEquipped: ${(r.list || []).map(escapeHtml).join(', ') || 'none'}\nCheck /inventory`, abilityExtra(args));
     return;
   }
   if (r.code === 'full') {
@@ -688,7 +705,7 @@ async function handleEquip(message, text) {
     `✅ <b>${escapeHtml(shown)}</b> equipped!\n` +
     `Active + passive skills apply.\n` +
     `Equipped (${r.list.length}/3): ${r.list.map(escapeHtml).join(', ')}\n\n` +
-    `Check /inventory`);
+    `Check /inventory`, abilityExtra(shown));
 }
 
 async function handleUnequip(message, text) {

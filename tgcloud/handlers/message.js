@@ -22,8 +22,12 @@ import { handleMapCommand, mapSweep } from '../lib/map/handler.js';
 import { handleSupportCommand, handleSupportMessage, handleSupportAdminReply } from '../lib/support_inbox.js';
 import { handleCouponWizardText } from '../lib/coupons.js';
 import { sweepClones } from '../lib/rpg/combat.js';
+import { sweepProtectionReminders } from '../lib/rpg/protect_reminder.js';
 import { rememberInbound } from '../lib/reply_target.js';
 import { restorePetsOnFirstInteraction } from '../lib/pet/migration.js';
+
+const PROTECT_SWEEP_INTERVAL_MS = 60 * 1000;
+let lastProtectSweepAt = 0;
 
 export default async function (message, ctx) {
   // Command replies are sent as replies to the command message (60s window).
@@ -31,6 +35,13 @@ export default async function (message, ctx) {
 
   // Serverless has no setTimeout; resolve due Shadow Clone attacks on update.
   try { await sweepClones(); } catch (e) { console.error('[clone sweep]', e); }
+
+  // "Your Jiraiya shield expires soon" DM. Best-effort and throttled: the
+  // `once()` key inside keeps it to one DM per protection window.
+  if (Date.now() - lastProtectSweepAt > PROTECT_SWEEP_INTERVAL_MS) {
+    lastProtectSweepAt = Date.now();
+    try { await sweepProtectionReminders(); } catch (e) { console.error('[protect sweep]', e); }
+  }
 
   // First interaction: restore the pets this user owned in the legacy economy.db
   // (one primary-key lookup once the user is marked processed).

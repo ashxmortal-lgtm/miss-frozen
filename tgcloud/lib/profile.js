@@ -8,7 +8,6 @@ import { mention, style } from './texts.js';
 import { rankOf } from './activities.js';
 import { botAvatarDataUri } from './bot_avatar.js';
 import { getEquippedList, getEquipped, getUserSkills, isAccountDead } from './rpg/state.js';
-import { dueText } from './rpg/time.js';
 
 const EMO = {
   Sasuke: '⚔️',
@@ -82,7 +81,9 @@ export async function profileData(user) {
     const t = Math.floor(Date.now() / 1000);
     const deadUntil = Number(skills?.deadUntil || 0);
     life = isAccountDead(skills, t)
-      ? { alive: false, label: `Dead · revives ${dueText(deadUntil, t)}`, equipped, deadUntil }
+      // No revive countdown outside /byakugan — this label can reach shared
+      // screens, so it only says "Dead".
+      ? { alive: false, label: 'Dead', equipped, deadUntil }
       : { alive: true, label: 'Alive', equipped, deadUntil: 0 };
   } catch (_) { /* keep default */ }
   let botAvatar = '';
