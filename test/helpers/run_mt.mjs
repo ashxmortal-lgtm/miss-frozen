@@ -18,8 +18,12 @@ const sent = [];
 const deleted = [];
 const menus = [];
 let refuseEphemeralFor = null;
+let refuseSenderDm = false;
 
 api.sendMessage = async (payload) => {
+  if (refuseSenderDm && Number(payload.chat_id) === 8101 && !payload.ephemeral_message_parameters) {
+    throw Object.assign(new Error('Forbidden: bot cannot initiate conversation with a user'), { code: 403 });
+  }
   if (
     refuseEphemeralFor != null
     && payload.ephemeral_message_parameters
@@ -146,5 +150,19 @@ sent.length = 0;
 await handleMtCommand({ ...message({}), chat: { id: OWNER, type: 'private' }, reply_to_message: undefined });
 assert.match(textOf(sent[0]), new RegExp(style('GROUP ONLY')));
 assert.equal(sent[0].chat_id, OWNER, 'a DM answer goes back to the DM');
+
+// ---- 7. both private routes refused: a short public status, never silence ----
+sent.length = 0;
+refuseEphemeralFor = OWNER;
+refuseSenderDm = true;
+await handleMtCommand(message({}));
+refuseEphemeralFor = null;
+refuseSenderDm = false;
+const publicStatus = sent.filter((p) => p.chat_id === GROUP && !p.ephemeral_message_parameters);
+assert.equal(publicStatus.length, 1, 'the sender still gets an answer');
+assert.match(textOf(publicStatus[0]), new RegExp(style('MIND TRANSMISSION SENT')));
+assert.deepEqual(publicStatus[0].reply_parameters, { message_id: 501, allow_sending_without_reply: true });
+assert.ok(!sent.some((p) => p.chat_id === GROUP && /hello there/.test(textOf(p)) && !p.ephemeral_message_parameters),
+  'the transmitted body is never posted publicly');
 
 console.log('mt ephemeral: OK');

@@ -36,6 +36,12 @@ test('a refused ephemeral send falls back to the bot DM, never silence', () => {
   assert.match(body, /'Your message was delivered to their bot DM/);
 });
 
+test('both private routes down → a short public status instead of silence', () => {
+  const mt = read('tgcloud/lib/mt.js');
+  assert.match(mt, /Last resort: a short status in the group beats a silent command\./);
+  assert.match(mt, /fallback\.reply_parameters = \{ message_id: trigger\.message_id, allow_sending_without_reply: true \};/);
+});
+
 test('the group command menu keeps every command when /mt is registered', () => {
   const mt = read('tgcloud/lib/mt.js');
   assert.match(mt, /import \{ COMMANDS \} from '\.\/command_registry\.js';/);

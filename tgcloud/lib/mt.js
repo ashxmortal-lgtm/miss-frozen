@@ -159,6 +159,15 @@ export async function handleMtCommand(message) {
       } catch (e2) {
         console.error('mt sender DM failed:', e2?.description || e2);
       }
+      // Last resort: a short status in the group beats a silent command. Only
+      // the status text is public — the transmitted body never is.
+      try {
+        const fallback = { chat_id: chat.id, text: html, parse_mode: 'HTML' };
+        if (trigger?.message_id) {
+          fallback.reply_parameters = { message_id: trigger.message_id, allow_sending_without_reply: true };
+        }
+        await api.sendMessage(fallback);
+      } catch (_) { /* nothing else to try */ }
       return;
     }
     try {
