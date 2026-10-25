@@ -17,7 +17,7 @@ import { escapeHtml } from './texts.js';
 import { replyParametersFor } from './reply_target.js';
 import { extractQuote, quoteSourceOf } from './quote/extract.js';
 import { renderQuotePng } from './quote/render.js';
-import { fetchProfilePhoto } from './quote/avatar.js';
+import { fetchProfilePhoto, fetchChatPhoto } from './quote/avatar.js';
 import { formatOfSticker, ownSticker, STICKER_LIMITS } from './quote/packs.js';
 
 export const QUOTE_COMMANDS = new Set(['q', 'own']);
@@ -50,19 +50,18 @@ const MESSAGES = {
   nothing_to_quote: '🚫 That message has nothing to quote — it needs text or a caption.',
   render: '⚠️ Could not build that quote sticker. Try a shorter message.',
   full: '📦 Your sticker pack is full. Remove a sticker in Telegram to add another.',
-  full_static: `📦 Your sticker pack is full (${STICKER_LIMITS.static} stickers). Remove one in Telegram to add another.`,
+  full_static: `📦 Your static sticker pack is full (${STICKER_LIMITS.static} stickers). Remove one in Telegram to add another.`,
   full_animated: `📦 Your animated sticker pack is full (${STICKER_LIMITS.animated} stickers). Remove one in Telegram to add another.`,
   full_video: `📦 Your video sticker pack is full (${STICKER_LIMITS.video} stickers). Remove one in Telegram to add another.`,
+  format_unsupported: '🚫 That sticker format cannot be saved by this bot.',
+  unsupported_static: '🚫 Sticker format not supported by this bot.',
   pending: '⏳ Your pack is still being created — try again in a moment.',
   unclear: '⚠️ Telegram did not confirm the upload. Check your pack before retrying.',
   api: '⚠️ Telegram refused the request. Try again later.',
   bad_file: '⚠️ Telegram rejected that sticker.',
   invalid_name: '⚠️ That pack name is not valid for this bot.',
   bad_bot_username: '⚠️ Sticker packs are not configured for this bot.',
-  format: '⚠️ Telegram rejected that sticker format for your pack.',
-  format_mismatch: '⚠️ Your pack holds a different sticker format. Telegram packs are single-format: '
-    + 'a pack created with a static sticker cannot take an animated or video one. '
-    + 'This sticker was not saved.',
+  format: '⚠️ Telegram rejected that sticker format for your pack. Nothing was saved.',
   unsupported_mask: '🚫 Mask stickers cannot be saved to a personal pack.',
   unsupported_custom_emoji: '🚫 Custom emoji cannot be saved to a personal pack.',
   not_sticker_format: '↩️ <code>/own</code> only saves regular stickers.',
@@ -92,8 +91,11 @@ async function handleQuote(message) {
     return true;
   }
 
-  // The avatar belongs to the author of the *replied-to* message.
-  const photo = await fetchProfilePhoto(source?.from?.id);
+  // The avatar belongs to the author of the *replied-to* message — never the
+  // person who invoked /q, and never the bot.
+  const photo = quote.senderId
+    ? await fetchProfilePhoto(quote.senderId)
+    : await fetchChatPhoto(quote.senderChatId);
   const avatar = photo.ok ? photo.image : null;
 
   let rendered;
@@ -101,10 +103,10 @@ async function handleQuote(message) {
     rendered = renderQuotePng({
       text: quote.text,
       name: quote.name,
-      time: quote.time,
-      userId: source?.from?.id,
+      userId: quote.senderId || quote.senderChatId || 0,
       avatar,
       kind: quote.kind,
+      subtitle: quote.handle,
     });
   } catch (e) {
     console.error('[quote render]', e?.message || e);
@@ -161,21 +163,22 @@ async function handleOwn(message) {
   if (!result.ok) {
     let text = MESSAGES[result.code] || MESSAGES.api;
     if (result.code === 'full') {
-      text = MESSAGES[`full_${result.setFormat || 'static'}`] || MESSAGES.full;
+      text = MESSAGES[`full_${result.format || 'static'}`] || MESSAGES.full;
     }
     const suffix = result.url ? `\n\n🔗 ${escapeHtml(result.url)}` : '';
     await reply(message, text + suffix);
     return true;
   }
 
+  const packLabel = result.format === 'static' ? 'static pack' : `${result.format} pack`;
   let headline;
   if (result.duplicate) headline = '📦 <b>ALREADY IN YOUR PACK</b>';
-  else if (result.created) headline = '📦 <b>STICKER PACK CREATED</b>';
+  else if (result.created) headline = `📦 <b>${result.format.toUpperCase()} STICKER PACK CREATED</b>`;
   else headline = '✅ <b>SAVED TO YOUR PACK</b>';
 
   const detail = result.duplicate
-    ? `That sticker is already saved (${result.count} in your pack).`
-    : `Stickers in your pack: ${result.count}.`;
+    ? `That sticker is already saved (${result.count} in your ${packLabel}).`
+    : `Stickers in your ${packLabel}: ${result.count}.`;
   await reply(message, [
     headline, '', detail, '',
     `🔗 <a href="${escapeHtml(result.url)}">Open your sticker pack</a>`,

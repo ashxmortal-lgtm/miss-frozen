@@ -611,21 +611,24 @@ export const dailyMissions = table('daily_missions', {
   statusIdx: index('idx_daily_missions_status').on(t.status),
 }));
 
-// ---- Quote stickers (/q, /own) -------------------------------------------
-// One personal pack per user. The row is claimed before the Telegram call so
-// concurrent /own requests cannot create two sets (unique telegram_id).
+// ---- Sticker packs (/own) ------------------------------------------------
+// ONE ROW PER (user, format): Telegram sets are single-format, so a user keeps
+// an independent static pack and video pack (and animated, where supported).
+// The row is claimed before the Telegram call, so concurrent first /own
+// requests for the same format cannot create two sets.
 // status: creating | ready | full
-// sticker_format: static | animated | video — a Telegram set holds one format.
+// sticker_format: static | animated | video
 export const quoteStickerPacks = table('quote_sticker_packs', {
-  telegramId: integer('telegram_id').primaryKey(),
+  telegramId: integer('telegram_id').notNull(),
+  stickerFormat: text('sticker_format').notNull().default('static'),
   setName: text('set_name').notNull(),
   title: text('title').notNull(),
   stickerCount: integer('sticker_count').notNull().default(0),
   status: text('status').notNull().default('creating'),
-  stickerFormat: text('sticker_format').notNull().default('static'),
   lastError: text('last_error'),
   createdAt: integer('created_at').notNull().default(0),
   updatedAt: integer('updated_at').notNull().default(0),
 }, (t) => ({
+  pk: primaryKey(t.telegramId, t.stickerFormat),
   nameUnique: uniqueIndex('uidx_quote_pack_name').on(t.setName),
 }));

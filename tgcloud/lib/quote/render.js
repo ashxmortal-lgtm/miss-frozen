@@ -33,11 +33,13 @@ export const PALETTE = {
   avatarInk: [138, 122, 168],
 };
 
-const MARGIN = 8;       // outer transparent padding
-const AVATAR = 104;     // avatar diameter
-const GAP = 18;         // avatar → bubble
-const BUBBLE_RADIUS = 34;
-const TEXT_PADDING = 22;
+const MARGIN = 4;        // outer transparent padding
+const AVATAR = 124;      // big avatar diameter (LEFT of the bubble)
+const GAP = 14;          // avatar → bubble
+const BUBBLE_RADIUS = 38;
+const TEXT_PADDING = 24;
+/** Small repeat of the avatar inside the bubble, next to the name (QuotLy). */
+const BADGE = 34;
 
 // ---- surface ---------------------------------------------------------------
 
@@ -144,13 +146,13 @@ export class Surface {
    */
   tail(left, top, drop, width, color) {
     const [cr, cg, cb] = color;
-    const anchorRight = left + width * 0.55;
+    const anchorRight = left + width * 0.62;
     for (let py = Math.floor(top) - 1; py <= Math.ceil(top + drop) + 1; py += 1) {
       const t = (py + 0.5 - top) / drop; // 0 at the bubble edge, 1 at the tip
       if (t < 0 || t > 1) continue;
-      // Widest at the top, tapering to nothing; drifts slightly left on the way.
-      const finWidth = width * Math.pow(1 - t, 0.72);
-      const finLeft = anchorRight - finWidth - t * width * 0.35;
+      // Widest at the top, tapering to nothing; sweeps left on the way down.
+      const finWidth = width * Math.pow(1 - t, 0.55);
+      const finLeft = anchorRight - finWidth - t * width * 0.5;
       for (let px = Math.floor(finLeft) - 1; px <= Math.ceil(anchorRight) + 1; px += 1) {
         // Coverage in x only (the y transition is hidden inside the bubble).
         const coverageX = Math.min(1, Math.max(0, (px + 1.5 - finLeft)));
@@ -181,20 +183,21 @@ const FONT_STEPS = [40, 36, 33, 30, 27, 24, 21, 19, 17];
  * Pure arithmetic, so it can be unit-tested without rendering.
  */
 export function planLayout({
-  text = '', name = '', time = '', hasAvatar = true, width = STICKER_SIZE, maxHeight = MAX_SIDE,
+  text = '', name = '', hasAvatar = true, width = STICKER_SIZE, maxHeight = MAX_SIDE,
+  badge = false,
 }) {
   const avatarSpace = hasAvatar ? AVATAR + GAP : 0;
   const bubbleWidth = width - MARGIN * 2 - avatarSpace;
   const innerWidth = bubbleWidth - TEXT_PADDING * 2;
-  const nameSize = 22;
-  const nameLineHeight = Math.round(nameSize * 1.3);
+  const nameSize = 23;
+  // The name shares its row with the small badge, so the row is taller.
+  const nameLineHeight = Math.max(Math.round(nameSize * 1.3), badge ? BADGE + 6 : 0);
 
   for (const size of FONT_STEPS) {
     const lines = text ? wrapText(normalizeText(text), innerWidth, size) : [];
     const lineHeight = lineHeightOf(size);
-    const bubbleHeight = TEXT_PADDING * 2 + nameLineHeight + 8
-      + (lines.length ? lines.length * lineHeight : lineHeight)
-      + (time ? Math.round(size * 0.78) + 6 : 0);
+    const bubbleHeight = TEXT_PADDING * 2 + nameLineHeight + 10
+      + (lines.length ? lines.length * lineHeight : lineHeight);
     const height = Math.max(bubbleHeight + MARGIN * 2 + (hasAvatar ? 16 : 0),
       hasAvatar ? AVATAR + MARGIN * 2 : 0);
     if (height <= maxHeight) {
@@ -208,12 +211,11 @@ export function planLayout({
   // Even the smallest size overflows: clip to the available rows.
   const size = FONT_STEPS[FONT_STEPS.length - 1];
   const lineHeight = lineHeightOf(size);
-  const room = Math.floor((maxHeight - MARGIN * 2 - TEXT_PADDING * 2 - nameLineHeight - 8
-    - (time ? Math.round(size * 0.78) + 6 : 0)) / lineHeight);
+  const room = Math.floor((maxHeight - MARGIN * 2 - TEXT_PADDING * 2 - nameLineHeight - 10)
+    / lineHeight);
   const wrapped = wrapText(normalizeText(text), innerWidth, size);
   const { lines, clipped } = clampLines(wrapped, Math.max(1, room), innerWidth, size);
-  const bubbleHeight = TEXT_PADDING * 2 + nameLineHeight + 8 + lines.length * lineHeight
-    + (time ? Math.round(size * 0.78) + 6 : 0);
+  const bubbleHeight = TEXT_PADDING * 2 + nameLineHeight + 10 + lines.length * lineHeight;
   return {
     fontSize: size, lines, lineHeight, bubbleWidth, bubbleHeight, innerWidth,
     nameSize, nameLineHeight, height: maxHeight, clipped,
@@ -234,7 +236,7 @@ export function planLayout({
  * @param {string} [options.kind]      label when the message had no text
  */
 export function renderQuote({
-  text = '', name = '', time = '', userId = 0, avatar = null, kind = '',
+  text = '', name = '', userId = 0, avatar = null, kind = '', subtitle = '',
 }) {
   loadAtlas(); // fail fast if the atlas is unusable
 
@@ -243,27 +245,29 @@ export function renderQuote({
   const onlyEmoji = Boolean(cleanText) && !drawableText;
   const label = (!drawableText || onlyEmoji) ? (kind || 'Emoji') : '';
 
-  const plan = planLayout({
-    text: drawableText || '', name, time, hasAvatar: Boolean(avatar),
-  });
+  // The small avatar is repeated inside the bubble beside the name — the detail
+  // that makes the card read as a QuotLy sticker rather than a text box.
+  const badge = true;
+
+  const plan = planLayout({ text: drawableText || '', name, hasAvatar: true, badge });
   const height = plan.height;
   const surface = new Surface(STICKER_SIZE, height);
 
   const avatarRadius = AVATAR / 2;
   const avatarCx = MARGIN + avatarRadius;
-  const bubbleX = avatar ? MARGIN + AVATAR + GAP : MARGIN;
+  const bubbleX = MARGIN + AVATAR + GAP;
   const bubbleY = MARGIN;
   const bubbleW = STICKER_SIZE - MARGIN - bubbleX;
-  // Reserve room below the bubble for the tail (only when there is an avatar to
-  // point at; without one the bubble is a plain rounded card).
-  const TAIL_DROP = avatar ? 16 : 0;
+  // The tail hangs below the bubble's bottom-left, pointing at the avatar.
+  const TAIL_DROP = 18;
   const bubbleH = height - MARGIN * 2 - TAIL_DROP;
 
-  // Pop-in geometry: name baseline, then the text block.
   const textX = bubbleX + TEXT_PADDING;
-  const nameBaseline = bubbleY + TEXT_PADDING + Math.round(plan.nameSize * 0.95);
-  const firstLineBaseline = nameBaseline + 8 + plan.lineHeight
+  const nameRowTop = bubbleY + TEXT_PADDING;
+  const nameBaseline = nameRowTop + Math.round(BADGE / 2 + plan.nameSize * 0.34);
+  const firstLineBaseline = nameRowTop + plan.nameLineHeight + 10 + plan.lineHeight
     - Math.round((plan.lineHeight - plan.nameSize) / 2);
+
   // Blank lines shrink to a paragraph gap instead of a full line box.
   const baselineOf = (index) => {
     let y = firstLineBaseline;
@@ -274,27 +278,41 @@ export function renderQuote({
   };
 
   // Tail first, then the bubble paints over the seam.
-  if (avatar) {
-    surface.tail(bubbleX, bubbleY + bubbleH - 26, TAIL_DROP + 22, 30, PALETTE.bubble);
-  }
+  surface.tail(bubbleX, bubbleY + bubbleH - 34, TAIL_DROP + 20, 46, PALETTE.bubble);
   surface.roundRect(bubbleX, bubbleY, bubbleW, bubbleH, BUBBLE_RADIUS, PALETTE.bubble);
 
-  // Profile photo (or an honest lettered fallback).
-  // The avatar is centred against the bubble, like the reference sticker.
+  // ---- the author's avatar, LEFT, centred against the bubble --------------
   const avatarCy = bubbleY + bubbleH / 2;
-  if (avatar) {
-    surface.circularImage(avatar, avatarCx, avatarCy, avatarRadius);
-  } else {
-    surface.circle(avatarCx, avatarCy, avatarRadius, PALETTE.avatarFallback);
-    const initial = (normalizeText(name).trim()[0] || '?').toUpperCase();
-    const size = 46;
-    const width = measureLine(initial, size);
-    drawLine(surface, initial, avatarCx - width / 2, avatarCy + size * 0.36, size, PALETTE.avatarInk);
+  const initials = (normalizeText(name).trim()[0] || '?').toUpperCase();
+  const drawFace = (image, cx, cy, radius, fontSize) => {
+    if (image) {
+      surface.circularImage(image, cx, cy, radius);
+      return;
+    }
+    // Honest fallback: a tinted disc with the initial. Never a fake person.
+    surface.circle(cx, cy, radius, PALETTE.avatarFallback);
+    const width = measureLine(initials, fontSize);
+    drawLine(surface, initials, cx - width / 2, cy + fontSize * 0.36, fontSize, PALETTE.avatarInk);
+  };
+  drawFace(avatar, avatarCx, avatarCy, avatarRadius, 52);
+
+  // ---- badge + display name inside the bubble ---------------------------
+  const badgeCx = textX + BADGE / 2;
+  const badgeCy = nameRowTop + BADGE / 2;
+  drawFace(avatar, badgeCx, badgeCy, BADGE / 2, 18);
+
+  const nameX = textX + BADGE + 12;
+  const nameWidth = plan.innerWidth - BADGE - 12;
+  const shownName = ellipsize(normalizeText(name).trim() || 'Unknown', nameWidth, plan.nameSize);
+  drawLine(surface, shownName, nameX, nameBaseline, plan.nameSize, nameColor(userId));
+
+  if (subtitle) {
+    const subSize = 15;
+    const shownSub = ellipsize(normalizeText(subtitle), nameWidth, subSize);
+    drawLine(surface, shownSub, nameX, nameBaseline + subSize + 3, subSize, PALETTE.meta);
   }
 
-  const shownName = ellipsize(normalizeText(name).trim() || 'Unknown', plan.innerWidth, plan.nameSize);
-  drawLine(surface, shownName, textX, nameBaseline, plan.nameSize, nameColor(userId));
-
+  // ---- quoted text -------------------------------------------------------
   if (label) {
     const size = Math.min(plan.fontSize, 30);
     drawLine(surface, normalizeText(label), textX, firstLineBaseline + size * 0.1,
@@ -303,13 +321,6 @@ export function renderQuote({
     plan.lines.forEach((line, index) => {
       drawLine(surface, line, textX, baselineOf(index), plan.fontSize, PALETTE.text);
     });
-  }
-
-  if (time) {
-    const size = Math.round(plan.fontSize * 0.62);
-    const width = measureLine(time, size);
-    drawLine(surface, time, bubbleX + bubbleW - TEXT_PADDING - width,
-      bubbleY + bubbleH - TEXT_PADDING, size, PALETTE.meta);
   }
 
   // Honesty: the atlas is Latin-only.

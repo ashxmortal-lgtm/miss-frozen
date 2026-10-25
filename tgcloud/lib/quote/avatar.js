@@ -63,6 +63,32 @@ export function decodeProfilePhoto(bytes) {
 }
 
 /**
+ * Fetch and decode a **channel** photo (channel posts and anonymous admins).
+ * `getUserProfilePhotos` only accepts user ids, so the chat photo is read from
+ * `getChat` instead. Any failure returns a reason and the caller falls back.
+ */
+export async function fetchChatPhoto(chatId) {
+  if (!chatId) return { ok: false, reason: 'no_chat' };
+  let chat;
+  try {
+    chat = await api.getChat({ chat_id: chatId });
+  } catch (error) {
+    return { ok: false, reason: 'api_error' };
+  }
+  const photo = chat?.photo;
+  const fileId = photo?.big_file_id || photo?.small_file_id;
+  if (!fileId) return { ok: false, reason: 'no_photo' };
+  let bytes;
+  try {
+    bytes = asBytes(await api.getFileContent(fileId));
+    if (bytes && bytes.length > MAX_DOWNLOAD_BYTES) return { ok: false, reason: 'too_large' };
+  } catch (error) {
+    return { ok: false, reason: 'download_failed' };
+  }
+  return decodeProfilePhoto(bytes);
+}
+
+/**
  * Fetch and decode a user's profile photo.
  *
  * @param {number} userId  author of the quoted message (never the caller)
