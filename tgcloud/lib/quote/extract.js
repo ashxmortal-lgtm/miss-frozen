@@ -2,6 +2,17 @@
  * Quote extraction — turns the replied-to Telegram message into the plain data
  * the renderer needs. No rendering and no API calls here.
  *
+ * The source is ALWAYS `reply_to_message`; the command message itself is never
+ * quoted (see `isSelfReply`).
+ *
+ * Sender resolution, in order — never invented:
+ *   1. `message.from`            → a normal user (first + last name, @username)
+ *   2. `message.sender_chat`     → a channel post / anonymous admin posting as
+ *                                  the channel; the channel title is the name
+ *   3. anonymous group admin     → Telegram's GroupAnonymousBot placeholder;
+ *                                  the *group* is the poster, not a fake user
+ *   4. nothing usable            → the generic "Unknown" label, still rendered
+ *
  * Supported inputs:
  *   - text messages (entities are flattened to plain text)
  *   - photo / video / animation / document / audio / voice with a caption
@@ -25,6 +36,64 @@ export function formatMessageTime(date) {
   const suffix = hours >= 12 ? 'PM' : 'AM';
   const hour12 = hours % 12 === 0 ? 12 : hours % 12;
   return `${hour12}:${minutes} ${suffix}`;
+}
+
+/** Telegram's built-in placeholders for anonymous group admins. */
+const ANONYMOUS_ADMIN_IDS = new Set([1087968824, 136817688]);
+const GENERIC_AUTHOR = 'Unknown';
+
+/**
+ * Resolve who wrote the replied-to message.
+ * Returns `{ id, name, username, isChannel, anonymous }` — `id` is null when
+ * there is nobody to fetch a profile photo for.
+ */
+export function resolveSender(message, chat = null) {
+  const from = message?.from;
+  const senderChat = message?.sender_chat;
+
+  // A channel post, or an admin posting "as the channel".
+  if (senderChat) {
+    const title = String(senderChat.title || senderChat.username || '').trim();
+    return {
+      id: null, // channel photos come from getChat, not getUserProfilePhotos
+      chatId: senderChat.id ?? null,
+      name: (title || 'Channel').slice(0, MAX_NAME),
+      username: senderChat.username ? `@${senderChat.username}` : '',
+      isChannel: true,
+      anonymous: false,
+    };
+  }
+
+  // A real user (never the bot itself — handled by the caller).
+  if (from && !ANONYMOUS_ADMIN_IDS.has(from.id)) {
+    const name = [from.first_name, from.last_name]
+      .map((part) => String(part || '').trim())
+      .filter(Boolean)
+      .join(' ');
+    return {
+      id: from.id ?? null,
+      chatId: null,
+      name: (name || from.username || GENERIC_AUTHOR).slice(0, MAX_NAME),
+      username: from.username ? `@${from.username}` : '',
+      isChannel: false,
+      anonymous: false,
+    };
+  }
+
+  // Anonymous admin: the group posted it. Name the group, not a fake person.
+  if (from && ANONYMOUS_ADMIN_IDS.has(from.id)) {
+    const title = String(chat?.title || '').trim();
+    return {
+      id: null,
+      chatId: chat?.id ?? null,
+      name: (title || 'Anonymous admin').slice(0, MAX_NAME),
+      username: '',
+      isChannel: false,
+      anonymous: true,
+    };
+  }
+
+  return { id: null, chatId: null, name: GENERIC_AUTHOR, username: '', isChannel: false, anonymous: false };
 }
 
 const MEDIA_LABELS = {
@@ -87,19 +156,19 @@ export function mediaKindOf(message) {
 /**
  * Extract a quote from a replied-to message.
  *
+ * @param {object} message  the replied-to message
+ * @param {object} [options]
+ * @param {object} [options.chat]  the chat the message lives in (anonymous admins)
  * @returns {{
  *   ok: boolean, reason?: string, text: string, name: string, handle: string,
- *   kind: string, hasMedia: boolean, mediaKind: string|null, truncated: boolean
+ *   time: string, kind: string, hasMedia: boolean, mediaKind: string|null,
+ *   truncated: boolean, senderId: number|null, senderChatId: number|null,
+ *   isChannel: boolean, anonymous: boolean
  * }}
  */
-export function extractQuote(message) {
+export function extractQuote(message, options = {}) {
   if (!message) return { ok: false, reason: 'reply_required' };
-  const author = message.from;
-  if (!author || author.is_bot) {
-    return { ok: false, reason: 'no_author' };
-  }
-  const name = String(author.first_name || author.title || 'Unknown').trim() || 'Unknown';
-  const handle = author.username ? `@${author.username}` : '';
+
   const mediaKind = mediaKindOf(message);
   const raw = mediaKind
     ? textOf({ text: message.caption, entities: message.caption_entities })
@@ -113,8 +182,17 @@ export function extractQuote(message) {
     } else if (mediaKind) {
       kind = MEDIA_LABELS[mediaKind];
     } else {
+      // Nothing quotable: no text, no caption, no media (service message, …).
       return { ok: false, reason: 'nothing_to_quote' };
     }
+  }
+
+  // Someone must have written it — but a channel, an anonymous admin or a
+  // sender-less message is still quotable with an honest label.
+  const sender = resolveSender(message, options.chat || message.chat || null);
+  if (sender.anonymous === false && !sender.isChannel && sender.name === GENERIC_AUTHOR
+    && !message.from && !message.sender_chat) {
+    return { ok: false, reason: 'no_author' };
   }
 
   // Collapse runs of blank lines (a quote card cannot show 400 empty rows).
@@ -128,13 +206,17 @@ export function extractQuote(message) {
   return {
     ok: true,
     text: body,
-    name: name.slice(0, MAX_NAME),
-    handle: handle.slice(0, MAX_NAME),
+    name: sender.name.slice(0, MAX_NAME),
+    handle: sender.username.slice(0, MAX_NAME),
     time: formatMessageTime(message.date),
     kind,
     hasMedia: Boolean(mediaKind),
     mediaKind,
     truncated,
+    senderId: sender.id,
+    senderChatId: sender.chatId,
+    isChannel: sender.isChannel,
+    anonymous: sender.anonymous,
   };
 }
 
@@ -144,11 +226,15 @@ export function extractQuote(message) {
  */
 export function quoteSourceOf(message) {
   const target = message?.reply_to_message;
+  // A reply always points at a *different* message; never quote the command.
+  if (target && message?.message_id != null && target.message_id === message.message_id) return null;
   if (!target) return null;
   return {
     message_id: target.message_id,
     from: target.from,
+    sender_chat: target.sender_chat,
     date: target.date,
+    chat: target.chat || message.chat, // anonymous admins are named by the group
     text: target.text,
     entities: target.entities,
     caption: target.caption,

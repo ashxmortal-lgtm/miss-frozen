@@ -7,19 +7,21 @@
  *
  * Format rules (Bot API):
  *   - `sticker_format` is chosen once at creation: `static` | `animated` | `video`;
- *   - a set only accepts stickers of its own format, so a user who first saved a
- *     static sticker cannot also add a video one — that is rejected with a clear
- *     message rather than a confusing API error;
+ *   - a set only accepts stickers of its own format, so **each format gets its
+ *     own pack** — a user who saved a static sticker also gets a separate video
+ *     pack when they first save a video sticker;
  *   - static sets hold ≤ 120 stickers (animated/video: 50);
  *   - `createNewStickerSet` / `addStickerToSet` may time out *after* succeeding,
  *     so every failure is classified and then reconciled with `getStickerSet`.
  *
- * The pack row is claimed (INSERT … ON CONFLICT DO NOTHING) before any remote
- * call, so two simultaneous first `/own` requests cannot create two sets.
+ * Rows are keyed `(telegram_id, sticker_format)`. The row is claimed
+ * (INSERT … ON CONFLICT DO NOTHING) before any remote call, so two simultaneous
+ * first `/own` requests for the same format cannot create two sets.
  */
 
 import { db, api, BotApiError, InputFile } from 'sdk';
 import { sql } from 'sdk/db';
+import { ensureQuotePackSchema } from './schema.js';
 
 export const STICKER_LIMITS = { static: 120, animated: 50, video: 50 };
 export const MAX_STATIC_STICKERS = STICKER_LIMITS.static;
@@ -36,18 +38,21 @@ export function packSuffix(botUsername) {
  * Build the set's short name: `<base><userId>_by_<bot>`, lower-case, ≤ 64 chars.
  * Telegram only accepts letters, digits and underscores.
  */
-export function buildPackName(userId, botUsername, base = 'frozen_stickers') {
+export function buildPackName(userId, botUsername, format = 'static', base = 'frozen') {
   const suffix = packSuffix(botUsername);
   if (!suffix) return null;
-  const prefix = String(base).toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 20) || 'stickers';
-  const name = `${prefix}${userId}${suffix}`.replace(/_+/g, '_');
-  return name.length <= 64 ? name : `${prefix}${String(userId).slice(-12)}${suffix}`.slice(0, 64);
+  const scope = String(base).toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 16) || 'frozen';
+  const tag = String(format || 'static').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 8) || 'static';
+  // One distinct, valid, globally-unique short name per (user, format).
+  const name = `${scope}_${tag}_${userId}${suffix}`.replace(/_+/g, '_');
+  return name.length <= 64 ? name : `${scope}_${tag}_${String(userId).slice(-12)}${suffix}`.slice(0, 64);
 }
 
 /** Telegram rejects a title longer than 64 characters. */
-export function buildPackTitle(displayName) {
+export function buildPackTitle(displayName, format = 'static') {
   const base = String(displayName || 'Player').replace(/\s+/g, ' ').trim().slice(0, 40) || 'Player';
-  return `${base} stickers`.slice(0, 64);
+  const label = format === 'static' ? 'stickers' : `${format} stickers`;
+  return `${base} ${label}`.slice(0, 64);
 }
 
 export function packUrl(name) {
@@ -85,12 +90,14 @@ const isInvalidName = (error) => /short.?name|invalid|not valid|sticker set/i
 const isWrongFormat = (error) => /format|sticker_type|animated|video/i
   .test(String(error?.description ?? ''));
 
-/** Read the stored pack row for a user (null when they have none). */
-export async function getPackRow(userId) {
+/** Read one stored pack row (null when this user has no pack in that format). */
+export async function getPackRow(userId, format = 'static') {
+  await ensureQuotePackSchema();
   try {
     return await db.get(sql`
       SELECT telegram_id, set_name, title, sticker_count, status, sticker_format
-      FROM quote_sticker_packs WHERE telegram_id = ${userId}
+      FROM quote_sticker_packs
+      WHERE telegram_id = ${userId} AND sticker_format = ${format}
     `);
   } catch (error) {
     console.error('[sticker pack] lookup failed', error?.message || error);
@@ -98,20 +105,39 @@ export async function getPackRow(userId) {
   }
 }
 
-/** Reserve the single pack row for a user before any remote call. */
-export async function claimPack(userId, name, format, title) {
+/** Every pack a user owns, one row per format. */
+export async function listPackRows(userId) {
+  await ensureQuotePackSchema();
+  try {
+    return await db.all(sql`
+      SELECT telegram_id, set_name, title, sticker_count, status, sticker_format
+      FROM quote_sticker_packs WHERE telegram_id = ${userId}
+    `);
+  } catch (error) {
+    console.error('[sticker pack] list failed', error?.message || error);
+    return [];
+  }
+}
+
+/**
+ * Reserve the pack row for (user, format) before any remote call.
+ * The composite primary key makes this the single point of serialisation.
+ */
+export async function claimPack(userId, format, name, title) {
+  await ensureQuotePackSchema();
   const now = Math.floor(Date.now() / 1000);
   const inserted = await db.run(sql`
     INSERT INTO quote_sticker_packs
-      (telegram_id, set_name, title, sticker_count, status, sticker_format, created_at, updated_at)
-    VALUES (${userId}, ${name}, ${title}, 0, 'creating', ${format}, ${now}, ${now})
-    ON CONFLICT(telegram_id) DO NOTHING
+      (telegram_id, sticker_format, set_name, title, sticker_count, status, created_at, updated_at)
+    VALUES (${userId}, ${format}, ${name}, ${title}, 0, 'creating', ${now}, ${now})
+    ON CONFLICT(telegram_id, sticker_format) DO NOTHING
   `);
-  const row = await getPackRow(userId);
+  const row = await getPackRow(userId, format);
   return { claimed: Number(inserted?.rowsAffected) > 0, row };
 }
 
-export async function markPack(userId, status, extra = {}) {
+export async function markPack(userId, format, status, extra = {}) {
+  await ensureQuotePackSchema();
   const count = Number(extra.count) || 0;
   const now = Math.floor(Date.now() / 1000);
   await db.run(sql`
@@ -120,15 +146,17 @@ export async function markPack(userId, status, extra = {}) {
         sticker_count = ${count},
         last_error = ${extra.error || null},
         updated_at = ${now}
-    WHERE telegram_id = ${userId}
+    WHERE telegram_id = ${userId} AND sticker_format = ${format}
   `);
 }
 
 /** Drop a claim that never produced a remote set, so a retry can start over. */
-export async function releasePackClaim(userId) {
+export async function releasePackClaim(userId, format) {
+  await ensureQuotePackSchema();
   await db.run(sql`
     DELETE FROM quote_sticker_packs
-    WHERE telegram_id = ${userId} AND status = 'creating' AND sticker_count = 0
+    WHERE telegram_id = ${userId} AND sticker_format = ${format}
+      AND status = 'creating' AND sticker_count = 0
   `);
 }
 
@@ -209,97 +237,103 @@ const containsSticker = (stickers, sticker) => stickers.some((existing) => (
   || (existing.file_id && sticker.file_id && existing.file_id === sticker.file_id)
 ));
 
+const withUrl = (result, name) => ({ ...result, url: name ? packUrl(name) : '' });
+
 /**
- * Save `sticker` into the user's pack, creating the pack on first use.
+ * Save `sticker` into the caller's pack *for that sticker's format*,
+ * creating the pack on first use of that format.
  *
- * @returns {Promise<{ok:true, url:string, created:boolean, count:number, duplicate?:boolean}
- *   | {ok:false, code:string, url?:string, count?:number}>}
+ * Static, animated and video stickers each get their own independent pack.
+ *
+ * @returns {Promise<{ok:true, url:string, created:boolean, count:number,
+ *   duplicate?:boolean, format:string}
+ *   | {ok:false, code:string, url?:string, count?:number, format?:string}>}
  */
 export async function ownSticker({ userId, displayName, botUsername, sticker }) {
-  const format = formatOfSticker(sticker);
-  if (!format.ok) return { ok: false, code: format.reason };
+  const resolved = formatOfSticker(sticker);
+  if (!resolved.ok) return { ok: false, code: resolved.reason };
+  const format = resolved.format;
 
-  const name = buildPackName(userId, botUsername);
-  if (!name) return { ok: false, code: 'bad_bot_username' };
-  const title = buildPackTitle(displayName);
-  const packFormat = format.format;
-  const limit = STICKER_LIMITS[packFormat];
+  // Reject unsupported formats *before* any database write or API call.
+  if (!STICKER_LIMITS[format]) return { ok: false, code: 'format_unsupported', format };
 
-  let row = await getPackRow(userId);
+  const name = buildPackName(userId, botUsername, format);
+  if (!name) return { ok: false, code: 'bad_bot_username', format };
+  const title = buildPackTitle(displayName, format);
+  const limit = STICKER_LIMITS[format];
 
-  // ---- first use: create the set with this sticker -------------------------
+  await ensureQuotePackSchema();
+  let row = await getPackRow(userId, format);
+
+  // ---- first use of this format: create the set with this sticker ----------
   if (!row) {
-    const claim = await claimPack(userId, name, packFormat, title);
+    const claim = await claimPack(userId, format, name, title);
     if (!claim.claimed) {
-      row = claim.row; // lost the race; fall through to the "existing pack" path
+      row = claim.row; // lost the race; fall through to the existing-pack path
     } else {
-      const created = await createPack({ userId, name, title, format: packFormat, sticker });
+      const created = await createPack({ userId, name, title, format, sticker });
       if (created.ok === true) {
-        await markPack(userId, 'ready', { count: 1 });
-        return { ok: true, url: packUrl(name), created: true, count: 1 };
+        await markPack(userId, format, 'ready', { count: 1 });
+        return withUrl({ ok: true, created: true, count: 1, format }, name);
       }
       if (created.ok === 'exists') {
         // The set already exists remotely — usually this very pack from an
-        // earlier call whose response was lost. Adopt it instead of failing.
-        await markPack(userId, 'ready', { count: 0 });
-        row = await getPackRow(userId);
+        // earlier call whose response was lost. Adopt it, never duplicate it.
+        await markPack(userId, format, 'ready', { count: 0 });
+        row = await getPackRow(userId, format);
       } else if (created.ok === 'unclear') {
-        // Ambiguous: never create a second set. Reconcile with getStickerSet.
         const inspected = await inspectPack(name);
         if (inspected.ok) {
-          await markPack(userId, 'ready', { count: inspected.stickers.length });
-          const duplicate = containsSticker(inspected.stickers, sticker);
-          return { ok: true, url: packUrl(name), created: true, count: inspected.stickers.length, duplicate };
+          await markPack(userId, format, 'ready', { count: inspected.stickers.length });
+          return withUrl({
+            ok: true, created: true, count: inspected.stickers.length, format,
+            duplicate: containsSticker(inspected.stickers, sticker),
+          }, name);
         }
-        await releasePackClaim(userId);
-        return { ok: false, code: 'unclear' };
+        await releasePackClaim(userId, format);
+        return { ok: false, code: 'unclear', format };
       } else {
-        await releasePackClaim(userId);
-        return { ok: false, code: created.code || 'api' };
+        // Never leave an empty pack behind (Telegram may have rejected the
+        // format outright): drop the claim so a retry starts clean.
+        await releasePackClaim(userId, format);
+        return { ok: false, code: created.code || 'api', format };
       }
     }
   }
 
-  row = row || await getPackRow(userId);
-  if (!row) return { ok: false, code: 'api' };
+  row = row || await getPackRow(userId, format);
+  if (!row) return { ok: false, code: 'api', format };
 
-  // ---- a concurrent request is still creating the set ----------------------
+  // ---- another request is still creating this format's set ----------------
   if (row.status === 'creating') {
     const inspected = await inspectPack(row.set_name);
-    if (!inspected.ok && inspected.missing) return { ok: false, code: 'pending' };
-    if (!inspected.ok) return { ok: false, code: 'unclear' };
-    await markPack(userId, 'ready', { count: inspected.stickers.length });
-    row = await getPackRow(userId);
+    if (!inspected.ok && inspected.missing) return { ok: false, code: 'pending', format };
+    if (!inspected.ok) return { ok: false, code: 'unclear', format };
+    await markPack(userId, format, 'ready', { count: inspected.stickers.length });
+    row = await getPackRow(userId, format);
   }
 
   const setName = row.set_name;
-  const setFormat = row.sticker_format || packFormat;
-
-  // ---- format mismatch: a set only holds one sticker format ---------------
-  if (setFormat !== packFormat) {
-    return { ok: false, code: 'format_mismatch', url: packUrl(setName), setFormat };
-  }
 
   // ---- duplicates are a success, not an error ----------------------------
   const current = await inspectPack(setName);
   if (current.ok && containsSticker(current.stickers, sticker)) {
-    await markPack(userId, 'ready', { count: current.stickers.length });
-    return {
-      ok: true, url: packUrl(setName), created: false,
-      count: current.stickers.length, duplicate: true,
-    };
+    await markPack(userId, format, 'ready', { count: current.stickers.length });
+    return withUrl({
+      ok: true, created: false, count: current.stickers.length, format, duplicate: true,
+    }, setName);
   }
   const currentCount = current.ok ? current.stickers.length : Number(row.sticker_count || 0);
   if (currentCount >= limit) {
-    await markPack(userId, 'full', { count: currentCount });
-    return { ok: false, code: 'full', count: currentCount, url: packUrl(setName) };
+    await markPack(userId, format, 'full', { count: currentCount });
+    return { ok: false, code: 'full', count: currentCount, format, url: packUrl(setName) };
   }
 
-  const added = await addStickerToPack({ userId, name: setName, format: packFormat, sticker });
+  const added = await addStickerToPack({ userId, name: setName, format, sticker });
   if (added.ok === true) {
     const count = currentCount + 1;
-    await markPack(userId, 'ready', { count });
-    return { ok: true, url: packUrl(setName), created: false, count };
+    await markPack(userId, format, 'ready', { count });
+    return withUrl({ ok: true, created: false, count, format }, setName);
   }
 
   // ---- failure: reconcile before reporting -------------------------------
@@ -307,20 +341,26 @@ export async function ownSticker({ userId, displayName, botUsername, sticker }) 
   if (after.ok) {
     const duplicate = containsSticker(after.stickers, sticker);
     if (duplicate || after.stickers.length > currentCount) {
-      await markPack(userId, 'ready', { count: after.stickers.length });
-      return {
-        ok: true, url: packUrl(setName), created: false,
-        count: after.stickers.length, duplicate,
-      };
+      await markPack(userId, format, 'ready', { count: after.stickers.length });
+      return withUrl({
+        ok: true, created: false, count: after.stickers.length, format, duplicate,
+      }, setName);
     }
     if (after.stickers.length >= limit) {
-      await markPack(userId, 'full', { count: after.stickers.length });
-      return { ok: false, code: 'full', count: after.stickers.length, url: packUrl(setName) };
+      await markPack(userId, format, 'full', { count: after.stickers.length });
+      return { ok: false, code: 'full', count: after.stickers.length, format, url: packUrl(setName) };
     }
-    await markPack(userId, 'ready', { count: after.stickers.length });
-    return { ok: false, code: added.code || describePackError(added.error), url: packUrl(setName) };
+    await markPack(userId, format, 'ready', { count: after.stickers.length });
+    return {
+      ok: false, code: added.code || describePackError(added.error),
+      format, url: packUrl(setName),
+    };
   }
-  return { ok: false, code: added.ok === 'unclear' ? 'unclear' : (added.code || 'api') };
+  return {
+    ok: false,
+    code: added.ok === 'unclear' ? 'unclear' : (added.code || 'api'),
+    format,
+  };
 }
 
 export { InputFile };

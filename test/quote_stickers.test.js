@@ -15,6 +15,15 @@ test('/q and /own: end to end (extract → render → upload → pack row)', () 
   assert.match(output, /quote stickers: OK/);
 });
 
+test('the legacy pack table migrates to one row per (user, format)', () => {
+  const output = execFileSync(
+    process.execPath,
+    ['--experimental-loader', './test/helpers/sdk-loader.mjs', 'test/helpers/run_quote_pack_migration.mjs'],
+    { cwd: new URL('..', import.meta.url), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+  assert.match(output, /schema migration: OK/);
+});
+
 test('the renderer is pure JS — no canvas, no zlib, no npm at runtime', () => {
   const png = read('tgcloud/lib/quote/png.js');
   const render = read('tgcloud/lib/quote/render.js');
@@ -48,10 +57,13 @@ test('the pack module never caches or stores message content', () => {
   }
 });
 
-test('the schema declares one pack per user with unique names', () => {
+test('the schema keeps one pack per (user, format) with unique short names', () => {
   const schema = read('tgcloud/schema.js');
   assert.match(schema, /export const quoteStickerPacks = table\('quote_sticker_packs'/);
-  assert.match(schema, /telegramId: integer\('telegram_id'\)\.primaryKey\(\)/, 'unique user row');
+  assert.match(schema, /telegramId: integer\('telegram_id'\)\.notNull\(\)/);
+  assert.match(schema, /stickerFormat: text\('sticker_format'\)/, 'format is part of the key');
+  assert.match(schema, /pk: primaryKey\(t\.telegramId, t\.stickerFormat\)/,
+    'composite key: a static and a video pack coexist');
   assert.match(schema, /uniqueIndex\('uidx_quote_pack_name'\)\.on\(t\.setName\)/, 'unique short name');
   assert.match(schema, /stickerCount: integer\('sticker_count'\)/, 'sticker count for the pack limit');
 });

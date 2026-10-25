@@ -24,15 +24,16 @@ import {
 void _unused;
 
 await db.run(sql.raw(`CREATE TABLE IF NOT EXISTS quote_sticker_packs (
-  telegram_id INTEGER PRIMARY KEY,
+  telegram_id INTEGER NOT NULL,
+  sticker_format TEXT NOT NULL DEFAULT 'static',
   set_name TEXT NOT NULL,
   title TEXT NOT NULL,
   sticker_count INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'creating',
-  sticker_format TEXT NOT NULL DEFAULT 'static',
   last_error TEXT,
   created_at INTEGER NOT NULL DEFAULT 0,
-  updated_at INTEGER NOT NULL DEFAULT 0
+  updated_at INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (telegram_id, sticker_format)
 )`));
 await db.run(sql.raw('CREATE UNIQUE INDEX IF NOT EXISTS uidx_quote_pack_name ON quote_sticker_packs (set_name)'));
 
@@ -68,7 +69,7 @@ const AVATAR_IMAGE = decodePng(AVATAR_PNG);
 
 const calls = {
   stickers: [], messages: [], creates: [], adds: [], profilePhotoRequests: [], fileRequests: [],
-  sets: {},
+  chatRequests: [], sets: {}, chats: {},
 };
 let profilePhotoResult = { photos: [] };
 let profilePhotoError = null;
@@ -137,11 +138,17 @@ api.getStickerSet = async ({ name }) => {
   return set;
 };
 api.getMe = async () => ({ id: 8888370613, username: 'missfrozen_bot' });
+api.getChat = async ({ chat_id }) => {
+  calls.chatRequests.push(chat_id);
+  return calls.chats[chat_id] || { id: chat_id, type: 'channel', title: 'Channel' };
+};
 
 const reset = async () => {
-  for (const key of ['stickers', 'messages', 'creates', 'adds', 'profilePhotoRequests', 'fileRequests']) {
+  for (const key of ['stickers', 'messages', 'creates', 'adds', 'profilePhotoRequests',
+    'fileRequests', 'chatRequests']) {
     calls[key].length = 0;
   }
+  for (const key of Object.keys(calls.chats)) delete calls.chats[key];
   for (const key of Object.keys(calls.sets)) delete calls.sets[key];
   profilePhotoResult = { photos: [] };
   profilePhotoError = null;
@@ -380,7 +387,7 @@ assert.equal(calls.creates.length, 2);
 assert.notEqual(calls.creates[0].name, calls.creates[1].name);
 assert.equal(calls.creates[0].user_id, 77);
 assert.equal(calls.creates[1].user_id, 78);
-assert.match(calls.creates[0].name, /^frozen_stickers77_by_missfrozen_bot$/);
+assert.match(calls.creates[0].name, /^frozen_static_77_by_missfrozen_bot$/);
 
 // ---- 12. sticker formats ---------------------------------------------
 assert.deepEqual(formatOfSticker({ file_id: 'a', is_animated: false, is_video: false }), { ok: true, format: 'static' });
@@ -398,23 +405,55 @@ assert.equal(await handleQuoteCommand(commandMessage({
 })), true);
 assert.equal(calls.creates[0].sticker_format, 'animated');
 assert.equal(calls.creates[0].stickers[0].format, 'animated');
-const animRow = await db.get(sql`SELECT * FROM quote_sticker_packs WHERE telegram_id = 42`);
+const animRow = await db.get(sql`SELECT * FROM quote_sticker_packs WHERE telegram_id = 42 AND sticker_format = 'animated'`);
 assert.equal(animRow.sticker_format, 'animated');
+assert.match(animRow.set_name, /_animated_/);
 
-// A video sticker added to an animated pack is refused with a clear reason.
+// ---- 12b. SEPARATE static and video packs for the SAME user -----------
 await reset();
-await handleQuoteCommand(commandMessage({ text: '/own', reply: stickerReply({ file_id: 'V1', file_unique_id: 'v1', is_video: true }) }));
-console.log('video pack created?', calls.creates.length);
-const videoRow = await db.get(sql`SELECT * FROM quote_sticker_packs WHERE telegram_id = 42`);
-assert.equal(videoRow.sticker_format, 'video', 'a video sticker makes a video pack');
-assert.equal(calls.creates[0].sticker_format, 'video');
-
-// Now a static sticker must be refused for that user.
 assert.equal(await handleQuoteCommand(commandMessage({
   text: '/own', reply: stickerReply({ file_id: 'S1', file_unique_id: 's1' }),
 })), true);
-assert.match(lastMessage(), /single-format|different sticker format/i);
-assert.equal(calls.adds.length, 0, 'the mismatched sticker is not uploaded');
+assert.equal(calls.creates.length, 1);
+assert.equal(calls.creates[0].sticker_format, 'static');
+
+// The same user now saves a video sticker → a SECOND, independent pack.
+assert.equal(await handleQuoteCommand(commandMessage({
+  text: '/own', reply: stickerReply({ file_id: 'V1', file_unique_id: 'v1', is_video: true, type: 'video' }),
+})), true);
+assert.equal(calls.creates.length, 2, 'a video sticker creates its own pack');
+assert.equal(calls.creates[1].sticker_format, 'video');
+assert.notEqual(calls.creates[0].name, calls.creates[1].name, 'distinct short names');
+assert.match(calls.creates[0].name, /^frozen_static_42_by_missfrozen_bot$/);
+assert.match(calls.creates[1].name, /^frozen_video_42_by_missfrozen_bot$/);
+assert.match(lastMessage(), /video sticker pack created/i);
+
+const bothRows = await db.all(sql`
+  SELECT sticker_format, set_name, sticker_count FROM quote_sticker_packs
+  WHERE telegram_id = 42 ORDER BY sticker_format
+`);
+assert.equal(bothRows.length, 2, 'one row per format');
+assert.equal(bothRows[0].sticker_format, 'static');
+assert.equal(bothRows[1].sticker_format, 'video');
+assert.match(bothRows[0].set_name, /_static_/);
+assert.match(bothRows[1].set_name, /_video_/);
+
+// Re-saving a static sticker reuses the static pack, not the video one.
+const addsBefore = calls.adds.length;
+assert.equal(await handleQuoteCommand(commandMessage({
+  text: '/own', reply: stickerReply({ file_id: 'S2', file_unique_id: 's2' }),
+})), true);
+assert.equal(calls.creates.length, 2, 'no third pack');
+assert.equal(calls.adds.length, addsBefore + 1);
+assert.equal(calls.adds.at(-1).name, bothRows[0].set_name, 'added to the STATIC pack');
+assert.equal(calls.adds.at(-1).sticker.bookmark ?? calls.adds.at(-1).sticker.format, 'static');
+
+// And a second video sticker goes to the video pack.
+await handleQuoteCommand(commandMessage({
+  text: '/own', reply: stickerReply({ file_id: 'V2', file_unique_id: 'v2', is_video: true, type: 'video' }),
+}));
+assert.equal(calls.adds.at(-1).name, bothRows[1].set_name, 'added to the VIDEO pack');
+assert.equal(calls.adds.at(-1).sticker.format, 'video');
 
 // Masks and custom emoji are refused.
 await reset();
@@ -525,13 +564,116 @@ assert.ok(buildPackTitle('x'.repeat(200)).length <= 64);
 assert.equal((await ownSticker({ userId: 10, displayName: 'X', botUsername: 'x', sticker: { file_id: 'a', type: 'regular' } })).code,
   'bad_bot_username');
 
+// ---- 17b. /q sender resolution (the reported bug) --------------------
+// The quoted author — never the invoker, never the bot — supplies name + PFP.
+await reset();
+profilePhotoResult = { total_count: 1, photos: [[{ file_id: 'AUTH_PFP', width: 200, height: 200 }]] };
+fileBytes = AVATAR_PNG;
+const invoker = user(42, { first_name: 'Kakashi', username: 'kakashi' });
+const quotedAuthor = user(7, { first_name: 'Sakura', last_name: 'Haruno', username: 'sakura' });
+
+assert.equal(await handleQuoteCommand(commandMessage({
+  text: '/q', from: invoker, reply: textReply('the quoted line', quotedAuthor),
+})), true);
+assert.equal(calls.profilePhotoRequests.at(-1).user_id, 7,
+  'the PFP request targets the QUOTED author, not the invoker');
+assert.notEqual(calls.profilePhotoRequests.at(-1).user_id, invoker.id);
+assert.equal(calls.stickers.length, 1);
+
+// The card itself carries the author's name, not the invoker's and not "Unknown".
+const nameCard = renderQuote({
+  text: 'the quoted line', name: 'Sakura Haruno', userId: 7, avatar: AVATAR_IMAGE,
+});
+assert.equal(nameCard.hasAvatar, true);
+
+// "/q" must never become the quote text when a reply exists.
+const noSelfQuote = renderQuote({ text: 'the quoted line', name: 'Sakura', avatar: AVATAR_IMAGE });
+assert.ok(!noSelfQuote.lines.join(' ').includes('/q'));
+assert.equal(noSelfQuote.lines.join(' '), 'the quoted line');
+
+// A reply whose message_id equals the command's is not a real reply.
+await reset();
+const selfReply = {
+  message_id: 1000, // same id as the command message
+  from: quotedAuthor, text: '/q', date: 1700000000, chat: { id: -1001234 },
+};
+assert.equal(await handleQuoteCommand(commandMessage({ text: '/q', reply: selfReply })), true);
+assert.equal(calls.stickers.length, 0, 'a self-referencing reply quotes nothing');
+
+// Channel post: named after the channel, avatar from getChat (not getUserProfilePhotos).
+await reset();
+const channelPost = {
+  message_id: 910,
+  sender_chat: { id: -1009, title: 'Konoha News', type: 'channel', username: 'konohanews' },
+  text: 'Breaking: the Hokage returns',
+  date: 1700000000,
+  chat: { id: -1009, type: 'channel' },
+};
+calls.chats[-1009] = { id: -1009, type: 'channel', title: 'Konoha News',
+  photo: { big_file_id: 'CHANNEL_PFP', small_file_id: 'CHANNEL_PFP_SMALL' } };
+fileBytes = AVATAR_PNG;
+assert.equal(await handleQuoteCommand(commandMessage({
+  text: '/q', from: invoker, reply: channelPost,
+})), true);
+assert.equal(calls.stickers.length, 1, 'a channel post is quotable');
+assert.deepEqual(calls.chatRequests.at(-1), -1009, 'the channel photo comes from getChat');
+assert.equal(calls.profilePhotoRequests.length, 0, 'no user PFP is requested for a channel');
+
+const channelQuote = extractQuote(channelPost);
+assert.equal(channelQuote.ok, true);
+assert.equal(channelQuote.name, 'Konoha News', 'the channel is credited, not "Unknown"');
+assert.equal(channelQuote.isChannel, true);
+assert.equal(channelQuote.senderChatId, -1009);
+assert.equal(channelQuote.senderId, null, 'no user id to attribute');
+
+// Channel without a photo → still renders, lettered fallback.
+await reset();
+calls.chats[-1009] = { id: -1009, type: 'channel', title: 'Konoha News' };
+assert.equal(await handleQuoteCommand(commandMessage({ text: '/q', reply: channelPost })), true);
+assert.equal(calls.stickers.length, 1, 'a photo-less channel still yields a sticker');
+
+// Anonymous group admin: the GROUP is credited, never a fake person.
+await reset();
+const anonPost = {
+  message_id: 911,
+  from: { id: 1087968824, first_name: 'Group', is_bot: true, username: 'GroupAnonymousBot' },
+  text: 'Admin announcement',
+  date: 1700000000,
+  chat: { id: -1001234, type: 'supergroup', title: 'Konoha Village' },
+};
+const anonQuote = extractQuote(anonPost, { chat: { id: -1001234, title: 'Konoha Village' } });
+assert.equal(anonQuote.ok, true, 'an anonymous admin is quotable');
+assert.equal(anonQuote.name, 'Konoha Village', 'the group is credited');
+assert.equal(anonQuote.anonymous, true);
+assert.equal(anonQuote.senderId, null, 'the placeholder bot id is never used as a person');
+
+assert.equal(await handleQuoteCommand(commandMessage({
+  text: '/q', reply: anonPost, chatType: 'supergroup',
+})), true);
+assert.equal(calls.stickers.length, 1);
+
+// A message with no sender information at all is rejected, not invented.
+await reset();
+const senderless = { message_id: 912, text: 'ghost', date: 1700000000, chat: { id: -1 } };
+assert.equal(await handleQuoteCommand(commandMessage({ text: '/q', reply: senderless })), true);
+assert.equal(calls.stickers.length, 0);
+assert.match(lastMessage(), /no author/i);
+
+// Channels and anonymous admins never trigger a *user* PFP lookup.
+assert.equal(calls.profilePhotoRequests.length, 0);
+
 // ---- 18. extraction, text and layout ---------------------------------
 assert.equal(formatMessageTime(0), '');
 assert.equal(formatMessageTime(1700000000), '10:13 PM');
 assert.equal(formatMessageTime(1700003600), '11:13 PM');
 
 assert.deepEqual(extractQuote({ from: { id: 1, first_name: 'A' }, text: 'hi', date: 1700000000 }).time, '10:13 PM');
-assert.equal(extractQuote({ from: { id: 1, is_bot: true, first_name: 'Bot' }, text: 'x' }).reason, 'no_author');
+// A bot message is still quotable (its own name is shown, no PFP attempt).
+const botQuote = extractQuote({ from: { id: 1, is_bot: true, first_name: 'HelperBot' }, text: 'beep' });
+assert.equal(botQuote.ok, true);
+assert.equal(botQuote.name, 'HelperBot');
+// Nothing identifying at all → no quote rather than an invented sender.
+assert.equal(extractQuote({ text: 'x', chat: { id: 1 } }).reason, 'no_author');
 assert.equal(extractQuote(null).reason, 'reply_required');
 assert.equal(extractQuote({ from: { id: 1 }, chat: { id: 1 } }).reason, 'nothing_to_quote');
 
@@ -577,9 +719,9 @@ assert.ok(shortPlan.fontSize >= longPlan.fontSize, 'long text uses a smaller fac
 assert.ok(shortPlan.height <= 512 && longPlan.height <= 512, 'never exceeds 512 px');
 assert.equal(longPlan.clipped, true, 'extreme text is clipped, not overflowing');
 
-// No avatar → no reserved avatar column.
-assert.equal(planLayout({ text: 'x', name: 'A', hasAvatar: false }).bubbleWidth,
-  planLayout({ text: 'x', name: 'A', hasAvatar: true }).bubbleWidth + 122);
+// With an avatar the bubble starts after the avatar column (124 px + 14 gap).
+assert.equal(planLayout({ text: 'x', name: 'A', hasAvatar: true }).bubbleWidth,
+  planLayout({ text: 'x', name: 'A', hasAvatar: false }).bubbleWidth - (124 + 14));
 
 // Name colours are deterministic and varied.
 assert.deepEqual(nameColor(42), nameColor(42));
