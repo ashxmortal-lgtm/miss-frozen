@@ -35,7 +35,7 @@ import {
   sweepClones,
 } from '../lib/rpg/combat.js';
 import { handleSearchTsuna } from '../lib/rpg/tsunade.js';
-import { send, sweepMessages, trackUser } from './chat.js';
+import { send, sendRich, sweepMessages, trackUser } from './chat.js';
 import { groupChatLink } from './telegram_links.js';
 import { handlePetCommand } from './pet/ui.js';
 import { PETS } from './pet/defs.js';
@@ -307,11 +307,30 @@ export async function handleEconomyCommand(message, ctx) {
     } else if (cmd === 'byakugan') {
       await handleByakugan(message);
     } else if (cmd === 'search_tsuna') {
-      await send(message.chat.id, {
-        text: style(await handleSearchTsuna(message)),
-        parse_mode: 'HTML',
-        reply_parameters: { message_id: message.message_id },
-      });
+      const out = await handleSearchTsuna(message);
+      const replyTo = { message_id: message.message_id };
+      if (out && typeof out === 'object' && Array.isArray(out.blocks)) {
+        // Heading outside, rich divider, the timer lines quoted.
+        try {
+          await sendRich(message.chat.id, {
+            rich_message: { blocks: out.blocks, skip_entity_detection: false },
+            reply_parameters: replyTo,
+          });
+        } catch (e) {
+          console.error('search rich failed:', e?.description || e);
+          await send(message.chat.id, {
+            text: style(out.text || ''),
+            parse_mode: 'HTML',
+            reply_parameters: replyTo,
+          });
+        }
+      } else {
+        await send(message.chat.id, {
+          text: style(String(out)),
+          parse_mode: 'HTML',
+          reply_parameters: replyTo,
+        });
+      }
     } else if (cmd === 'claim' || cmd === 'daily') {
       await replyClaimPrompt(message, cmd);
     } else if (cmd === 'balance') {

@@ -549,6 +549,14 @@ export async function handleRob(message) {
       `🚫 Only dead targets can be robbed.\n\n${escapeHtml(target.first_name || 'The target')} is not dead.`);
     return true;
   }
+  // Jiraiya's shield also covers a dead account: enabling /protect after death
+  // (before the robbery) keeps the purse closed until the shield ends.
+  if ((skills.protectedUntil || 0) > t) {
+    // No end time here — /byakugan is the only way to learn it.
+    await replyText(message,
+      `🛡️ ${escapeHtml(target.first_name || 'The target')} is protected by Jiraiya.\n\n» The robbery cannot land while the shield is up.`);
+    return true;
+  }
   if ((skills.lastRobbedAt || 0) > t - ROB_LOCKOUT_SEC) {
     await replyText(message,
       `⏳ ${escapeHtml(target.first_name || 'This target')} was robbed recently.\n\nrobbery possible again at ${dueText(skills.lastRobbedAt + ROB_LOCKOUT_SEC, t)}.`);
@@ -629,7 +637,7 @@ export async function handleProtect(message) {
     return true;
   }
   await replyText(message,
-    '🛡️ 𝐏𝐑𝐎𝐓𝐄𝐂𝐓𝐈𝐎𝐍 𝐀𝐂𝐓𝐈𝐕𝐄\n\nJiraiya shields you for 24 hours.\n\n» Itachi\'s /kill cannot succeed while protected.\n» You will get a reminder when it is about to end.');
+    '🛡️ 𝐏𝐑𝐎𝐓𝐄𝐂𝐓𝐈𝐎𝐍 𝐀𝐂𝐓𝐈𝐕𝐄\n\nJiraiya shields you for 24 hours.\n\n» Itachi\'s /kill and /rob cannot succeed while protected.\n» You will get a reminder when it is about to end.');
 }
 
 // ---- /byakugan ----
